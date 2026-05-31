@@ -1,7 +1,7 @@
 # bee_scale — Projekt memória
 
 > Tartós alapdokumentum. Ez orientálja a jövőbeli munkamenetet: cél, döntések, hardver, nyitott kérdések. Frissítsd, amikor egy döntés megszületik vagy egy fázis lezárul.
-> Utolsó frissítés: 2026-05-31
+> Utolsó frissítés: 2026-05-31 (web dashboard kész + élesben)
 
 > **Státusz-frissítés (2026-05-31):** A mérési lánc (cella → HX711 → ESP32, kalibrációval) **bizonyítottan működött** egy korábbi kódbázisban — a mérlegek tökéletesen mérnek. A firmware kódja elveszett, **de megmaradt: a kalibrációs faktorok, a bekötés/pinout, és kódrészletek/jegyzetek.** Ezért a firmware újraépítése **rutinfeladat, alacsony kockázat — NEM ez a projekt fókusza.** A valódi tervezési munka a **távoli elérés stack: kommunikáció + backend + dashboard + riasztás.**
 
@@ -41,6 +41,8 @@ Okos méhkaptár-mérleg: folyamatosan méri egy kaptár súlyát, és az adatot
   - Kerülendő a Spark-on: Cloud Storage (2026-02-03 óta Blaze-hez kötött), Cloud Functions (deploy Blaze-t igényel).
 - **Több eszköz (később):** UID-scope a Rules-ban — `/hives/{uid}/...`, ahol `auth.uid === uid` (eszközönként külön user, mindenki csak a saját ágába ír).
 - **Adatmodell:** `/hives/hive1/readings/{pushId}: { ts, w_total, w1, w2 }` — timestamp + összsúly + rúdankénti részsúlyok (a 2 HX711 külön is látszik). A séma úgy készül, hogy a riasztás később rework nélkül ráépíthető.
+- **Web dashboard (KÉSZ + élesben, 2026-05-31, Feladat 02):** statikus app a Firebase Hostingon — **élő URL: https://terrarium1.web.app** (`terrarium1` projekt). Vanilla JS, Firebase JS SDK (modular CDN) + Chart.js; read-only, indexelt `ts` query, realtime listener, 24h/7d/30d/összes ablak, w1/w2 toggle, helyi időzóna. Kód: `public/`, `firebase.json`, `.firebaserc`, `README.md`.
+  - **Belépés: ANONIM Auth** (nincs login képernyő, auto-csatlakozás). A Rules `auth != null` változatlan; az anonim token kielégíti. **Egyszeri Console-toggle kell:** Authentication → Sign-in method → Anonymous → Enable (engedélyezve). Az írás-védelem érintetlen: csak az `esp32@beescale.local` device-user írhat. Trade-off: aki tudja az URL-t, látja a súly-adatot (alacsony érzékenység → elfogadott).
 
 ## 5. Nyitott kérdések (jövőbeli döntéspontok)
 
@@ -64,7 +66,7 @@ Okos méhkaptár-mérleg: folyamatosan méri egy kaptár súlyát, és az adatot
 2. **Mérési lánc** — cella → HX711 → ESP32 olvasás, kalibráció, megbízható súlyérték. *(koncepció IGAZOLT korábban; firmware ÚJRAÉPÍTENDŐ, mert a kód elveszett)*
 3. **Kommunikáció** — ESP32 → backend adatküldés (WiFi).
 4. **Backend + tárolás** — adatbázis/idősoros tárolás.
-5. **Dashboard + riasztás** — megjelenítés és értesítések.
+5. **Dashboard + riasztás** — megjelenítés ✅ **KÉSZ** (https://terrarium1.web.app, anonim auth); riasztás elhalasztva (lásd 5/#6).
 6. **Terepi megbízhatóság** — energia, hibakezelés, watchdog, OTA.
 
 ---
