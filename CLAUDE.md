@@ -26,6 +26,13 @@ Ha körülhatárolt implementációs feladatot kaptál → implementáló vagy. 
 
 **Bizonytalanság:** ha a feladat tétje, iránya vagy bemenete nem egyértelmű — kérdezz / jelezz vissza, ne feltételezz. Triviális tényért vagy egyértelmű feladatnál ne kérdezz feleslegesen, csináld.
 
+**Commit-fegyelem (KÖTELEZŐ minden implementáló ágensnek):** **minden értelmezhető feladatrész lezárása után** (egy modul kész + fordul, egy bug megtalálva+javítva, egy éles teszt lefutott, egy döntés átültetve) készíts **git commitot NAGYON részletes üzenettel**. A cél: a commit-történetből utólag is **pontosan rekonstruálható legyen, mi történt, mi MŰKÖDÖTT és mi NEM**, és miért. A commit-üzenet tartalmazza:
+- **Mit** csináltál (a változás lényege, érintett fájlok/modulok).
+- **Miért** (a döntés/indok; ha bug-fix: a tünet → gyökérok → megoldás).
+- **Mi működött / mi nem** a tesztelés során (konkrét bizonyíték: fordítási eredmény, soros log részlet, mérési adat, hibakód) — a zsákutcákat is, nem csak a végeredményt.
+- **Nyitott pontok / ismert korlátok** (pl. flaky teszt-környezet, scope-on kívül hagyott rész).
+Inkább több, kisebb, jól dokumentált commit, mint egy nagy összemosott. Titkot soha ne commitolj (lásd `.gitignore`). Ha nincs még git repo, inicializáld.
+
 ---
 
 ## Orchestrátor — munkamenet
@@ -43,4 +50,5 @@ A feladatot önállóan végrehajtható, kontextussal ellátott egységre bontsd
 1. `MEMORY.md` + a kapott feladatleírás beolvasása.
 2. A feladat keretein belül implementálj; a scope-ot ne lépd túl önkényesen.
 3. A kimenetet **teszteld / ellenőrizd** (fordítás, működés, lint) mielőtt késznek jelented.
-4. Ha a feladat ellentmondásos, hiányos vagy a MEMORY.md-vel ütközik: **állj meg és jelezz vissza**, ne tippelj.
+4. **Commitolj részletesen** minden értelmezhető feladatrész után (lásd „Commit-fegyelem" a közös szabályoknál) — a mi-működött/mi-nem a commit-üzenetbe kerüljön.
+5. Ha a feladat ellentmondásos, hiányos vagy a MEMORY.md-vel ütközik: **állj meg és jelezz vissza**, ne tippelj.
