@@ -1,12 +1,17 @@
 # bee_scale — Web dashboard (Firebase Hosting + RTDB read)
 
-Statikus, read-only web app: a kaptármérleg súly-trendjét rajzolja ki **Firebase Auth
-mögött**, élőben az RTDB-ből (Feladat 02). Backend: **Firebase Spark (no-cost)**,
-projekt `terrarium1`. Nincs írás, nincs riasztás, nincs Cloud Function.
+Statikus, read-only web app: a kaptármérleg súly-trendjét rajzolja ki, élőben az
+RTDB-ből (Feladat 02). Backend: **Firebase Spark (no-cost)**, projekt `terrarium1`.
+Nincs írás, nincs riasztás, nincs Cloud Function.
+
+> **Belépés:** bejelentkezés nélküli — az app **anonim Firebase Auth**-tal csatlakozik
+> automatikusan (a Rules `auth != null`-t várnak az olvasáshoz, ezt az anonim token
+> kielégíti). Aki tudja az URL-t, látja a súly-adatot; írni továbbra is csak a
+> device-user tud. (Korábban email/jelszós login gate volt — lásd a git-history-t.)
 
 ## Mit tud
 
-- **Login gate** (Firebase Auth, email/jelszó) — kijelentkezve nincs adat.
+- **Auto-csatlakozás** anonim Auth-tal — nincs bejelentkező képernyő.
 - **Súly-trend** Chart.js vonaldiagramon: X = idő (a `ts` UTC epoch sec → **helyi
   időzóna**), Y = kg. Alap sorozat `w_total`, **toggle** a `w1`/`w2` rúdankénti sorozatra.
 - **Időablak**: 24 óra / 7 nap / 30 nap / összes (alapértelmezett: **7 nap**).
@@ -30,27 +35,13 @@ A `firebaseConfig` már **be van írva** az `app.js`-be (a web `apiKey` **nem ti
 védelmet a Security Rules `auth != null` + a Hosting-domain adja). Service-account kulcs
 **nincs** és soha ne is kerüljön a frontendbe/repóba.
 
-## Egyszeri előfeltétel: viewer user
+## Egyszeri előfeltétel: Anonymous Auth engedélyezése
 
-A dashboard a Rules `auth != null` olvasási feltétele miatt **bejelentkezést igényel**.
-**A device-user (`esp32@beescale.local`) hitelesítőt NE használd a frontenden** — kell egy
-külön, read-only **viewer** user. (Az írást a Rules csak a device-usernek engedi, a viewer
-csak olvasni tud — emiatt biztonságos.)
+Az app anonim Auth-tal csatlakozik, ezért a Console-ban **egyszer** engedélyezni kell:
 
-Létrehozás (Firebase Console): **Authentication → Users → Add user** → e-mail + erős jelszó.
+**Firebase Console → Authentication → Sign-in method → Anonymous → Enable.**
 
-CLI/REST alternatíva (a web apiKey-vel, mert az Email/Password szolgáltató engedélyezve van):
-
-```bash
-API_KEY="AIzaSyC2wncwThhpj8GY4cIXPFjNPhaJv4OAAUM"
-curl -s -X POST \
-  "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=$API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"email":"viewer@beescale.local","password":"<erős-jelszó>","returnSecureToken":true}'
-```
-
-> **Aktuálisan használt teszt-viewer:** `viewer@beescale.local` (a jelszót éles
-> használat előtt érdemes lecserélni a Console-ban vagy törölni, ha nem kell).
+Ha nincs engedélyezve, a splash képernyő hibát ír ki (`operation-not-allowed`).
 
 ## Deploy (Firebase Hosting — Sparkon ingyenes)
 
@@ -65,12 +56,11 @@ A deploy a végén kiírja a **Hosting URL**-t (`https://terrarium1.web.app`), a
 > Csak a Hostingot deployoljuk (`--only hosting`). Az RTDB Security Rules-t a firmware-task
 > kezeli (`firebase/database.rules.json`); ezt a task **nem** módosítja és nem deployolja.
 
-## Belépés és használat
+## Használat
 
-1. Nyisd meg a Hosting URL-t → **belépés** a viewer userrel.
+1. Nyisd meg a Hosting URL-t → az app **automatikusan csatlakozik** (anonim Auth), nincs belépés.
 2. Megjelenik a 7 napos súly-trend; váltogasd az időablakot, kapcsold be a `w1`/`w2` sorozatot.
 3. Az új 5 perces minták maguktól felkerülnek; a **Frissítés** gomb azonnal újratölt.
-4. **Kilépés** → újra a login képernyő, adat nélkül.
 
 ## Korlátok (scope)
 

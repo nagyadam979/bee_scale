@@ -7,8 +7,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
 import {
   getAuth,
-  signInWithEmailAndPassword,
-  signOut,
+  signInAnonymously,
   onAuthStateChanged,
 } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-auth.js";
 import {
@@ -53,11 +52,9 @@ const db = getDatabase(app);
 
 // ---- DOM ----
 const $ = (id) => document.getElementById(id);
-const loginView = $("login-view");
+const splashView = $("splash-view");
 const dashboardView = $("dashboard-view");
-const loginForm = $("login-form");
-const loginError = $("login-error");
-const loginBtn = $("login-btn");
+const splashError = $("splash-error");
 
 let currentRange = "7d";
 let liveListenerRef = null; // épp aktív onChildAdded forrás (off()-hoz)
@@ -66,46 +63,31 @@ const points = new Map(); // pushKey -> { ts, w_total, w1, w2 }
 let chart = null;
 
 // ===========================================================================
-// Auth
+// Auth — anonim (nincs bejelentkező képernyő). A Rules `auth != null`-t vár az
+// olvasáshoz; az anonim token ezt kielégíti. Írni továbbra is csak a device-user tud.
 // ===========================================================================
 onAuthStateChanged(auth, (user) => {
   if (user) {
-    showDashboard(user);
+    showDashboard();
   } else {
-    showLogin();
+    showSplash();
+    signInAnonymously(auth).catch((err) => showSplashError(err));
   }
 });
 
-loginForm.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  loginError.classList.add("hidden");
-  loginBtn.disabled = true;
-  loginBtn.textContent = "Belépés…";
-  try {
-    await signInWithEmailAndPassword(auth, $("email").value.trim(), $("password").value);
-    // a továbbiakat az onAuthStateChanged intézi
-  } catch (err) {
-    loginError.textContent = authErrorMessage(err);
-    loginError.classList.remove("hidden");
-  } finally {
-    loginBtn.disabled = false;
-    loginBtn.textContent = "Belépés";
-  }
-});
-
-$("logout-btn").addEventListener("click", () => signOut(auth));
-
-function authErrorMessage(err) {
+function showSplashError(err) {
   const code = err && err.code ? err.code : "";
-  if (code.includes("invalid-credential") || code.includes("wrong-password") || code.includes("user-not-found"))
-    return "Hibás e-mail vagy jelszó.";
-  if (code.includes("invalid-email")) return "Érvénytelen e-mail cím.";
-  if (code.includes("too-many-requests")) return "Túl sok próbálkozás — várj egy kicsit.";
-  if (code.includes("network")) return "Hálózati hiba.";
-  return "Bejelentkezési hiba: " + (code || err.message || "ismeretlen");
+  let msg;
+  if (code.includes("operation-not-allowed"))
+    msg = "Az anonim belépés nincs engedélyezve a Firebase Console-ban (Authentication → Sign-in method → Anonymous).";
+  else if (code.includes("network")) msg = "Hálózati hiba a csatlakozáskor.";
+  else msg = "Csatlakozási hiba: " + (code || err.message || "ismeretlen");
+  splashError.textContent = msg;
+  splashError.classList.remove("hidden");
+  $("splash-status").classList.add("hidden");
 }
 
-function showLogin() {
+function showSplash() {
   detachLive();
   points.clear();
   if (chart) {
@@ -113,13 +95,12 @@ function showLogin() {
     chart = null;
   }
   dashboardView.classList.add("hidden");
-  loginView.classList.remove("hidden");
+  splashView.classList.remove("hidden");
 }
 
-function showDashboard(user) {
-  loginView.classList.add("hidden");
+function showDashboard() {
+  splashView.classList.add("hidden");
   dashboardView.classList.remove("hidden");
-  $("user-email").textContent = user.email || "";
   ensureChart();
   loadRange(currentRange);
   attachLive(); // élő frissítés a betöltés pillanatától
