@@ -1,0 +1,38 @@
+# --- macOS ---
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# --- Szerkesztők / IDE ---
+.vscode/
+.idea/
+*.swp
+*~
+
+# --- ESP32 / PlatformIO firmware ---
+.pio/
+.pioenv/
+build/
+*.bin
+*.elf
+*.map
+
+# --- Arduino ---
+*.hex
+
+# --- Node / Firebase web app ---
+node_modules/
+dist/
+.firebase/
+*.log
+npm-debug.log*
+
+# --- Titkok / config (NE kerüljön be a repóba) ---
+.env
+.env.*
+secrets.h
+*.key
+*-service-account*.json
+firebase-debug.log
+.firebaserc.local
