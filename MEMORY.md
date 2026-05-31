@@ -39,6 +39,7 @@ Okos méhkaptár-mérleg: folyamatosan méri egy kaptár súlyát, és az adatot
   - Megjelenítés: **Firebase Hosting** statikus web app (Chart.js), élőben olvassa az RTDB-t.
   - **Cloud Functions / Blaze NEM kell** (nincs szerveroldali logika) → marad ingyenes, bankkártya nélkül.
   - Kerülendő a Spark-on: Cloud Storage (2026-02-03 óta Blaze-hez kötött), Cloud Functions (deploy Blaze-t igényel).
+- **Több eszköz (később):** UID-scope a Rules-ban — `/hives/{uid}/...`, ahol `auth.uid === uid` (eszközönként külön user, mindenki csak a saját ágába ír).
 - **Adatmodell:** `/hives/hive1/readings/{pushId}: { ts, w_total, w1, w2 }` — timestamp + összsúly + rúdankénti részsúlyok (a 2 HX711 külön is látszik). A séma úgy készül, hogy a riasztás később rework nélkül ráépíthető.
 
 ## 5. Nyitott kérdések (jövőbeli döntéspontok)
