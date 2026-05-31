@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>bee_scale — kaptármérleg dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+  <!-- Chart.js + idő-tengely adapter (date-fns). UMD globálisok: window.Chart -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+</head>
+<body>
+  <!-- ===== Login gate ===== -->
+  <section id="login-view" class="view hidden">
+    <form id="login-form" class="login-card">
+      <h1>🐝 bee_scale</h1>
+      <p class="subtitle">Kaptármérleg — bejelentkezés</p>
+      <label>E-mail
+        <input type="email" id="email" autocomplete="username" required />
+      </label>
+      <label>Jelszó
+        <input type="password" id="password" autocomplete="current-password" required />
+      </label>
+      <button type="submit" id="login-btn">Belépés</button>
+      <p id="login-error" class="error hidden"></p>
+    </form>
+  </section>
+
+  <!-- ===== Dashboard ===== -->
+  <section id="dashboard-view" class="view hidden">
+    <header class="topbar">
+      <div class="brand">🐝 bee_scale</div>
+      <div class="latest">
+        <span class="latest-value" id="latest-value">– kg</span>
+        <span class="latest-time" id="latest-time">nincs adat</span>
+      </div>
+      <div class="topbar-right">
+        <span class="user-email" id="user-email"></span>
+        <button id="logout-btn" class="ghost">Kilépés</button>
+      </div>
+    </header>
+
+    <div id="stale-banner" class="banner hidden">⚠️ Nincs friss adat — a legutóbbi minta régebbi a vártnál.</div>
+
+    <div class="controls">
+      <div class="control-group" role="group" aria-label="Időablak">
+        <button class="range-btn" data-range="24h">24 óra</button>
+        <button class="range-btn active" data-range="7d">7 nap</button>
+        <button class="range-btn" data-range="30d">30 nap</button>
+        <button class="range-btn" data-range="all">Összes</button>
+      </div>
+      <div class="control-group toggles">
+        <label><input type="checkbox" id="toggle-w1" /> w1 (rúd 1)</label>
+        <label><input type="checkbox" id="toggle-w2" /> w2 (rúd 2)</label>
+      </div>
+      <div class="control-group">
+        <button id="reload-btn" class="ghost">⟳ Frissítés</button>
+        <span id="status" class="status"></span>
+      </div>
+    </div>
+
+    <div class="chart-wrap">
+      <canvas id="chart"></canvas>
+      <div id="empty-state" class="empty-state hidden">Nincs megjeleníthető adat ebben az időablakban.</div>
+    </div>
+  </section>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
