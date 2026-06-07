@@ -3,8 +3,8 @@
 
 // Csak egy HX711 bekötve (A): DOUT=GPIO2, SCK=GPIO1
 // B (GPIO4) nincs bekötve — inicializálása kihagyva (set_gain() blokkolna)
-#define HX711_DATA_PIN_A 2
-#define HX711_SCK_PIN    1
+#define HX711_DATA_PIN_A 1
+#define HX711_SCK_PIN    2
 
 namespace {
   constexpr uint8_t kDataPin  = HX711_DATA_PIN_A;
@@ -17,7 +17,7 @@ void setup() {
   Serial.begin(115200);
   delay(500);
   // Banner rögtön, mielőtt bármilyen blokkolható HX711 hívás
-  Serial.println("\n=== HX711 probe: DOUT=GPIO2, SCK=GPIO1 ===");
+  Serial.printf("\n=== HX711 probe: DOUT=GPIO%u, SCK=GPIO%u ===\n", kDataPin, kClockPin);
 
   Serial.println("HX711 begin...");
   scale.begin(kDataPin, kClockPin);  // set_gain(128) benne van → blokkolhat, ha nincs válasz
