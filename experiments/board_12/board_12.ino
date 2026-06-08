@@ -89,6 +89,7 @@ static void showMenu() {
   outln("|  [s]  aktuális érték      |");
   outln("|  [r]  raw ADC             |");
   outln("|  [e]  env (t/h/p)         |");
+  outln("|  [b]  I2C busz scan       |");
   outln("|  [i]  info / IP           |");
   outln("|  [q]  vissza streamingbe  |");
   outln("+---------------------------+");
@@ -162,6 +163,22 @@ static void handleMenuKey(char ch) {
                  "\r\n  env olvasás SIKERTELEN (AHT20=%s BMP280=%s)",
                  ahtOk ? "ok" : "fail", bmpOk ? "ok" : "fail");
       }
+      outln(buf);
+      showMenu();
+      break;
+    }
+    case 'b': {
+      outln("\r\nI2C scan (0x08..0x77)...");
+      int found = 0;
+      for (uint8_t addr = 0x08; addr <= 0x77; addr++) {
+        Wire.beginTransmission(addr);
+        if (Wire.endTransmission() == 0) {
+          snprintf(buf, sizeof(buf), "  found 0x%02X", addr);
+          outln(buf);
+          found++;
+        }
+      }
+      snprintf(buf, sizeof(buf), "  osszesen: %d eszkoz", found);
       outln(buf);
       showMenu();
       break;
