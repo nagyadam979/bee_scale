@@ -36,6 +36,23 @@
               }
             }
           }
+        },
+
+        "env": {
+          "readings": {
+            ".read": "auth != null",
+            ".write": "auth != null && auth.token.email === 'esp32@beescale.local'",
+            ".indexOn": ["ts"],
+
+            "$pushId": {
+              ".validate": "newData.hasChildren(['ts','t','h','p'])",
+              "ts":     { ".validate": "newData.isNumber() && newData.val() > 1700000000" },
+              "t":      { ".validate": "newData.isNumber()" },
+              "h":      { ".validate": "newData.isNumber()" },
+              "p":      { ".validate": "newData.isNumber()" },
+              "$other": { ".validate": false }
+            }
+          }
         }
       }
     }

@@ -6,6 +6,12 @@
 // board_12 → hive1 / w2 rúd.
 #define READINGS_PATH "/hives/hive1/rods/w2/readings"
 
+// --- RTDB env (környezeti) írási út -----------------------------------------
+// AHT20+BMP280 a board_12-re kötve (I2C, SDA=6/SCL=5). A hőm/pára/nyomás KAPTÁR-
+// szintű (nem rúd-specifikus) adat → külön /hives/hive1/env ág. Ugyanaz az 5
+// perces ütem és FIFO/retry mechanika, mint a súlynál.
+#define ENV_READINGS_PATH "/hives/hive1/env/readings"
+
 // --- Küldési ütemezés -------------------------------------------------------
 // 5 perces, nem-blokkoló (millis()) periódus.
 #define SEND_INTERVAL_MS (5UL * 60UL * 1000UL)

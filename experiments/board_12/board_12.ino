@@ -1,5 +1,8 @@
 #include <Arduino.h>
 #include <HX711.h>
+#include <Wire.h>
+#include <Adafruit_AHTX0.h>
+#include <Adafruit_BMP280.h>
 #include <WiFi.h>
 #include <ArduinoOTA.h>
 #include <WiFiServer.h>
@@ -17,12 +20,22 @@
 // HX711 → stabil raw ~-233k. Az új board bekötése DOUT=2/SCK=1 (= board_21 mappingje).
 #define HX711_DOUT    2
 #define HX711_SCK     1
+// AHT20+BMP280 I2C busz (2026-06-08, board_12-re kötve). Az ESP32-C3 GPIO-mátrixa
+// tetszőleges láboszt enged I2C-re; a HX711 a 2/1-en, az I2C az 5/6-on van.
+#define I2C_SDA       6
+#define I2C_SCL       5
+#define BMP280_ADDR_A 0x76   // kínai AHT20+BMP280 kombómodulok tipikus címe
+#define BMP280_ADDR_B 0x77   // Adafruit-breakout alapcím (fallback)
 #define TELNET_PORT   23
 #define STREAM_MS     500
 #define TARE_SAMPLES  64    // ~6.4 s @ 10 SPS
 #define CAL_SAMPLES   64
 
-HX711       scale;
+HX711          scale;
+Adafruit_AHTX0 aht;     // hőmérséklet + páratartalom
+Adafruit_BMP280 bmp;    // nyomás (+ hőmérséklet, nem használt)
+bool           ahtOk = false;
+bool           bmpOk = false;
 WiFiServer  telnetSrv(TELNET_PORT);
 WiFiClient  telnetClient;
 Preferences prefs;
@@ -75,6 +88,7 @@ static void showMenu() {
   outln("|  [c]  kalibráció (kg)     |");
   outln("|  [s]  aktuális érték      |");
   outln("|  [r]  raw ADC             |");
+  outln("|  [e]  env (t/h/p)         |");
   outln("|  [i]  info / IP           |");
   outln("|  [q]  vissza streamingbe  |");
   outln("+---------------------------+");
@@ -137,6 +151,21 @@ static void handleMenuKey(char ch) {
       } else outln("\r\n  → HX711 TIMEOUT");
       showMenu();
       break;
+    case 'e': {
+      Reading re;
+      uint32_t ep = (uint32_t)time(nullptr);
+      if (readEnv(ep, re)) {
+        snprintf(buf, sizeof(buf),
+                 "\r\n  t=%.2f °C  h=%.2f %%RH  p=%.2f hPa", re.t, re.h, re.p);
+      } else {
+        snprintf(buf, sizeof(buf),
+                 "\r\n  env olvasás SIKERTELEN (AHT20=%s BMP280=%s)",
+                 ahtOk ? "ok" : "fail", bmpOk ? "ok" : "fail");
+      }
+      outln(buf);
+      showMenu();
+      break;
+    }
     case 'i':
       snprintf(buf, sizeof(buf),
                "\r\n  IP=%s  RSSI=%ddBm\r\n  offset=%ld  factor=%.4f\r\n  rtdb pending=%u",
@@ -181,6 +210,22 @@ static bool timeValid(uint32_t &epochOut) {
   return true;
 }
 
+// AHT20 (t,h) + BMP280 (p) → env Reading. Csak akkor true, ha MINDHÁROM érték
+// érvényes — a rules {ts,t,h,p}-t vár, NaN/hiányzó mezőt nem töltünk fel.
+static bool readEnv(uint32_t epoch, Reading &r) {
+  if (!ahtOk || !bmpOk) return false;
+  sensors_event_t hum, tmp;
+  if (!aht.getEvent(&hum, &tmp)) return false;
+  const float pa = bmp.readPressure();          // Pa
+  if (!(pa > 0.0f)) return false;
+  r.ts   = epoch;
+  r.type = REC_ENV;
+  r.t    = tmp.temperature;                      // °C
+  r.h    = hum.relative_humidity;                // %RH
+  r.p    = pa / 100.0f;                          // hPa
+  return true;
+}
+
 static void sampleMaintain() {
   uint32_t epoch;
   if (!timeValid(epoch)) return;   // ts nélkül nem tűzünk rekordot
@@ -191,27 +236,54 @@ static void sampleMaintain() {
 
   if (!scale.is_ready()) return;   // ha az ADC nem kész, később újrapróbáljuk
 
-  Reading r;
-  r.ts = epoch;
-  r.w  = scale.get_units(WEIGHT_AVG_SAMPLES);  // átlagolt kg: (avg-offset)/scale
+  Reading rw;
+  rw.type = REC_WEIGHT;
+  rw.ts   = epoch;
+  rw.w    = scale.get_units(WEIGHT_AVG_SAMPLES);  // átlagolt kg: (avg-offset)/scale
+  rtdbEnqueue(rw);
 
-  rtdbEnqueue(r);
-  g_lastSampleMs   = millis();
+  // Env minta ugyanabban az ütemben (külön RTDB ágra). Ha a szenzor nem elérhető,
+  // a súly attól még megy — az env egyszerűen kimarad ebből a ciklusból.
+  Reading re;
+  if (readEnv(epoch, re)) {
+    rtdbEnqueue(re);
+    Serial.printf("[SAMPLE] ts=%lu w=%.2f t=%.2f h=%.2f p=%.2f (pending=%u)\n",
+                  (unsigned long)epoch, rw.w, re.t, re.h, re.p,
+                  (unsigned)rtdbPending());
+  } else {
+    Serial.printf("[SAMPLE] ts=%lu w=%.2f env=SKIP (pending=%u)\n",
+                  (unsigned long)epoch, rw.w, (unsigned)rtdbPending());
+  }
+
+  g_lastSampleMs    = millis();
   g_firstSampleDone = true;
-
-  Serial.printf("[SAMPLE] ts=%lu w=%.2f (pending=%u)\n",
-                (unsigned long)r.ts, r.w, (unsigned)rtdbPending());
 }
 
 // -------------------------------------------------------------------------
 void setup() {
   Serial.begin(115200);
   delay(500);
-  Serial.println("\n[bee_scale] board-12  HX711+WiFi+OTA+Telnet");
+  Serial.println("\n[bee_scale] board-12  HX711+AHT20+BMP280+WiFi+OTA+Telnet");
 
   scale.begin(HX711_DOUT, HX711_SCK);
   calibLoad();
   Serial.println("[HX711] OK");
+
+  // I2C környezeti szenzorok (AHT20 + BMP280) — SDA=6, SCL=5.
+  Wire.begin(I2C_SDA, I2C_SCL);
+  ahtOk = aht.begin(&Wire);
+  Serial.printf("[AHT20] %s\n", ahtOk ? "OK" : "FAIL");
+  // A kombómodulok 0x76-on, az Adafruit-breakout 0x77-en ül — mindkettőt próbáljuk.
+  bmpOk = bmp.begin(BMP280_ADDR_A) || bmp.begin(BMP280_ADDR_B);
+  if (bmpOk) {
+    // Időszakos, alacsony zajú mérés: ×2 hőm, ×16 nyomás oversampling, IIR ×16.
+    bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,
+                    Adafruit_BMP280::SAMPLING_X2,
+                    Adafruit_BMP280::SAMPLING_X16,
+                    Adafruit_BMP280::FILTER_X16,
+                    Adafruit_BMP280::STANDBY_MS_500);
+  }
+  Serial.printf("[BMP280] %s\n", bmpOk ? "OK" : "FAIL");
 
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
