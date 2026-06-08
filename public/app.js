@@ -14,6 +14,11 @@
 //   /hives/hive1/env/readings/{pushId}: { ts, t, h[, p] }   (°C, %RH, opc. hPa)
 // Külön (alsó) chartra rajzoljuk: t bal, h jobb Y-tengelyen. A p (nyomás) most
 // nincs a buszon → opcionális; ha később bekerül, a rekord tartalmazza.
+//
+// KAPTÁR-HŐM ÁG (board_21-re kötött DS18B20 OneWire szonda, GPIO4):
+//   /hives/hive1/temp/readings/{pushId}: { ts, t }          (°C)
+// Az env-charton osztozik, harmadik vonalként a bal (°C) tengelyen — így a doboz-
+// hőm (env, AHT20) és a kaptár belső hőm (DS18B20) közvetlenül összevethető.
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
 import {
@@ -55,6 +60,9 @@ const ROD_PATHS = {
 };
 // Környezeti ág — { ts, t, h[, p] }.
 const ENV_PATH = `hives/${HIVE_ID}/env/readings`;
+// Kaptár-hőm ág (board_21 DS18B20 szonda) — { ts, t }. Az env doboz-hőmérséklete
+// mellé, közös °C tengelyre rajzolva (doboz vs kaptár belső hőm összevethető).
+const TEMP_PATH = `hives/${HIVE_ID}/temp/readings`;
 
 // Időablakok (másodperc). null = összes (limittel megfogva).
 const WINDOWS = { "24h": 86400, "7d": 604800, "30d": 2592000, all: null };
@@ -88,6 +96,9 @@ let chart = null;
 const envPoints = new Map();
 let envChart = null;
 let envLiveQuery = null;
+// Kaptár-hőm pontok (DS18B20): pushKey -> { ts, t }. Az env-charton osztozik.
+const tempPoints = new Map();
+let tempLiveQuery = null;
 
 // ===========================================================================
 // Auth — anonim (nincs bejelentkező képernyő). A Rules `auth != null`-t vár az
@@ -119,6 +130,7 @@ function showSplash() {
   points.w1.clear();
   points.w2.clear();
   envPoints.clear();
+  tempPoints.clear();
   if (chart) {
     chart.destroy();
     chart = null;
@@ -211,8 +223,9 @@ function setSeriesVisible(idx, visible) {
 // ===========================================================================
 // Env-chart — t (bal Y, °C) + h (jobb Y, %RH). Külön panel a súly-chart alatt.
 // ===========================================================================
-const ENV_T_COLOR = "#ff8a65"; // narancs — hőmérséklet
+const ENV_T_COLOR = "#ff8a65"; // narancs — env (doboz) hőmérséklet
 const ENV_H_COLOR = "#4fc3f7"; // kék — páratartalom
+const TEMP_COLOR  = "#e57373"; // piros — kaptár belső hőm (DS18B20 szonda)
 
 function ensureEnvChart() {
   if (envChart) return;
@@ -221,8 +234,9 @@ function ensureEnvChart() {
     type: "line",
     data: {
       datasets: [
-        envDs("Hőmérséklet (°C)", ENV_T_COLOR, "y"),
+        envDs("Doboz-hőm (°C)", ENV_T_COLOR, "y"),
         envDs("Páratartalom (%RH)", ENV_H_COLOR, "y1"),
+        envDs("Kaptár-hőm (szonda, °C)", TEMP_COLOR, "y"),
       ],
     },
     options: {
@@ -314,16 +328,19 @@ async function loadRange(range) {
   points.w1.clear();
   points.w2.clear();
   envPoints.clear();
+  tempPoints.clear();
   try {
-    const [snapW1, snapW2, snapEnv] = await Promise.all([
+    const [snapW1, snapW2, snapEnv, snapTemp] = await Promise.all([
       get(buildQuery(ROD_PATHS.w1, range)),
       get(buildQuery(ROD_PATHS.w2, range)),
       get(buildQuery(ENV_PATH, range)),
+      get(buildQuery(TEMP_PATH, range)),
     ]);
     let n1 = 0, n2 = 0;
     snapW1.forEach((c) => { if (addPoint("w1", c.key, c.val())) n1++; });
     snapW2.forEach((c) => { if (addPoint("w2", c.key, c.val())) n2++; });
     snapEnv.forEach((c) => { addEnvPoint(c.key, c.val()); });
+    snapTemp.forEach((c) => { addTempPoint(c.key, c.val()); });
     redraw();
     envRedraw();
     const n = n1 + n2;
@@ -358,6 +375,14 @@ function addEnvPoint(key, val) {
   return true;
 }
 
+// Kaptár-hőm rekord (DS18B20) validálása + felvétele. ts,t kötelező. true, ha új és érvényes.
+function addTempPoint(key, val) {
+  if (!val || typeof val.ts !== "number" || typeof val.t !== "number") return false;
+  if (tempPoints.has(key)) return false;
+  tempPoints.set(key, { ts: val.ts, t: val.t });
+  return true;
+}
+
 // ===========================================================================
 // Élő frissítés — csak a betöltés óta ÚJONNAN érkezett pushok, MINDKÉT rúdon
 // (startAt = baseline → meglévő rekordokra nem tüzel, csak az új mintákra)
@@ -383,6 +408,14 @@ function attachLive() {
       setStatus("Új env minta érkezett");
     }
   });
+  // Kaptár-hőm live stream (DS18B20) — szintén az env-chartra redraw-ol.
+  tempLiveQuery = query(ref(db, TEMP_PATH), orderByChild("ts"), startAt(liveBaselineTs));
+  onChildAdded(tempLiveQuery, (child) => {
+    if (addTempPoint(child.key, child.val())) {
+      envRedraw();
+      setStatus("Új kaptár-hőm minta érkezett");
+    }
+  });
 }
 
 function detachLive() {
@@ -395,6 +428,10 @@ function detachLive() {
   if (envLiveQuery) {
     off(envLiveQuery);
     envLiveQuery = null;
+  }
+  if (tempLiveQuery) {
+    off(tempLiveQuery);
+    tempLiveQuery = null;
   }
 }
 
@@ -494,28 +531,44 @@ function envRedraw() {
   const rows = [...envPoints.values()]
     .filter((p) => p.ts >= minTs)
     .sort((a, b) => a.ts - b.ts);
+  const tempRows = [...tempPoints.values()]
+    .filter((p) => p.ts >= minTs)
+    .sort((a, b) => a.ts - b.ts);
 
   envChart.data.datasets[0].data = rows.map((p) => ({ x: p.ts * 1000, y: p.t }));
   envChart.data.datasets[1].data = rows.map((p) => ({ x: p.ts * 1000, y: p.h }));
+  envChart.data.datasets[2].data = tempRows.map((p) => ({ x: p.ts * 1000, y: p.t }));
   envChart.update();
 
-  $("env-empty-state").classList.toggle("hidden", rows.length > 0);
-  updateEnvChip(rows);
+  const hasAny = rows.length > 0 || tempRows.length > 0;
+  $("env-empty-state").classList.toggle("hidden", hasAny);
+  updateEnvChip(rows, tempRows);
 }
 
-// Fejléc-chip: az aktuális időablak LEGUTOLSÓ env mintája.
-function updateEnvChip(rows) {
+// Fejléc-chip: az aktuális időablak LEGUTOLSÓ env (doboz) + kaptár-hőm mintája.
+function updateEnvChip(rows, tempRows) {
   const valEl = $("env-value");
   const timeEl = $("env-time");
-  if (!rows.length) {
+  const lastEnv = rows.length ? rows[rows.length - 1] : null;
+  const lastTemp = tempRows.length ? tempRows[tempRows.length - 1] : null;
+
+  if (!lastEnv && !lastTemp) {
     valEl.textContent = "– °C · – %";
     timeEl.textContent = "nincs env adat";
     return;
   }
-  const last = rows[rows.length - 1];
-  const p = typeof last.p === "number" ? ` · ${last.p.toFixed(0)} hPa` : "";
-  valEl.textContent = `${last.t.toFixed(1)} °C · ${last.h.toFixed(0)} %${p}`;
-  timeEl.textContent = new Date(last.ts * 1000).toLocaleString("hu-HU");
+
+  const parts = [];
+  if (lastEnv) {
+    const p = typeof lastEnv.p === "number" ? ` · ${lastEnv.p.toFixed(0)} hPa` : "";
+    parts.push(`${lastEnv.t.toFixed(1)} °C · ${lastEnv.h.toFixed(0)} %${p}`);
+  }
+  if (lastTemp) parts.push(`kaptár ${lastTemp.t.toFixed(1)} °C`);
+  valEl.textContent = parts.join(" · ");
+
+  // Időbélyeg: a két stream közül a frissebb minta ideje.
+  const newestTs = Math.max(lastEnv ? lastEnv.ts : 0, lastTemp ? lastTemp.ts : 0);
+  timeEl.textContent = new Date(newestTs * 1000).toLocaleString("hu-HU");
 }
 
 function setStatus(msg) {
