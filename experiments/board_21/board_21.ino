@@ -1,5 +1,7 @@
 #include <Arduino.h>
 #include <HX711.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
 #include <WiFi.h>
 #include <ArduinoOTA.h>
 #include <WiFiServer.h>
@@ -14,12 +16,18 @@
 // Board "21" — MAC …89:10
 #define HX711_DOUT    2
 #define HX711_SCK     1
+// DS18B20 OneWire kaptár-hőmérő (2026-06-08, board_21-re kötve, GPIO4). Külső
+// felhúzó (4.7 kΩ a DQ↔VCC közé) szükséges, ha a modulon nincs rajta.
+#define ONEWIRE_PIN   4
 #define TELNET_PORT   23
 #define STREAM_MS     500
 #define TARE_SAMPLES  64    // ~6.4 s @ 10 SPS
 #define CAL_SAMPLES   64
 
 HX711       scale;
+OneWire           oneWire(ONEWIRE_PIN);
+DallasTemperature ds18b20(&oneWire);   // DS18B20 kaptár-hőmérő
+bool              dsOk = false;        // van-e a buszon DS18B20
 WiFiServer  telnetSrv(TELNET_PORT);
 WiFiClient  telnetClient;
 Preferences prefs;
@@ -72,6 +80,7 @@ static void showMenu() {
   outln("|  [c]  kalibráció (kg)     |");
   outln("|  [s]  aktuális érték      |");
   outln("|  [r]  raw ADC             |");
+  outln("|  [d]  hőm (DS18B20)       |");
   outln("|  [i]  info / IP           |");
   outln("|  [q]  vissza streamingbe  |");
   outln("+---------------------------+");
@@ -134,6 +143,19 @@ static void handleMenuKey(char ch) {
       } else outln("\r\n  → HX711 TIMEOUT");
       showMenu();
       break;
+    case 'd': {
+      Reading rt;
+      uint32_t ep = (uint32_t)time(nullptr);
+      if (readTemp(ep, rt)) {
+        snprintf(buf, sizeof(buf), "\r\n  → %.2f °C", rt.t);
+      } else {
+        snprintf(buf, sizeof(buf),
+                 "\r\n  hőm olvasás SIKERTELEN (DS18B20=%s)", dsOk ? "ok" : "fail");
+      }
+      outln(buf);
+      showMenu();
+      break;
+    }
     case 'i':
       snprintf(buf, sizeof(buf),
                "\r\n  IP=%s  RSSI=%ddBm\r\n  offset=%ld  factor=%.4f\r\n  rtdb pending=%u",
@@ -178,6 +200,19 @@ static bool timeValid(uint32_t &epochOut) {
   return true;
 }
 
+// DS18B20 → temp Reading. Blokkoló konverzió (~750 ms @ 12-bit). false, ha nincs
+// szenzor a buszon vagy a mérés érvénytelen (lecsatlakozott szonda → -127 °C).
+static bool readTemp(uint32_t epoch, Reading &r) {
+  if (!dsOk) return false;
+  ds18b20.requestTemperatures();
+  const float c = ds18b20.getTempCByIndex(0);
+  if (c <= DEVICE_DISCONNECTED_C) return false;  // -127: nincs válasz / szakadás
+  r.ts   = epoch;
+  r.type = REC_TEMP;
+  r.t    = c;                                    // °C
+  return true;
+}
+
 static void sampleMaintain() {
   uint32_t epoch;
   if (!timeValid(epoch)) return;   // ts nélkül nem tűzünk rekordot
@@ -188,16 +223,26 @@ static void sampleMaintain() {
 
   if (!scale.is_ready()) return;   // ha az ADC nem kész, később újrapróbáljuk
 
-  Reading r;
-  r.ts = epoch;
-  r.w  = scale.get_units(WEIGHT_AVG_SAMPLES);  // átlagolt kg: (avg-offset)/scale
+  Reading rw;
+  rw.type = REC_WEIGHT;
+  rw.ts   = epoch;
+  rw.w    = scale.get_units(WEIGHT_AVG_SAMPLES);  // átlagolt kg: (avg-offset)/scale
+  rtdbEnqueue(rw);
 
-  rtdbEnqueue(r);
-  g_lastSampleMs   = millis();
+  // Hőmérséklet-minta ugyanabban az ütemben (külön RTDB ágra). Ha a szenzor nem
+  // elérhető, a súly attól még megy — a hőm egyszerűen kimarad ebből a ciklusból.
+  Reading rt;
+  if (readTemp(epoch, rt)) {
+    rtdbEnqueue(rt);
+    Serial.printf("[SAMPLE] ts=%lu w=%.2f t=%.2f (pending=%u)\n",
+                  (unsigned long)epoch, rw.w, rt.t, (unsigned)rtdbPending());
+  } else {
+    Serial.printf("[SAMPLE] ts=%lu w=%.2f temp=SKIP (pending=%u)\n",
+                  (unsigned long)epoch, rw.w, (unsigned)rtdbPending());
+  }
+
+  g_lastSampleMs    = millis();
   g_firstSampleDone = true;
-
-  Serial.printf("[SAMPLE] ts=%lu w=%.2f (pending=%u)\n",
-                (unsigned long)r.ts, r.w, (unsigned)rtdbPending());
 }
 
 // -------------------------------------------------------------------------
@@ -209,6 +254,14 @@ void setup() {
   scale.begin(HX711_DOUT, HX711_SCK);
   calibLoad();
   Serial.println("[HX711] OK");
+
+  // DS18B20 OneWire kaptár-hőmérő (GPIO4). 12-bit felbontás (~0.0625 °C, ~750 ms
+  // konverzió — blokkoló kérés, de csak 5 percenként, a HX711-átlaggal egy ütemben).
+  ds18b20.begin();
+  const int dsCount = ds18b20.getDeviceCount();
+  dsOk = dsCount > 0;
+  if (dsOk) ds18b20.setResolution(12);
+  Serial.printf("[DS18B20] %s (%d eszkoz a buszon)\n", dsOk ? "OK" : "FAIL", dsCount);
 
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);

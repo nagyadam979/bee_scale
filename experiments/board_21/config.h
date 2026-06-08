@@ -6,6 +6,13 @@
 // board_21 → hive1 / w1 rúd.
 #define READINGS_PATH "/hives/hive1/rods/w1/readings"
 
+// --- RTDB hőmérséklet (kaptár-szondás) írási út -----------------------------
+// DS18B20 OneWire szonda a board_21-re kötve (GPIO4). A kaptár belső hőmérséklete
+// KAPTÁR-szintű adat (nem rúd-specifikus) → külön /hives/hive1/temp ág. Ugyanaz az
+// 5 perces ütem és FIFO/retry mechanika, mint a súlynál. (Megkülönböztetendő a
+// board_12 env-ágától: az a doboz-/környezeti AHT20, ez a kaptáron belüli szonda.)
+#define TEMP_READINGS_PATH "/hives/hive1/temp/readings"
+
 // --- Küldési ütemezés -------------------------------------------------------
 // 5 perces, nem-blokkoló (millis()) periódus.
 #define SEND_INTERVAL_MS (5UL * 60UL * 1000UL)

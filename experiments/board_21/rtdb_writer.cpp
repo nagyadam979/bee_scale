@@ -28,8 +28,9 @@ UserAuth  user_auth(FIREBASE_API_KEY, DEVICE_USER_EMAIL, DEVICE_USER_PASSWORD, U
 FirebaseApp app;
 RealtimeDatabase Database;
 
-// A feltöltési útvonal (board-specifikus, config.h: READINGS_PATH).
-const String kReadingsPath = String(READINGS_PATH);
+// A feltöltési útvonalak (board-specifikus, config.h).
+const String kReadingsPath = String(READINGS_PATH);       // REC_WEIGHT
+const String kTempPath     = String(TEMP_READINGS_PATH);  // REC_TEMP
 
 // --- FIFO ring buffer (RAM-only) -------------------------------------------
 Reading  g_buf[BUFFER_CAPACITY];
@@ -93,20 +94,34 @@ void rtdbAuthCb(AsyncResult &aResult) {
 bool tryPushFront() {
   const Reading &r = bufFront();
 
-  object_t json, o_ts, o_w;
+  object_t json;
+  String   path;
   JsonWriter w;
-  w.create(o_ts, "ts", r.ts);              // uint32 epoch sec (idézőjel nélkül)
-  w.create(o_w,  "w",  number_t(r.w, 2));  // float, 2 tizedes
-  w.join(json, 2, o_ts, o_w);
 
-  const String name = Database.push<object_t>(aClient, kReadingsPath, json);
+  if (r.type == REC_TEMP) {
+    object_t o_ts, o_t;
+    w.create(o_ts, "ts", r.ts);              // uint32 epoch sec (idézőjel nélkül)
+    w.create(o_t,  "t",  number_t(r.t, 2));  // °C, 2 tizedes
+    w.join(json, 2, o_ts, o_t);
+    path = kTempPath;
+  } else {  // REC_WEIGHT
+    object_t o_ts, o_w;
+    w.create(o_ts, "ts", r.ts);
+    w.create(o_w,  "w",  number_t(r.w, 2));  // kg, 2 tizedes
+    w.join(json, 2, o_ts, o_w);
+    path = kReadingsPath;
+  }
+
+  const String name = Database.push<object_t>(aClient, path, json);
 
   if (aClient.lastError().code() == 0 && name.length() > 0) {
-    Firebase.printf("[RTDB] pushed ok, key: %s (ts=%lu)\n",
+    Firebase.printf("[RTDB] pushed ok (%s), key: %s (ts=%lu)\n",
+                    r.type == REC_TEMP ? "temp" : "w",
                     name.c_str(), (unsigned long)r.ts);
     return true;
   }
-  Firebase.printf("[RTDB] push failed: msg: %s, code: %d\n",
+  Firebase.printf("[RTDB] push failed (%s): msg: %s, code: %d\n",
+                  r.type == REC_TEMP ? "temp" : "w",
                   aClient.lastError().message().c_str(), aClient.lastError().code());
   return false;
 }

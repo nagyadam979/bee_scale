@@ -6,11 +6,20 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// Egy feltöltendő mérési rekord. ts = UTC epoch másodperc, w = kalibrált kg.
-// (Boardonként EGYETLEN súlyérték — a board saját rúdjának súlya.)
+// Egy feltöltendő rekord típusa: súly (a board saját rúdja) vagy hőmérséklet
+// (DS18B20 kaptár-szonda). A típus dönti el, melyik RTDB ágra és milyen JSON-nal
+// megy ki. (Mintázva a board_12 REC_WEIGHT/REC_ENV megoldására.)
+enum RecType : uint8_t { REC_WEIGHT, REC_TEMP };
+
+// Egy feltöltendő rekord. ts = UTC epoch másodperc (mindkét típusnál).
+//   REC_WEIGHT → READINGS_PATH,      payload: { ts, w }   (w = kalibrált kg)
+//   REC_TEMP   → TEMP_READINGS_PATH, payload: { ts, t }   (t = °C, DS18B20)
+// A két típus EGY közös FIFO-ban utazik, beérkezési sorrendben ürül.
 struct Reading {
   uint32_t ts;
-  float    w;
+  RecType  type;
+  float    w;   // REC_WEIGHT: kalibrált kg
+  float    t;   // REC_TEMP:   °C (DS18B20 kaptár-szonda)
 };
 
 // Egyszeri init: SSL kliens, FirebaseApp inicializálás (email/jelszó auth), DB URL.
