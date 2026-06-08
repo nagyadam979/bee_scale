@@ -225,6 +225,7 @@ void loop() {
     char ch = (char)telnetClient.read();
 
     if (tMode == STREAM) {
+      if (ch == '\r' || ch == '\n') continue;  // Enter utáni ghost char
       tMode = MENU;
       showMenu();
     }
