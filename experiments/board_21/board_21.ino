@@ -16,9 +16,9 @@
 // Board "21" — MAC …89:10
 #define HX711_DOUT    2
 #define HX711_SCK     1
-// DS18B20 OneWire kaptár-hőmérő (2026-06-08, board_21-re kötve, GPIO4). Külső
+// DS18B20 OneWire kaptár-hőmérő (2026-06-08, board_21-re kötve, GPIO3). Külső
 // felhúzó (4.7 kΩ a DQ↔VCC közé) szükséges, ha a modulon nincs rajta.
-#define ONEWIRE_PIN   4
+#define ONEWIRE_PIN   3
 #define TELNET_PORT   23
 #define STREAM_MS     500
 #define TARE_SAMPLES  64    // ~6.4 s @ 10 SPS
@@ -81,6 +81,7 @@ static void showMenu() {
   outln("|  [s]  aktuális érték      |");
   outln("|  [r]  raw ADC             |");
   outln("|  [d]  hőm (DS18B20)       |");
+  outln("|  [w]  1-wire diag         |");
   outln("|  [i]  info / IP           |");
   outln("|  [q]  vissza streamingbe  |");
   outln("+---------------------------+");
@@ -151,6 +152,69 @@ static void handleMenuKey(char ch) {
       } else {
         snprintf(buf, sizeof(buf),
                  "\r\n  hőm olvasás SIKERTELEN (DS18B20=%s)", dsOk ? "ok" : "fail");
+      }
+      outln(buf);
+      showMenu();
+      break;
+    }
+    case 'w': {
+      // 1-Wire busz-diagnosztika. Reboot nélkül újra-detektál: ezért a
+      // huzalozás/felhúzó javítása után azonnal visszajelez. Frissíti a dsOk-t is.
+      snprintf(buf, sizeof(buf), "\r\n1-Wire diag (GPIO%d)...", ONEWIRE_PIN);
+      outln(buf);
+      // 0) Idle-vonalszint: megkülönbözteti a hibamódokat. Belső felhúzóval HIGH =
+      //    a vonal szabad (külső 4.7k hiányozhat, de nincs rövidzár); LOW = valami
+      //    GND-re húzza (DQ↔GND csere / tápolatlan szenzor). Felhúzó nélkül a sima
+      //    INPUT lebeg (értéke esetleges).
+      pinMode(ONEWIRE_PIN, INPUT);
+      delayMicroseconds(50);
+      const int idleFloat = digitalRead(ONEWIRE_PIN);
+      pinMode(ONEWIRE_PIN, INPUT_PULLUP);
+      delayMicroseconds(50);
+      const int idlePullup = digitalRead(ONEWIRE_PIN);
+      snprintf(buf, sizeof(buf), "  idle: INPUT=%d  INPUT_PULLUP=%d  (%s)",
+               idleFloat, idlePullup,
+               idlePullup ? "vonal szabad (kulso felhuzo?)"
+                          : "GND-re huzva (bekotes/rovidzar)");
+      outln(buf);
+      pinMode(ONEWIRE_PIN, INPUT);
+      // 1) Elektromos jelenlét: a reset presence-pulzust vár. NO → a vonal lebeg
+      //    (hiányzó 4.7k felhúzó / szakadás), nem is OneWire-protokoll kérdés.
+      const bool presence = oneWire.reset();
+      snprintf(buf, sizeof(buf), "  reset/presence: %s",
+               presence ? "YES (van eszkoz a buszon)"
+                        : "NO  (vonal lebeg -> felhuzo/bekotes hianyzik?)");
+      outln(buf);
+      // 2) ROM-search: minden eszköz 64-bites ROM-ja, family-kód + CRC.
+      oneWire.reset_search();
+      uint8_t addr[8];
+      int n = 0;
+      while (oneWire.search(addr)) {
+        char rom[20]; int o = 0;
+        for (int i = 0; i < 8; i++) o += snprintf(rom + o, sizeof(rom) - o, "%02X", addr[i]);
+        const bool crcok = (OneWire::crc8(addr, 7) == addr[7]);
+        const char *fam = addr[0] == 0x28 ? "DS18B20" :
+                          addr[0] == 0x10 ? "DS18S20" :
+                          addr[0] == 0x22 ? "DS1822"  : "?";
+        snprintf(buf, sizeof(buf), "  #%d ROM=%s fam=0x%02X(%s) CRC=%s",
+                 n, rom, addr[0], fam, crcok ? "ok" : "BAD");
+        outln(buf);
+        n++;
+      }
+      snprintf(buf, sizeof(buf), "  search: %d eszkoz", n);
+      outln(buf);
+      // 3) DallasTemperature re-init → dsOk frissítés + parazita-táp + olvasás.
+      ds18b20.begin();
+      dsOk = ds18b20.getDeviceCount() > 0;
+      if (dsOk) {
+        ds18b20.setResolution(12);
+        const bool para = ds18b20.isParasitePowerMode();
+        ds18b20.requestTemperatures();
+        const float c = ds18b20.getTempCByIndex(0);
+        snprintf(buf, sizeof(buf), "  dsOk=YES parazita-tap=%s  t=%.2f C",
+                 para ? "yes" : "no", c);
+      } else {
+        snprintf(buf, sizeof(buf), "  dsOk=NO (DallasTemperature 0 eszkozt lat)");
       }
       outln(buf);
       showMenu();
