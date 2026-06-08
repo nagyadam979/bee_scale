@@ -240,7 +240,7 @@ void loop() {
   if (millis() - lastStreamMs < STREAM_MS) return;
   lastStreamMs = millis();
 
-  if (!scale.wait_ready_timeout(400)) { outln("[HX711] TIMEOUT"); return; }
+  if (!scale.is_ready()) return;
   long  r  = scale.read();
   float kg = (float)(r - scale.get_offset()) / scale.get_scale();
   char  buf[32];
