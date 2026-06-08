@@ -22,6 +22,24 @@
             "w2":      { ".validate": "newData.isNumber()" },
             "$other":  { ".validate": false }
           }
+        },
+
+        "rods": {
+          "//": "Rúdankénti readings: minden board (w1=board_21, w2=board_12) ÖNÁLLÓAN ír a saját rúdjába. Rekord séma: { ts, w }.",
+          "$rod": {
+            "readings": {
+              ".read": "auth != null",
+              ".write": "auth != null && auth.token.email === 'esp32@beescale.local'",
+              ".indexOn": ["ts"],
+
+              "$pushId": {
+                ".validate": "newData.hasChildren(['ts','w'])",
+                "ts":     { ".validate": "newData.isNumber() && newData.val() > 1700000000" },
+                "w":      { ".validate": "newData.isNumber()" },
+                "$other": { ".validate": false }
+              }
+            }
+          }
         }
       }
     }

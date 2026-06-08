@@ -5,8 +5,11 @@
 #include <WiFiServer.h>
 #include <WiFiClient.h>
 #include <Preferences.h>
+#include <time.h>
 
 #include "secrets.h"
+#include "config.h"
+#include "rtdb_writer.h"
 
 // Board "21" — MAC …89:10
 #define HX711_DOUT    2
@@ -133,9 +136,10 @@ static void handleMenuKey(char ch) {
       break;
     case 'i':
       snprintf(buf, sizeof(buf),
-               "\r\n  IP=%s  RSSI=%ddBm\r\n  offset=%ld  factor=%.4f",
+               "\r\n  IP=%s  RSSI=%ddBm\r\n  offset=%ld  factor=%.4f\r\n  rtdb pending=%u",
                WiFi.localIP().toString().c_str(), WiFi.RSSI(),
-               scale.get_offset(), scale.get_scale());
+               scale.get_offset(), scale.get_scale(),
+               (unsigned)rtdbPending());
       outln(buf);
       showMenu();
       break;
@@ -158,6 +162,42 @@ static void handleCalInput(const String& line) {
     out("> ");
     inputBuf = "";
   }
+}
+
+// --- RTDB mintavétel ------------------------------------------------------
+// 5 percenként (és az első érvényes NTP-időnél azonnal) átlagolt kalibrált
+// súlymintát vesz, és a FIFO-ba teszi. NEM blokkol (millis()-alapú), és a
+// telnet módtól FÜGGETLENÜL fut (a loop a streaming early-return ELŐTT hívja).
+static uint32_t g_lastSampleMs    = 0;
+static bool     g_firstSampleDone = false;
+
+static bool timeValid(uint32_t &epochOut) {
+  const time_t now = time(nullptr);
+  if ((uint32_t)now < VALID_EPOCH_MIN) return false;  // óra még nincs szinkronban
+  epochOut = (uint32_t)now;
+  return true;
+}
+
+static void sampleMaintain() {
+  uint32_t epoch;
+  if (!timeValid(epoch)) return;   // ts nélkül nem tűzünk rekordot
+
+  const bool due = !g_firstSampleDone ||
+                   (millis() - g_lastSampleMs >= SEND_INTERVAL_MS);
+  if (!due) return;
+
+  if (!scale.is_ready()) return;   // ha az ADC nem kész, később újrapróbáljuk
+
+  Reading r;
+  r.ts = epoch;
+  r.w  = scale.get_units(WEIGHT_AVG_SAMPLES);  // átlagolt kg: (avg-offset)/scale
+
+  rtdbEnqueue(r);
+  g_lastSampleMs   = millis();
+  g_firstSampleDone = true;
+
+  Serial.printf("[SAMPLE] ts=%lu w=%.2f (pending=%u)\n",
+                (unsigned long)r.ts, r.w, (unsigned)rtdbPending());
 }
 
 // -------------------------------------------------------------------------
@@ -186,6 +226,11 @@ void setup() {
   }
   Serial.printf("[WiFi] OK  IP=%s  RSSI=%ddBm\n",
                 WiFi.localIP().toString().c_str(), WiFi.RSSI());
+
+  // NTP-szinkron (UTC, offset 0) + Firebase RTDB init — WiFi UTÁN.
+  configTime(0, 0, "pool.ntp.org");
+  Serial.println("[NTP] time sync requested");
+  rtdbBegin();
 
   ArduinoOTA.setHostname("bee-scale-21");
   ArduinoOTA.setPassword(OTA_PASSWORD);
@@ -235,6 +280,11 @@ void loop() {
       }
     }
   }
+
+  // RTDB feltöltés + mintavétel: MINDEN loopban, a telnet módtól FÜGGETLENÜL
+  // (a streaming early-return ELŐTT) — különben menü módban leállna a feltöltés.
+  rtdbLoop();
+  sampleMaintain();
 
   if (tMode != STREAM) return;
   if (millis() - lastStreamMs < STREAM_MS) return;
