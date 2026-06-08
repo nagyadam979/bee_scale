@@ -12,8 +12,11 @@
 #include "rtdb_writer.h"
 
 // Board "12" — MAC …31:50
-#define HX711_DOUT    1
-#define HX711_SCK     2
+// HW-csere után (2026-06-08): a régi board_12 HX711-e hibás volt (raw ~-1000 random
+// zaj, majd a modul cseréje után raw=0 stuck). Végül TELJES csere: új ESP32-C3 + új
+// HX711 → stabil raw ~-233k. Az új board bekötése DOUT=2/SCK=1 (= board_21 mappingje).
+#define HX711_DOUT    2
+#define HX711_SCK     1
 #define TELNET_PORT   23
 #define STREAM_MS     500
 #define TARE_SAMPLES  64    // ~6.4 s @ 10 SPS
