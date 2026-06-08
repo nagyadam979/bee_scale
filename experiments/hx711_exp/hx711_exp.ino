@@ -9,9 +9,9 @@
 #include "secrets.h"
 
 // Board "21" (MAC …89:10): DOUT=GPIO2, SCK=GPIO1
-// Board "12" (MAC …31:50): DOUT=GPIO1, SCK=GPIO2  ← itt cserélni
-#define HX711_DOUT   2
-#define HX711_SCK    1
+// Board "12" (MAC …31:50): DOUT=GPIO1, SCK=GPIO2
+#define HX711_DOUT   1
+#define HX711_SCK    2
 #define TELNET_PORT  23
 #define STREAM_MS    500
 
