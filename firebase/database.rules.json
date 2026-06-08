@@ -5,13 +5,10 @@
 
     "hives": {
       "$hive": {
-        "//": "Olvasás: bármely HITELESÍTETT kliens (read-only web app, viewer user).",
         ".read": "auth != null",
 
         "readings": {
-          "//": "Írás: KIZÁRÓLAG a dedikált eszköz-user (email-egyezés). Cseréld ki a saját eszköz-user emailedre. A viewer userek nem írhatnak.",
           ".write": "auth != null && auth.token.email === 'esp32@beescale.local'",
-
           ".indexOn": ["ts"],
 
           "$pushId": {
@@ -25,7 +22,6 @@
         },
 
         "rods": {
-          "//": "Rúdankénti readings: minden board (w1=board_21, w2=board_12) ÖNÁLLÓAN ír a saját rúdjába. Rekord séma: { ts, w }.",
           "$rod": {
             "readings": {
               ".read": "auth != null",
