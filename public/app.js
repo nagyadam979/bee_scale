@@ -5,10 +5,15 @@
 // A védelmet a Security Rules (auth != null olvasáshoz) + a Hosting-domain adja.
 //
 // ADATMODELL (2026-06-08): a két board ÖNÁLLÓAN ír a saját rúd-ágába:
-//   /hives/hive1/rods/w1/readings/{pushId}: { ts, w }   (board_21)
-//   /hives/hive1/rods/w2/readings/{pushId}: { ts, w }   (board_12)
+//   /hives/hive1/rods/w1/readings/{pushId}: { ts, w }       (board_21)
+//   /hives/hive1/rods/w2/readings/{pushId}: { ts, w }       (board_12)
 // A dashboard mindkét streamet olvassa, külön rajzolja (w1, w2), és a w_total-t
 // a két rúd legközelebbi-szomszéd párosításával (időtolerancián belül) összegzi.
+//
+// KÖRNYEZETI ÁG (board_12-re kötött AHT20[+BMP280], kaptár-szintű):
+//   /hives/hive1/env/readings/{pushId}: { ts, t, h[, p] }   (°C, %RH, opc. hPa)
+// Külön (alsó) chartra rajzoljuk: t bal, h jobb Y-tengelyen. A p (nyomás) most
+// nincs a buszon → opcionális; ha később bekerül, a rekord tartalmazza.
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
 import {
@@ -48,6 +53,8 @@ const ROD_PATHS = {
   w1: `hives/${HIVE_ID}/rods/w1/readings`,
   w2: `hives/${HIVE_ID}/rods/w2/readings`,
 };
+// Környezeti ág — { ts, t, h[, p] }.
+const ENV_PATH = `hives/${HIVE_ID}/env/readings`;
 
 // Időablakok (másodperc). null = összes (limittel megfogva).
 const WINDOWS = { "24h": 86400, "7d": 604800, "30d": 2592000, all: null };
@@ -77,6 +84,10 @@ let liveBaselineTs = null;
 // Rúdankénti pontok: pushKey -> { ts, w }
 const points = { w1: new Map(), w2: new Map() };
 let chart = null;
+// Env pontok: pushKey -> { ts, t, h[, p] } + külön chart és live listener.
+const envPoints = new Map();
+let envChart = null;
+let envLiveQuery = null;
 
 // ===========================================================================
 // Auth — anonim (nincs bejelentkező képernyő). A Rules `auth != null`-t vár az
@@ -107,9 +118,14 @@ function showSplash() {
   detachLive();
   points.w1.clear();
   points.w2.clear();
+  envPoints.clear();
   if (chart) {
     chart.destroy();
     chart = null;
+  }
+  if (envChart) {
+    envChart.destroy();
+    envChart = null;
   }
   dashboardView.classList.add("hidden");
   splashView.classList.remove("hidden");
@@ -119,6 +135,7 @@ function showDashboard() {
   splashView.classList.add("hidden");
   dashboardView.classList.remove("hidden");
   ensureChart();
+  ensureEnvChart();
   loadRange(currentRange);
   attachLive(); // élő frissítés a betöltés pillanatától
 }
@@ -192,6 +209,79 @@ function setSeriesVisible(idx, visible) {
 }
 
 // ===========================================================================
+// Env-chart — t (bal Y, °C) + h (jobb Y, %RH). Külön panel a súly-chart alatt.
+// ===========================================================================
+const ENV_T_COLOR = "#ff8a65"; // narancs — hőmérséklet
+const ENV_H_COLOR = "#4fc3f7"; // kék — páratartalom
+
+function ensureEnvChart() {
+  if (envChart) return;
+  const ctx = $("env-chart").getContext("2d");
+  envChart = new Chart(ctx, {
+    type: "line",
+    data: {
+      datasets: [
+        envDs("Hőmérséklet (°C)", ENV_T_COLOR, "y"),
+        envDs("Páratartalom (%RH)", ENV_H_COLOR, "y1"),
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      parsing: false,
+      interaction: { mode: "index", intersect: false },
+      scales: {
+        x: {
+          type: "time",
+          time: { tooltipFormat: "yyyy-MM-dd HH:mm" },
+          ticks: { color: "#9aa0aa", maxRotation: 0, autoSkip: true },
+          grid: { color: "#2c313c" },
+        },
+        y: {
+          position: "left",
+          title: { display: true, text: "°C", color: ENV_T_COLOR },
+          ticks: { color: "#9aa0aa" },
+          grid: { color: "#2c313c" },
+        },
+        y1: {
+          position: "right",
+          title: { display: true, text: "%RH", color: ENV_H_COLOR },
+          ticks: { color: "#9aa0aa" },
+          grid: { drawOnChartArea: false }, // ne dupla rácsozzon
+        },
+      },
+      plugins: {
+        legend: { labels: { color: "#e8eaed" } },
+        tooltip: {
+          callbacks: {
+            label: (c) => {
+              const unit = c.dataset.yAxisID === "y1" ? " %RH" : " °C";
+              return `${c.dataset.label}: ${c.parsed.y.toFixed(1)}${unit}`;
+            },
+          },
+        },
+      },
+    },
+  });
+}
+
+function envDs(label, color, yAxisID) {
+  return {
+    label,
+    data: [],
+    borderColor: color,
+    backgroundColor: color,
+    borderWidth: 2,
+    pointRadius: 0,
+    pointHoverRadius: 4,
+    tension: 0.15,
+    spanGaps: true,
+    yAxisID,
+  };
+}
+
+// ===========================================================================
 // Időablak gombok + Reload
 // ===========================================================================
 document.querySelectorAll(".range-btn").forEach((btn) => {
@@ -223,15 +313,19 @@ async function loadRange(range) {
   setStatus("Betöltés…");
   points.w1.clear();
   points.w2.clear();
+  envPoints.clear();
   try {
-    const [snapW1, snapW2] = await Promise.all([
+    const [snapW1, snapW2, snapEnv] = await Promise.all([
       get(buildQuery(ROD_PATHS.w1, range)),
       get(buildQuery(ROD_PATHS.w2, range)),
+      get(buildQuery(ENV_PATH, range)),
     ]);
     let n1 = 0, n2 = 0;
     snapW1.forEach((c) => { if (addPoint("w1", c.key, c.val())) n1++; });
     snapW2.forEach((c) => { if (addPoint("w2", c.key, c.val())) n2++; });
+    snapEnv.forEach((c) => { addEnvPoint(c.key, c.val()); });
     redraw();
+    envRedraw();
     const n = n1 + n2;
     if (range === "all" && (n1 >= ALL_LIMIT || n2 >= ALL_LIMIT)) {
       setStatus(`⚠️ w1:${n1} / w2:${n2} rekord (plafon: ${ALL_LIMIT}) — a legrégebbiek hiányozhatnak`);
@@ -253,6 +347,17 @@ function addPoint(rod, key, val) {
   return true;
 }
 
+// Env-rekord validálása + felvétele. t,h kötelező; p opcionális. true, ha új és érvényes.
+function addEnvPoint(key, val) {
+  if (!val || typeof val.ts !== "number" ||
+      typeof val.t !== "number" || typeof val.h !== "number") return false;
+  if (envPoints.has(key)) return false;
+  const rec = { ts: val.ts, t: val.t, h: val.h };
+  if (typeof val.p === "number") rec.p = val.p;
+  envPoints.set(key, rec);
+  return true;
+}
+
 // ===========================================================================
 // Élő frissítés — csak a betöltés óta ÚJONNAN érkezett pushok, MINDKÉT rúdon
 // (startAt = baseline → meglévő rekordokra nem tüzel, csak az új mintákra)
@@ -270,6 +375,14 @@ function attachLive() {
       }
     });
   }
+  // Env live stream (ugyanazon baseline-tól, csak az új mintákra tüzel).
+  envLiveQuery = query(ref(db, ENV_PATH), orderByChild("ts"), startAt(liveBaselineTs));
+  onChildAdded(envLiveQuery, (child) => {
+    if (addEnvPoint(child.key, child.val())) {
+      envRedraw();
+      setStatus("Új env minta érkezett");
+    }
+  });
 }
 
 function detachLive() {
@@ -278,6 +391,10 @@ function detachLive() {
       off(liveListeners[rod]);
       liveListeners[rod] = null;
     }
+  }
+  if (envLiveQuery) {
+    off(envLiveQuery);
+    envLiveQuery = null;
   }
 }
 
@@ -366,6 +483,39 @@ function updateLatest(rows1, rows2) {
   timeEl.textContent = d.toLocaleString("hu-HU"); // helyi időzóna
   const ageSec = Math.floor(Date.now() / 1000) - newestTs;
   banner.classList.toggle("hidden", ageSec <= STALE_AFTER_SEC);
+}
+
+// ===========================================================================
+// Env-chart rajzolás + fejléc-chip
+// ===========================================================================
+function envRedraw() {
+  if (!envChart) return;
+  const minTs = windowMinTs();
+  const rows = [...envPoints.values()]
+    .filter((p) => p.ts >= minTs)
+    .sort((a, b) => a.ts - b.ts);
+
+  envChart.data.datasets[0].data = rows.map((p) => ({ x: p.ts * 1000, y: p.t }));
+  envChart.data.datasets[1].data = rows.map((p) => ({ x: p.ts * 1000, y: p.h }));
+  envChart.update();
+
+  $("env-empty-state").classList.toggle("hidden", rows.length > 0);
+  updateEnvChip(rows);
+}
+
+// Fejléc-chip: az aktuális időablak LEGUTOLSÓ env mintája.
+function updateEnvChip(rows) {
+  const valEl = $("env-value");
+  const timeEl = $("env-time");
+  if (!rows.length) {
+    valEl.textContent = "– °C · – %";
+    timeEl.textContent = "nincs env adat";
+    return;
+  }
+  const last = rows[rows.length - 1];
+  const p = typeof last.p === "number" ? ` · ${last.p.toFixed(0)} hPa` : "";
+  valEl.textContent = `${last.t.toFixed(1)} °C · ${last.h.toFixed(0)} %${p}`;
+  timeEl.textContent = new Date(last.ts * 1000).toLocaleString("hu-HU");
 }
 
 function setStatus(msg) {

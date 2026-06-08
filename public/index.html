@@ -24,9 +24,15 @@
   <section id="dashboard-view" class="view hidden">
     <header class="topbar">
       <div class="brand">🐝 bee_scale</div>
-      <div class="latest">
-        <span class="latest-value" id="latest-value">– kg</span>
-        <span class="latest-time" id="latest-time">nincs adat</span>
+      <div class="topbar-meta">
+        <div class="latest env-chip">
+          <span class="latest-value" id="env-value">– °C · – %</span>
+          <span class="latest-time" id="env-time">nincs env adat</span>
+        </div>
+        <div class="latest">
+          <span class="latest-value" id="latest-value">– kg</span>
+          <span class="latest-time" id="latest-time">nincs adat</span>
+        </div>
       </div>
     </header>
 
@@ -52,6 +58,12 @@
     <div class="chart-wrap">
       <canvas id="chart"></canvas>
       <div id="empty-state" class="empty-state hidden">Nincs megjeleníthető adat ebben az időablakban.</div>
+    </div>
+
+    <h2 class="section-title">Hőmérséklet / páratartalom</h2>
+    <div class="chart-wrap env-wrap">
+      <canvas id="env-chart"></canvas>
+      <div id="env-empty-state" class="empty-state hidden">Nincs env adat ebben az időablakban.</div>
     </div>
   </section>
 
