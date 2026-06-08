@@ -11,8 +11,9 @@
 enum RecType : uint8_t { REC_WEIGHT, REC_ENV };
 
 // Egy feltöltendő rekord. ts = UTC epoch másodperc (mindkét típusnál).
-//   REC_WEIGHT → READINGS_PATH,     payload: { ts, w }      (w = kalibrált kg)
-//   REC_ENV    → ENV_READINGS_PATH, payload: { ts, t, h, p } (°C, %RH, hPa)
+//   REC_WEIGHT → READINGS_PATH,     payload: { ts, w }       (w = kalibrált kg)
+//   REC_ENV    → ENV_READINGS_PATH, payload: { ts, t, h[, p] } (°C, %RH, hPa)
+//                a p (nyomás) OPCIONÁLIS: NaN esetén kimarad a payloadból.
 // A két típus EGY közös FIFO-ban utazik, beérkezési sorrendben ürül.
 struct Reading {
   uint32_t ts;

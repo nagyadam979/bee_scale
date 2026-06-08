@@ -227,19 +227,22 @@ static bool timeValid(uint32_t &epochOut) {
   return true;
 }
 
-// AHT20 (t,h) + BMP280 (p) → env Reading. Csak akkor true, ha MINDHÁROM érték
-// érvényes — a rules {ts,t,h,p}-t vár, NaN/hiányzó mezőt nem töltünk fel.
+// AHT20 (t,h) + opcionálisan BMP280 (p) → env Reading. Az AHT20 a kötelező mag:
+// ha az nincs / nem ad adatot → nincs env minta (false). A nyomás OPCIONÁLIS —
+// ha a BMP280 nem elérhető vagy hibázik, p = NAN, és a push kihagyja a p mezőt.
 static bool readEnv(uint32_t epoch, Reading &r) {
-  if (!ahtOk || !bmpOk) return false;
+  if (!ahtOk) return false;                      // AHT20 nélkül nincs env minta
   sensors_event_t hum, tmp;
   if (!aht.getEvent(&hum, &tmp)) return false;
-  const float pa = bmp.readPressure();          // Pa
-  if (!(pa > 0.0f)) return false;
   r.ts   = epoch;
   r.type = REC_ENV;
   r.t    = tmp.temperature;                      // °C
   r.h    = hum.relative_humidity;                // %RH
-  r.p    = pa / 100.0f;                          // hPa
+  r.p    = NAN;                                  // nyomás csak ha a BMP280 él
+  if (bmpOk) {
+    const float pa = bmp.readPressure();         // Pa
+    if (pa > 0.0f) r.p = pa / 100.0f;            // hPa
+  }
   return true;
 }
 

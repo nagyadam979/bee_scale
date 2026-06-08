@@ -45,7 +45,7 @@
             ".indexOn": ["ts"],
 
             "$pushId": {
-              ".validate": "newData.hasChildren(['ts','t','h','p'])",
+              ".validate": "newData.hasChildren(['ts','t','h'])",
               "ts":     { ".validate": "newData.isNumber() && newData.val() > 1700000000" },
               "t":      { ".validate": "newData.isNumber()" },
               "h":      { ".validate": "newData.isNumber()" },

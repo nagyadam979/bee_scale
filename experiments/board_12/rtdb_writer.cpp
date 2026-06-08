@@ -100,12 +100,18 @@ bool tryPushFront() {
   JsonWriter w;
 
   if (r.type == REC_ENV) {
+    // A nyomás (p) opcionális: ha a BMP280 nem elérhető (r.p == NAN), csak {ts,t,h}
+    // megy fel. A rules ezt engedi (p nem kötelező gyerek).
     object_t o_ts, o_t, o_h, o_p;
     w.create(o_ts, "ts", r.ts);              // uint32 epoch sec (idézőjel nélkül)
     w.create(o_t,  "t",  number_t(r.t, 2));  // °C, 2 tizedes
     w.create(o_h,  "h",  number_t(r.h, 2));  // %RH
-    w.create(o_p,  "p",  number_t(r.p, 2));  // hPa
-    w.join(json, 4, o_ts, o_t, o_h, o_p);
+    if (isnan(r.p)) {
+      w.join(json, 3, o_ts, o_t, o_h);
+    } else {
+      w.create(o_p, "p", number_t(r.p, 2));  // hPa
+      w.join(json, 4, o_ts, o_t, o_h, o_p);
+    }
     path = kEnvPath;
   } else {  // REC_WEIGHT
     object_t o_ts, o_w;
