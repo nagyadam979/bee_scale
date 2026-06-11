@@ -16,10 +16,12 @@
 
 ## Megjegyzés a kitelepítéshez
 
-A firmware jelenleg **erre a teszt-hálózatra** van fordítva (`secrets.h`).
-A telephelyi kitelepítéskor a helyszíni 2.4 GHz-es SSID/jelszóra kell átírni a
-`secrets.h`-t, majd újraflashelni (OTA-val, ha azonos hálón vagy; különben USB).
-A telephelyi WiFi kiépítése a `MEMORY.md` szerint a kitelepítés fő nyitott pontja.
+**2026-06-11:** a `secrets.h` (mindkét board) átállítva a **telephelyi hálózatra:
+`TP-Link_4448`** (2.4 GHz). A jelszó a gitignore-olt `secrets.h`-ban. A teszt-háló
+(`AMS-TP-2.4GHz`) már nincs használatban — ez a doksi historikus referencia.
+
+A változás életbe lépéséhez **újra kell flashelni** mindkét boardot (OTA, ha azonos
+hálón vagy; különben USB), mert a WiFi credential fordítási időben kerül a firmware-be.
 
 ## secrets.h szerkezete (példa, érték nélkül)
 
