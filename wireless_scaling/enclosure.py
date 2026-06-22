@@ -96,14 +96,25 @@ gasket_groove_w  = 2.5    # [mm] tömítőhorony szélesség
 gasket_groove_d  = 2.0    # [mm] tömítőhorony mélység
 
 # ---- PG7 kábeltömszelencék (elülső −Y fal) -------------------------------------------
+# Áthaladó kábelek: (1) mérőcella kábel (Ø0.8 × 4/3 ér), (2) DS18B20 kábel.
+# ⚠️ A DS18B20 a SIMA TO-92 tranzisztortokos verzió (NEM a vízálló kapszulázott szonda) →
+#    a kábel 3 különálló vékony ér (nincs Ø4 mm-es köpeny). PG7 (kábeltartomány ~3–6.5 mm)
+#    vékony kábelre lazán tömít → vagy közös köpenybe húzd a 3 eret, vagy kisebb tömszelence
+#    (pl. PG5/M8) ehhez az egy furathoz. A gland_hole_dia furatonként külön is állítható.
 gland_hole_dia   = 12.5   # [mm] PG7 tömszelence furat
 gland_count      = 3      # [db] tömszelence-furatok száma
 gland_z          = 18.0   # [mm] furatok magassága a z=0 alaptól
 gland_spacing    = 20.0   # [mm] furatok közti X-osztás (a −Y fal közepére rendezve)
 
 # ---- 18650 akku-rekesz (+X oldal, válaszfallal leválasztva) ---------------------------
+# Holder (HESTORE/generic single 18650, vezetékkel), WEBRŐL forrásolt befoglaló: 74.5 × 21.5
+# × 17.7 mm; a VEZETÉK a holder KÉT ELLENTÉTES VÉGÉN lép ki, nincs szerelőfül.
+# → A rekesz X-szélessége a 21.5-höz igazítva (bat_w − wall ≈ hasznos szélesség).
+# ⚠️ A holder hossza (74.5) majdnem kitölti az inner_y-t (80) → a végeken csak ~5 mm marad a
+#    rugós érintkezőnek + kábelhajlatnak. Ha szűk: növeld inner_y-t, vagy ültesd ferdén.
 bat_w            = 26.0   # [mm] az akku-rekesz X-szélessége (a belső +X faltól befelé)
-                          #      hasznos belső szélesség ≈ bat_w − wall (a válaszfal levonva)
+                          #      hasznos belső szélesség ≈ bat_w − wall = 23 mm (holder 21.5 befér)
+bat_cable_dia    = 8.0    # [mm] kábel-átvezető furat a válaszfalon (holder vezetékei → elektronika)
 # Akku-ajtó NYÍLÁS a +X falon (a rekeszbe néz):
 bat_open_y       = 50.0   # [mm] ajtónyílás szélessége Y-ban
 bat_open_z       = 38.0   # [mm] ajtónyílás magassága Z-ben
@@ -111,22 +122,25 @@ bat_door_overlap = 8.0    # [mm] az ajtólap túlnyúlása a nyíláson (tömít
 door_th          = 4.0    # [mm] akku-ajtó lapvastagság
 bat_boss_inset   = 5.0    # [mm] akku-ajtó sarok-boss behúzása az ajtó szélétől
 
-# ---- PCB tartóoszlopok az ALSÓ FEDÉLEN (PLACEHOLDER pozíciók) -------------------------
-# Heat-set betét M3 standoffhoz (kisebb, mint az M5 burkolatcsavar).
-pcb_insert_dia    = 4.0   # [mm] M3 heat-set betét furat
-pcb_insert_depth  = 6.0   # [mm] betétfurat mélység a standoffban
-pcb_boss_dia      = 7.0   # [mm] standoff külső átmérő
-pcb_boss_h        = 6.0   # [mm] standoff magasság (emeli a panelt a fedél fölé)
-# PLACEHOLDER panel-furatképek (a fedél belsejére, z=0 sík fölött). Írd át a tényleges
-# panelméretek szerint. Origó = doboz közepe; az elektronika a −X / közép térfélen ül,
-# az akku-rekesz a +X oldalon van (oda ne tegyél PCB-bosst).
-#   ESP32-C3 SuperMini furatkép ~ 22.5 x 18 mm  (placeholder)
-#   HX711-M panel furatkép      ~ 28 x 14 mm     (placeholder)
-pcb_boss_positions = [
-    # ESP32-C3 SuperMini (4 sarok) — bal hátsó sarok köré
-    (-38.0,  22.0), (-15.5,  22.0), (-38.0,   4.0), (-15.5,   4.0),
-    # HX711-M (4 sarok) — bal elülső sarok köré
-    (-36.0, -26.0), (-8.0,  -26.0), (-36.0, -12.0), (-8.0,  -12.0),
+# ---- PCB-k rögzítése az ALSÓ FEDÉLEN: SZORÍTÓBORDÁS fészkek (CSAVAR NÉLKÜL) -----------
+# DÖNTÉS (web-kutatás alapján): a SuperMini és a TP4056 furat NÉLKÜLI, a HX711 furatképe
+# klón-/gyártófüggő és bizonytalan → MINDEGYIK panelt becsúsztatós szorítóbordák közé
+# fogjuk, nincs heat-set betét a PCB-khez. A panel felülről becsúszik, a sarok-padokon ül,
+# a sarok-oszlopok oldalról fogják. Forrasztás-hézag a pad-magasságból.
+pcb_post_sz   = 3.0   # [mm] sarok-szorítóoszlop keresztmetszete (négyzet)
+pcb_post_h    = 8.0   # [mm] oszlopmagasság (a panel-él fölé ér, oldalt fog)
+pcb_pad_sz    = 3.5   # [mm] sarok-támasztópad mérete (a panel sarka ezen ül)
+pcb_pad_h     = 2.5   # [mm] támasztópad magasság = forrasztás-hézag a fedél felett
+# Panelfészkek: (név, közép_x, közép_y, szélesség_x, mélység_y) — befoglaló méretek WEBRŐL,
+# forrásolva. A POZÍCIÓK PLACEHOLDER: tuningold a tényleges kábelezés/USB-C hozzáférés szerint.
+# Az elektronika a −X/közép térfélen ül; az akku-rekesz a +X oldalon (oda ne tegyél fészket).
+#   HX711 zöld generic ...... 34 x 21 mm   (sarokfurat-osztás bizonytalan → bordás fogás)
+#   ESP32-C3 SuperMini ...... 24 x 18 mm   (USB-C túlnyúlással; furat NINCS)
+#   TP4056 USB-C PROT ....... 29 x 17.3 mm (furat NINCS; USB-C hozzáférés kell töltéshez)
+pcb_nests = [
+    ("HX711",     -28.0,  22.0, 34.0, 21.0),
+    ("SuperMini", -30.0, -22.0, 24.0, 18.0),
+    ("TP4056",      4.0,  -2.0, 29.0, 17.3),
 ]
 
 # =========================================================================================
@@ -170,6 +184,10 @@ def build_housing():
     part_x = inner_x / 2 - bat_w
     partition = Pos(part_x, 0, 0) * Box(wall, inner_y, inner_z, align=(MIN, C, MIN))
     housing += partition
+    # Kábel-átvezető furat a válaszfalon (a holder vezetékei a rekesz +Y vége felől jutnak
+    # át az elektronikához) — PLACEHOLDER pozíció a felső sarokban, tengely X:
+    housing -= Pos(part_x + wall / 2, inner_y / 2 - 12, inner_z - 8) * Rot(0, 90, 0) * \
+        Cylinder(bat_cable_dia / 2, wall + 2 * eps, align=(C, C, C))
 
     # --- Merevítő BORDÁK a plató alatt (lelógnak a tetőből a belső térbe) ---
     # X-irányú bordák (Y-pozíciókon), a tető alól rib_drop mélyen:
@@ -272,10 +290,19 @@ def build_bottom_lid():
     for (px, py) in corner_positions:
         lid -= Pos(px, py, 0) * Cylinder(screw_clear_dia / 2, lid_th + 2 * eps, align=(C, C, MAX))
 
-    # FELFELÉ álló PCB-tartóoszlopok (PLACEHOLDER pozíciók) + M3 betétfurat felülről:
-    for (px, py) in pcb_boss_positions:
-        lid += Pos(px, py, 0) * Cylinder(pcb_boss_dia / 2, pcb_boss_h, align=(C, C, MIN))
-        lid -= Pos(px, py, pcb_boss_h) * Cylinder(pcb_insert_dia / 2, pcb_insert_depth + eps, align=(C, C, MAX))
+    # SZORÍTÓBORDÁS PCB-fészkek (csavar nélkül): panelenként 4 sarok-szorítóoszlop +
+    # 4 sarok-támasztópad. A panel felülről becsúszik, a padokon ül, az oszlopok oldalt fogják.
+    for (_name, cx, cy, w, hh) in pcb_nests:
+        for sx in (-1, 1):
+            for sy in (-1, 1):
+                # sarok-szorítóoszlop a panel élén KÍVÜL (a panelt oldalról fogja):
+                ox = cx + sx * (w / 2 + fit_gap + pcb_post_sz / 2)
+                oy = cy + sy * (hh / 2 + fit_gap + pcb_post_sz / 2)
+                lid += Pos(ox, oy, 0) * Box(pcb_post_sz, pcb_post_sz, pcb_post_h, align=(C, C, MIN))
+                # sarok-támasztópad a panel sarka ALATT (a panel pereme erre ül):
+                px = cx + sx * (w / 2 - pcb_pad_sz / 2)
+                py = cy + sy * (hh / 2 - pcb_pad_sz / 2)
+                lid += Pos(px, py, 0) * Box(pcb_pad_sz, pcb_pad_sz, pcb_pad_h, align=(C, C, MIN))
 
     return lid
 
