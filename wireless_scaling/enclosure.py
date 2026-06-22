@@ -87,9 +87,10 @@ boss_dia         = pilot_dia + 2 * 1.85   # [mm] boss külső átmérő (~5.8; e
 
 # ---- Sarok csavar-bossok (fő fedél + akku-ajtó közös rendszere) ----
 boss_h           = 7.0    # [mm] alsó-fedél sarok-bossok magassága (z=0-tól) = pilot_depth(6) + ~1 fenék — FELE a 14-nek
-corner_inset     = boss_dia / 2 + 2.0  # [mm] sarok-boss közép behúzása a BELSŐ faltól: a boss SZÉLE
-                          #      2 mm-re a falsíktól (user: "majdnem a szélére"). =4.9; a tömítőhorony
-                          #      belső éle (x=31/y=40.5) még kintebb → a boss nem éri (IP65 sértetlen).
+corner_inset     = 3.0    # [mm] sarok-boss közép behúzása a BELSŐ faltól — PONTOSAN A SAROKBA (user).
+                          #      A boss SZÉLE így ~0.1 mm-re a falsík, a tömítőhorony belső éle
+                          #      (x=31/y=40.5) még kintebb → a boss nem éri a hornyot (IP65 sértetlen).
+side_inset       = corner_inset  # [mm] az OLDAL-KÖZÉP bossok behúzása a faltól (ugyanaz a logika)
 
 # ---- FELSŐ PLATÓ: NÉGYZETES fél-hidas mérőcella (SC902/YZC ~34×34), BESÜLLYESZTVE ------
 # Koncepció: a cella a tető SÜLLYESZTETT pocketjében ül; a kaptár KÖZVETLENÜL a cella dómjára
@@ -164,26 +165,11 @@ bat_w            = 26.0   # [mm] az akku-rekesz X-szélessége (a belső +X falt
                           #      marad hézag: hasznos ≈ bat_w − partition_th = 23.5 mm (holder 21.5 befér)
                           #      a holder a +X strip-ben fekszik, hossza (74.5) ∥ Y
 bat_cable_dia    = 8.0    # [mm] kábel-átvezető furat a válaszfalon (holder vezetékei → elektronika)
-# Akku-ajtó: SÜLLYESZTETT (flush) a +X hosszú falon. A 18650 a +X strip-ben fekszik (∥ Y);
-# az ajtó "kicsit nagyobb mint az akku" → a nyílás > cella, hogy a 18650 kivehető legyen.
-# AKKU-REKESZ Z-POZÍCIÓ (user): a holder+aksi a sarok-bossok TETEJE fölé ül holder_gap-pel
-# ("csavarfejek pár mm-re az akku tartótól"); az ajtó/nyílás EHHEZ a sávhoz igazodik, nem a
-# doboz közepéhez → a magasság minimalizálható.
+# AKKU-REKESZ Z-POZÍCIÓ: a holder+aksi a sarok-bossok TETEJE fölé ül holder_gap-pel ("csavarfejek
+# pár mm-re az akku tartótól"). OLDALSÓ AKKU-AJTÓ NINCS (user: törölve) → a 18650-hez ALULRÓL, a
+# bottom_lid felől férsz hozzá; a +X fal tömör. (A bat_open_*/door_* paraméterek törölve.)
 holder_gap       = 2.0    # [mm] hézag a sarok-boss teteje (boss_h) és az akku-tartó alja közt
 batt_z0          = boss_h + holder_gap   # [mm] az akku-rekesz (holder+aksi) ALJA z-ben (=9.0)
-# Ajtónyílás: a +X oldal "majdnem teljes egészében ajtó" 1 mm karimával (user). A nyílás a
-# HOLDER beraknához (74.5 ∥ Y) és a 18650 OLDALRA húzásához (Ø18.5) van méretezve.
-bat_open_y       = 76.0   # [mm] nyílás Y = holder hossz 74.5 + ~1.5 hézag (a holder is bedugható)
-# A nyílás LEMEGY majdnem az aljáig (user: "ne maradjon fal", csak ~fél centi perem az alsó
-# tömítőhoronynak). Alja = floor_margin(5) + karima(1); teteje a 18650 tetejét fedi (~z=28) a
-# kivételhez. A sarok-bossok (z[0,7]) beljebb vannak X-ben (x≤28) → a nyílás (fal x≥30.5) nem éri.
-bat_door_overlap = 1.0    # [mm] karima (rebate-váll) a nyílás körül — user: 2→1
-bat_floor_margin = 5.0    # [mm] az AJTÓ alja a doboz aljától ("fél centi" perem az alsó horonynak)
-bat_open_z0      = bat_floor_margin + bat_door_overlap   # [mm] a nyílás ALJA z-ben (=6.0)
-bat_open_z       = (batt_z0 + 18.5 + 0.5) - bat_open_z0  # [mm] nyílás Z: a teteje a 18650 (Ø18.5) tetejét fedi → =22
-door_th          = 3.0    # [mm] akku-ajtó lapvastagság = a rebate mélysége (FLUSH a fallal)
-bat_recess_d     = door_th  # [mm] rebate (besüllyesztés) mélysége a +X külső faltól → az ajtó síkban van
-bat_boss_inset   = 5.0    # [mm] akku-ajtó sarok-boss behúzása a váll szélétől
 
 # ---- PCB-k rögzítése — ⚠️ A HÁZ MÁR NEM ÉPÍT TARTÓT (user döntés) ----------------------
 # DÖNTÉS (user): minden komponens EGY közös alaplapra forrasztva; a board-tartást a felhasználó
@@ -210,15 +196,22 @@ pcb_nests = [
 outer_x   = inner_x + 2 * long_wall_th  # külső szélesség (a HOSSZÚ ±X falak vastagabbak)
 outer_y   = inner_y + 2 * wall          # külső mélység   (a rövid ±Y falak)
 housing_h = inner_z + top_th            # ház teljes magassága (alja nyitott, teteje plató)
-bat_cz    = bat_open_z0 + bat_open_z / 2  # akku-nyílás/ajtó Z-KÖZÉP (a rekesz szintjén, NEM inner_z/2)
 eps       = 0.5                         # [mm] boolean-tisztasághoz extra túllógás
 
-# A sarok-boss középpontok (a belső sarkoktól behúzva) — fő fedél rögzítéséhez:
+# A sarok-boss középpontok (a 4 belső sarokban) — fő fedél rögzítéséhez (L-gusset mindkét falhoz):
 corner_positions = [
     ( inner_x / 2 - corner_inset,  inner_y / 2 - corner_inset),
     (-inner_x / 2 + corner_inset,  inner_y / 2 - corner_inset),
     ( inner_x / 2 - corner_inset, -inner_y / 2 + corner_inset),
     (-inner_x / 2 + corner_inset, -inner_y / 2 + corner_inset),
+]
+# OLDAL-KÖZÉP boss középpontok (mind a 4 fal közepén) — extra fedél-rögzítés (user). Egy-irányú
+# gusset a saját falához. (A +X fal közepe az akku-rekesz fölött van — a boss a holder ALATT, lásd lent.)
+side_positions = [
+    ( inner_x / 2 - side_inset, 0.0),   # +X fal közép
+    (-inner_x / 2 + side_inset, 0.0),   # −X fal közép (az USB-portok y=−11/+13 közé, z-ben alá esik)
+    (0.0,  inner_y / 2 - side_inset),   # +Y fal közép
+    (0.0, -inner_y / 2 + side_inset),   # −Y fal közép
 ]
 
 # Tömítőhorony középvonalának fél-kiterjedése (a falközépen fut körbe):
@@ -300,22 +293,10 @@ def build_housing():
     # --- (A −Y falon korábbi PG7 tömszelence-furatok ELTÁVOLÍTVA, user kérés) ---
     # A kábel-bevezetés módja (cella-kábel, DS18B20) ezzel ÚJRA NYITOTT kérdés → lásd HANDOFF.
 
-    # --- AKKU-AJTÓ: SÜLLYESZTETT (flush) fedő a +X hosszú falon, CSAVAR NÉLKÜL ---
-    # (user: a csavarozás kivéve — marad a süllyesztett fedő + a tömítőhorony az ajtóban.)
-    # (1) rebate-pocket az ajtónak (bat_recess_d mély, váll-méretű) → az ajtó síkban ül;
-    # (2) a rebate-fenéken át a kavitásba nyíló ÁTMENŐ nyílás. NINCS sarok-boss / betétfurat.
-    face_x   = outer_x / 2                       # +X külső falsík
-    # bat_cz (az ajtó/nyílás Z-középpontja) MODUL-SZINTŰ → a rekesz szintjén, nem inner_z/2.
-    reb_y    = bat_open_y + 2 * bat_door_overlap  # rebate (váll) Y-mérete
-    reb_z    = bat_open_z + 2 * bat_door_overlap  # rebate (váll) Z-mérete
-    # (1) rebate-pocket: a +X külső faltól befelé bat_recess_d mélyen (az ajtó + fit_gap belefér):
-    housing -= Pos(face_x, 0, bat_cz) * Box(
-        bat_recess_d + eps, reb_y + 2 * fit_gap, reb_z + 2 * fit_gap, align=(MAX, C, C)
-    )
-    # (2) ÁTMENŐ nyílás a rebate-fenéktől a kavitásba (a teljes hosszú falon át):
-    housing -= Pos(face_x, 0, bat_cz) * Box(
-        long_wall_th + 2 * eps, bat_open_y, bat_open_z, align=(MAX, C, C)
-    )
+    # --- AKKU-AJTÓ ELHAGYVA (user: "hagyjuk a battery doort, úgyse cseréljük sűrűn") ---
+    # A +X hosszú fal TÖMÖR. A 18650-hez ALULRÓL (a bottom_lid levételével) férsz hozzá — az alja
+    # amúgy is nyitott a lid alatt. Nincs oldalsó rebate/nyílás → a +X fal vízálló, és nem köti a
+    # magasságot. (A válaszfal + akku-rekesz MEGMARAD, csak az oldalsó hozzáférés szűnt meg.)
 
     # --- USB-C portok a −X HOSSZÚ falon (2 KÜLÖN, süllyesztett dugóhoz) ---
     # Portonként: (1) rebate-pocket a −X külső faltól befelé (+X) usb_recess_d mélyen (a dugó
@@ -343,25 +324,48 @@ def build_housing():
                      gasket_groove_d, align=(C, C, MIN))
     housing -= (groove_out - groove_in)
 
-    # --- FŐ FEDÉL sarok-bossok a belső sarkokban (pilot furat alulról, z=0-tól felfelé) ---
+    # --- FŐ FEDÉL rögzítő-bossok: 4 SAROK + 4 OLDAL-KÖZÉP (M2.5 önmetsző, pilot furat alulról) ---
     # A boss a belső térben áll (a faltól behúzva), ezért GUSSET köti a falhoz — a tömítőhorony
-    # FÖLÖTT (z ≥ gasket_groove_d), hogy a z=0 peremen a tömítőcsatorna sértetlen maradjon.
-    # ⚠️ A gusset CSAK a ±Y (RÖVID) fal felé nyúlik. A ±X (hosszú) falakban SÜLLYESZTÉS van
-    # (akku-ajtó rebate a +X-en, USB recess a −X-en); ha a gusset oda nyúlna, a rebate terébe /
-    # az ajtó tömítőhornyába lógna (a user által jelzett ütközés). A ±Y falnál rendes 3 mm tömör
-    # anyag van a horony felett → ide kapcsolódik robosztusan (boss+gusset+fal+plató = 1 solid).
-    gusset_wall_grip = 0.5   # [mm] a gusset ennyivel ér a belső falsík MÖGÉ (átfedés az 1 solidhoz)
-    for (px, py) in corner_positions:
+    # FÖLÖTT (z ≥ gasket_groove_d), hogy a z=0 peremen a tömítőcsatorna sértetlen maradjon. Most már
+    # NINCS oldalsó süllyesztés (akku-ajtó törölve) → a gusset MINDKÉT falig mehet a sarkokban.
+    gd = gasket_groove_d
+
+    def add_boss(px, py):
+        """Boss + önmetsző pilot furat alulról (z=0-tól), heat-set betét nélkül."""
+        b  = Pos(px, py, 0) * Cylinder(boss_dia / 2, boss_h, align=(C, C, MIN))
+        h  = Pos(px, py, 0) * Cylinder(pilot_dia / 2, pilot_depth, align=(C, C, MIN))
+        return b, h
+
+    def x_gusset(px, py):
+        """Gusset a bosstól a ±X falig, a boss szélességében (Y), a horony felett."""
+        sx = 1 if px > 0 else -1
+        x_wall = sx * inner_x / 2
+        gxc = (px + x_wall) / 2
+        glx = abs(x_wall - px) + boss_dia / 2
+        return Pos(gxc, py, gd) * Box(glx, boss_dia, boss_h - gd, align=(C, C, MIN))
+
+    def y_gusset(px, py):
+        """Gusset a bosstól a ±Y falig, a boss szélességében (X), a horony felett."""
         sy = 1 if py > 0 else -1
-        by_far = py - sy * boss_dia / 2                  # boss doboz-közép felőli széle (Y-ban)
-        wy     = sy * (inner_y / 2 + gusset_wall_grip)   # a ±Y belső falsík mögé grip-ig
-        gyc    = (by_far + wy) / 2
-        gly    = abs(wy - by_far)
-        # Gusset: a boss szélességében (X=boss_dia), a bosstól a ±Y falig (a horony felett):
-        housing += Pos(px, gyc, gasket_groove_d) * Box(boss_dia, gly, boss_h - gasket_groove_d, align=(C, C, MIN))
-        # Maga a boss + ÖNMETSZŐ PILOT furat alulról (z=0-tól) — nincs heat-set betét:
-        housing += Pos(px, py, 0) * Cylinder(boss_dia / 2, boss_h, align=(C, C, MIN))
-        housing -= Pos(px, py, 0) * Cylinder(pilot_dia / 2, pilot_depth, align=(C, C, MIN))
+        y_wall = sy * inner_y / 2
+        gyc = (py + y_wall) / 2
+        gly = abs(y_wall - py) + boss_dia / 2
+        return Pos(px, gyc, gd) * Box(boss_dia, gly, boss_h - gd, align=(C, C, MIN))
+
+    # SAROK-bossok: L-gusset MINDKÉT falhoz (X + Y) — "összekötve mindkét oldallal" (user):
+    for (px, py) in corner_positions:
+        housing += x_gusset(px, py)
+        housing += y_gusset(px, py)
+        b, h = add_boss(px, py)
+        housing += b
+        housing -= h
+
+    # OLDAL-KÖZÉP bossok: egy-irányú gusset a LEGKÖZELEBBI falhoz:
+    for (px, py) in side_positions:
+        housing += (x_gusset(px, py) if abs(px) > abs(py) else y_gusset(px, py))
+        b, h = add_boss(px, py)
+        housing += b
+        housing -= h
 
     return housing
 
@@ -375,29 +379,17 @@ def build_bottom_lid():
     # lid_th vékonyítva (modul-szintű paraméter); a statikát a user végzi.
     lid = Box(outer_x - 2 * fit_gap, outer_y - 2 * fit_gap, lid_th, align=(C, C, MAX))
 
-    # 4 sarok átmenő csavarfurat (M5) a ház sarok-bossaihoz, alulról:
-    for (px, py) in corner_positions:
+    # 8 átmenő csavarfurat (M2.5) a ház bossaihoz, alulról: 4 SAROK + 4 OLDAL-KÖZÉP:
+    for (px, py) in corner_positions + side_positions:
         lid -= Pos(px, py, 0) * Cylinder(screw_clear_dia / 2, lid_th + 2 * eps, align=(C, C, MAX))
 
     return lid
 
 
 # =========================================================================================
-#  3)  A K K U - A J T Ó   ( battery_door )  —  lokális XY síkban, laposan nyomtatható
+#  (A K K U - A J T Ó   T Ö R Ö L V E  — user: "hagyjuk a battery doort". A +X fal tömör,
+#   a 18650-hez alulról, a bottom_lid felől férsz hozzá. Csak 2 nyomtatandó part maradt.)
 # =========================================================================================
-def build_battery_door():
-    # Az ajtó a rebate-be ül (footprint = rebate − fit_gap körben). Lokál: X=szélesség (→Y a
-    # házon), Y=magasság (→Z), Z=vastagság (→X). A lokál Z=0 lap a ház felé néz (rebate-fenék).
-    dw = bat_open_y + 2 * bat_door_overlap - 2 * fit_gap
-    dh = bat_open_z + 2 * bat_door_overlap - 2 * fit_gap
-    door = Box(dw, dh, door_th, align=(C, C, MIN))
-
-    # ⚠️ TÖMÍTŐHORONY ELHAGYVA: a karima (bat_door_overlap=1) túl keskeny a gasket_groove_w=2
-    # széles horonyhoz (belógna a nyílásba ÉS túl a peremen). Az ajtó SIMA süllyesztett lap.
-    # → Az akku-ajtó TÖMÍTÉSE és RETENCIÓJA NYITOTT (lapos tömítés a rebate-fenékre / O-gyűrű /
-    #   pattintó-klips) — külön megoldandó az IP65-höz. (CSAVARFURAT sincs, user korábbi döntés.)
-
-    return door
 
 
 # =========================================================================================
@@ -406,14 +398,6 @@ def build_battery_door():
 def main():
     housing = build_housing()
     bottom_lid = build_bottom_lid()
-    battery_door = build_battery_door()
-
-    # Az akku-ajtó az ASSEMBLY nézethez a +X falra forgatva/helyezve, a REBATE-BE süllyesztve.
-    # Rot(0,90,90):  lokál +X → globál +Y (szélesség),  lokál +Y → +Z (magasság),
-    #                lokál +Z → +X (vastagság). Így a 4 sarokfurat a ház bossaira esik.
-    # A door lokál Z=0 lapja a rebate FENEKÉRE (outer_x/2 − bat_recess_d) kerül, és +X felé
-    # door_th vastagon a külső falsíkig (outer_x/2) ér → FLUSH a fallal.
-    door_assembled = Pos(outer_x / 2 - bat_recess_d, 0, bat_cz) * Rot(0, 90, 90) * battery_door
 
     # --- Élő viewer (ocp_vscode). Headless futásnál ne dőljön el az export miatt. ---
     try:
@@ -424,10 +408,10 @@ def main():
         if not os.environ.get("OCP_PORT"):
             set_port(3939)
         show(
-            housing, bottom_lid, door_assembled,
-            names=["housing", "bottom_lid", "battery_door"],
-            colors=["#9aa0a6", "#4f8cff", "#ff9f43"],
-            alphas=[0.55, 1.0, 1.0],
+            housing, bottom_lid,
+            names=["housing", "bottom_lid"],
+            colors=["#9aa0a6", "#4f8cff"],
+            alphas=[0.55, 1.0],
         )
         print("[ocp_vscode] viewer frissítve.")
     except Exception as e:
@@ -436,14 +420,14 @@ def main():
     # --- Export: STL (nyomtatás) + STEP (további CAD) minden alkatrészre ---
     out = Path(__file__).parent / "export"
     out.mkdir(exist_ok=True)
-    parts = {"housing": housing, "bottom_lid": bottom_lid, "battery_door": battery_door}
+    parts = {"housing": housing, "bottom_lid": bottom_lid}
     for name, part in parts.items():
         export_stl(part, str(out / f"{name}.stl"))
         export_step(part, str(out / f"{name}.step"))
         print(f"[export] {name}.stl + {name}.step")
 
     # Teljes összeállítás STEP-ben (CAD-ellenőrzéshez):
-    asm = Compound(children=[housing, bottom_lid, door_assembled])
+    asm = Compound(children=[housing, bottom_lid])
     export_step(asm, str(out / "assembly.step"))
     print("[export] assembly.step")
     print(f"\nKész. Export ide: {out}")

@@ -6,7 +6,6 @@ import enclosure as e
 parts = {
     "housing": e.build_housing(),
     "bottom_lid": e.build_bottom_lid(),
-    "battery_door": e.build_battery_door(),
 }
 ok = True
 for name, p in parts.items():

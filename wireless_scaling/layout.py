@@ -111,8 +111,6 @@ def _build_component(c):
 def main():
     housing = e.build_housing()
     bottom_lid = e.build_bottom_lid()
-    battery_door = e.build_battery_door()
-    door_assembled = Pos(e.outer_x / 2 - e.bat_recess_d, 0, e.bat_cz) * Rot(0, 90, 90) * battery_door
 
     comps = [(c["name"], c["color"], _build_component(c)) for c in COMPONENTS]
 
@@ -144,10 +142,10 @@ def main():
         from ocp_vscode import show, set_port
         if not os.environ.get("OCP_PORT"):
             set_port(3939)
-        objs = [housing, bottom_lid, door_assembled] + [s for (_, _, s) in comps]
-        names = ["housing", "bottom_lid", "battery_door"] + [n for (n, _, _) in comps]
-        colors = ["#9aa0a6", "#4f8cff", "#ff9f43"] + [col for (_, col, _) in comps]
-        alphas = [0.25, 0.35, 0.5] + [0.9] * len(comps)
+        objs = [housing, bottom_lid] + [s for (_, _, s) in comps]
+        names = ["housing", "bottom_lid"] + [n for (n, _, _) in comps]
+        colors = ["#9aa0a6", "#4f8cff"] + [col for (_, col, _) in comps]
+        alphas = [0.25, 0.35] + [0.9] * len(comps)
         show(*objs, names=names, colors=colors, alphas=alphas)
         print("[ocp_vscode] layout frissítve.")
     except Exception as ex:
