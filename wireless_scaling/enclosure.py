@@ -107,6 +107,16 @@ boss_collar_dia  = boss_dia + 2 * collar_ring   # [mm] collar külső átmérő 
 collar_merge     = 0.6    # [mm] a collar lapos oldala ennyivel nyúlik a falsík MÖGÉ (a fallal egyesülés;
                           #      a horony fölött (z≥gd) van → nem éri a hornyot, IP65 marad)
 
+# ---- +X OLDAL: KÜLSŐ csavar-FÜLEK (user: "a csavarokat kívülre") -----------------------
+# A +X oldali 3 fedél-csavar a holder sávjában volt (a középső y=0 pont az akku közepe alatt) → a 3
+# belső bosst KÜLSŐ FÜLRE (lug) visszük: a +X külső falsíkról kifelé lógó tömör fül, alulról pilot
+# furattal; a fedél egy-egy nyúlvánnyal ér ki alá (clearance furat). A fül a SEAL-vonalon (perem-
+# horony) KÍVÜL van → az IP65 sértetlen. Csere: a +X-félteret a holder teljesen használhatja.
+# A többi 5 csavar (−X 2 sarok + −X/+Y/−Y oldal-közép) BENT marad, félkör-collarral.
+ear_len          = 4.5    # [mm] a fül kilógása a +X külső falsíktól (footprint-növekedés ennyivel +X-en)
+ear_wid          = 7.0    # [mm] a fül szélessége (Y) — > boss_dia, anyag a pilot körül
+ear_pilot_inset  = 2.25   # [mm] a pilot furat távja a +X falsíktól (a fül közepe felé) — fél ear_len
+
 # ---- FELSŐ PLATÓ: NÉGYZETES fél-hidas mérőcella (SC902/YZC ~34×34), BESÜLLYESZTVE ------
 # Koncepció: a cella a tető SÜLLYESZTETT pocketjében ül; a kaptár KÖZVETLENÜL a cella dómjára
 # fekszik. A pocket FENEKE TÖMÖR (nincs alatta furat → felülről teljesen vízálló).
@@ -238,20 +248,22 @@ eps       = 0.5                         # [mm] boolean-tisztasághoz extra túll
 inset_x = boss_dia / 2 - (long_wall_th / 2 - gasket_groove_w / 2) + groove_clear
 inset_y = boss_dia / 2 - (wall / 2 - gasket_groove_w / 2) + groove_clear
 
-# A sarok-boss középpontok (a 4 belső sarokban) — a furat majdnem érinti a falat, körbe egyenletes rés:
+# BELSŐ sarok-bossok — CSAK a −X oldal (a +X 2 sarok KÜLSŐ fülre került, lásd ext_ear_positions):
 corner_positions = [
-    ( inner_x / 2 - inset_x,  inner_y / 2 - inset_y),
     (-inner_x / 2 + inset_x,  inner_y / 2 - inset_y),
-    ( inner_x / 2 - inset_x, -inner_y / 2 + inset_y),
     (-inner_x / 2 + inset_x, -inner_y / 2 + inset_y),
 ]
-# OLDAL-KÖZÉP boss középpontok (mind a 4 fal közepén) — extra fedél-rögzítés (user). Félkör-collar a
-# saját falához. (A +X fal közepe az akku-rekesz fölött van — a boss a holder ALATT, lásd lent.)
+# BELSŐ oldal-közép bossok — a +X KIVÉVE (külső fülre); marad −X, +Y, −Y, félkör-collarral:
 side_positions = [
-    ( inner_x / 2 - inset_x, 0.0),   # +X fal közép
     (-inner_x / 2 + inset_x, 0.0),   # −X fal közép (az USB-portok y=−11/+13 közé, z-ben alá esik)
     (0.0,  inner_y / 2 - inset_y),   # +Y fal közép
     (0.0, -inner_y / 2 + inset_y),   # −Y fal közép
+]
+# +X OLDAL: a 3 csavar KÜLSŐ FÜLRE — a fül Y-pozíciói (a korábbi +X sarok- és oldal-közép boss y-jai):
+ext_ear_positions = [
+     inner_y / 2 - inset_y,   # +X/+Y sarok-fül
+     0.0,                     # +X oldal-közép fül (az akku közepe fölött volt → most kint)
+    -inner_y / 2 + inset_y,   # +X/−Y sarok-fül
 ]
 
 # Tömítőhorony középvonalának fél-kiterjedése (a falközépen fut körbe):
@@ -389,7 +401,7 @@ def build_housing():
                      gasket_groove_d, align=(C, C, MIN))
     housing -= (groove_out - groove_in)
 
-    # --- FŐ FEDÉL rögzítő-bossok: 4 SAROK + 4 OLDAL-KÖZÉP (M2.5 önmetsző, pilot furat alulról) ---
+    # --- FŐ FEDÉL rögzítő-bossok: 5 BELSŐ (−X 2 sarok + −X/+Y/−Y oldal-közép) + 3 KÜLSŐ FÜL (+X) ---
     # A boss-okat a falhoz HÚZTUK (inset_x/inset_y, a furat majdnem érinti a falat) → a boss SZÉLE a
     # horony belső éle elé ér, körbe EGYENLETES groove_clear réssel. A korábbi
     # téglalap-GUSSET helyett FÉLKÖR (D) COLLAR fut a boss körül: boss_collar_dia henger a horony
@@ -435,6 +447,15 @@ def build_housing():
         housing += b
         housing -= h
 
+    # +X KÜLSŐ csavar-FÜLEK (user: "a csavarokat kívülre" → a holder helyét felszabadítja). Tömör lug
+    # a +X külső falsíkról kifelé (z[0,boss_h]), alulról pilot furattal. A fül a SEAL-vonalon KÍVÜL →
+    # IP65 sértetlen. A fedélen a párja (nyúlvány + clearance furat) a build_bottom_lid-ben.
+    ear_face_x = outer_x / 2                       # +X külső falsík (x=34)
+    for ey in ext_ear_positions:
+        housing += Pos(ear_face_x, ey, 0) * Box(ear_len, ear_wid, boss_h, align=(MIN, C, MIN))
+        epx = ear_face_x + ear_pilot_inset         # pilot X (a fülben)
+        housing -= Pos(epx, ey, 0) * Cylinder(pilot_dia / 2, pilot_depth, align=(C, C, MIN))
+
     return housing
 
 
@@ -447,9 +468,21 @@ def build_bottom_lid():
     # lid_th vékonyítva (modul-szintű paraméter); a statikát a user végzi.
     lid = Box(outer_x - 2 * fit_gap, outer_y - 2 * fit_gap, lid_th, align=(C, C, MAX))
 
-    # 8 átmenő csavarfurat (M2.5) a ház bossaihoz, alulról: 4 SAROK + 4 OLDAL-KÖZÉP:
+    # 5 BELSŐ átmenő csavarfurat (M2.5) a ház bossaihoz, alulról (−X 2 sarok + −X/+Y/−Y oldal-közép):
     for (px, py) in corner_positions + side_positions:
         lid -= Pos(px, py, 0) * Cylinder(screw_clear_dia / 2, lid_th + 2 * eps, align=(C, C, MAX))
+
+    # +X KÜLSŐ FÜLEK párja a fedélen: a lap +X éléről kinyúló nyúlvány a ház-fül alá + clearance furat.
+    lid_edge_x = outer_x / 2 - fit_gap             # a lap +X éle (33.7)
+    ear_face_x = outer_x / 2                        # a ház +X falsík (34) — eddig ér a ház-fül kezdete
+    tab_outer  = ear_face_x + ear_len               # a fül külső vége (=ház-fül vége)
+    for ey in ext_ear_positions:
+        # nyúlvány a lap-éltől (kissé belülről, hogy egyesüljön) a fül külső végéig:
+        lid += Pos(lid_edge_x - 1.0, ey, 0) * Box(
+            tab_outer - (lid_edge_x - 1.0), ear_wid, lid_th, align=(MIN, C, MAX)
+        )
+        epx = ear_face_x + ear_pilot_inset
+        lid -= Pos(epx, ey, 0) * Cylinder(screw_clear_dia / 2, lid_th + 2 * eps, align=(C, C, MAX))
 
     return lid
 
