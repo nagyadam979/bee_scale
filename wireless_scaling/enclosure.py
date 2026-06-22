@@ -40,6 +40,7 @@ build123d 0.11.0 (algebra API) + ocp_vscode élő viewer.
 
 from build123d import (
     Box, Cylinder, Pos, Rot, Align, Compound,
+    Polygon, extrude, Plane,
     export_stl, export_step,
 )
 from pathlib import Path
@@ -115,7 +116,16 @@ cell_flange_margin = 4.0   # [mm] a karima ennyivel szélesebb a pocketnél, kö
 cell_flange_drop   = 3.0   # [mm] a karima ennyivel lóg a fenék alá a kavitásba (megvastagítás, user)
 cell_dent_margin   = 3.0   # [mm] a dent ennyivel kisebb a pocketnél, körbe ("3-3 mm-el kisebb téglalap")
 cell_dent_d        = 3.0   # [mm] a dent (közép-üreg) mélysége a pocket fenekétől lefelé (user)
-# CELLA-TÁMASZTÓ OSZLOP — ⚠️ a paraméterek TÖRÖLVE; a következő agent építi meg (lásd hand-off).
+# CELLA-TÁMASZTÓ OSZLOP — ÁLLÓ "Y" a HOSSZANTI (Y-Z) SÍKBAN, az X-középvonalon (x=0). Teher útja:
+# kaptár → cella → platform(dent) → oszlop → talp → doboz alja (lid/talaj). A két ÁG FELÜL a cella-
+# ágy (pocket, ±17.4) Y-szélein indul, lefelé a V-csúcsban EGYESÜL, onnan közös szár/talp a dobozaljáig.
+# ⚠️ ORIENTÁCIÓ: az ágak az Y-tengely mentén nyílnak szét (NEM X-ben → nem ér az akku-holderhez), és
+#    X-ben VÉKONY marad a középvonalon. A holder a +X stripben (x≥7.5) → az oszlop x[−6,6]-ban marad.
+cell_col_w_top      = 8.0    # [mm] az ÁG-vastagsága (Y-ban, a szétnyílás irányában) — user min: ≥8
+cell_col_w_base     = 12.0   # [mm] a közös TALP/szár szélessége (Y-ban) alul — user min: ≥12
+cell_col_junction_z = 14.0   # [mm] a két ág EZEN a z-n EGYESÜL (V-csúcs); ez alatt közös szár/talp
+cell_col_thick_x    = 12.0   # [mm] az oszlop VASTAGSÁGA X-ben (a középvonalra centrálva → x[−6,6]).
+                             #      KORLÁT: ≤12, hogy NE érjen a +X akku-holderhez (x≥7.5; 1.5 mm hézag)
 
 # ---- MEREVÍTŐ BORDÁK — ELTÁVOLÍTVA (user: a statikai tervezést ő végzi) ----------------
 # A bordák tisztán merevítő (nem spec) szerepűek voltak → kivéve. A pozíció-listák ÜRESEK,
@@ -306,7 +316,23 @@ def build_housing():
             cell_fix_dia / 2, cell_fix_depth + eps, align=(C, C, MAX)
         )
 
-    # 3) CELLA-TÁMASZTÓ OSZLOP — ⚠️ TÖRÖLVE (a következő agent építi meg, lásd hand-off prompt). ---
+    # 3) CELLA-TÁMASZTÓ OSZLOP: ÁLLÓ "Y" a HOSSZANTI (Y-Z) SÍKBAN, az X-középvonalon (x=0). A két ÁG
+    #    FELÜL a cella-ágy (pocket) Y-szélein (y=±arm_out) indul a dent fenekétől (z=col_top), lefelé a
+    #    V-csúcsban (jz) EGYESÜL, onnan közös szár/talp a doboz aljáig (z=0). Az ágak Y-ban nyílnak szét
+    #    (NEM X-ben) → X-ben az oszlop ±cell_col_thick_x/2-ben marad (x[−6,6]), nem ér az akku-holderhez.
+    #    A profil a Y-Z síkban: az (y,z) körvonal; X-be extrudálva (both=True) a vékony vastagság.
+    col_top = (housing_h - cell_recess_d) - cell_dent_d   # az oszlop teteje = a dent feneke (29.5)
+    arm_out = (cell_size_xy + 2 * cell_clear) / 2         # a két ág KÜLSŐ széle (Y) = a cella-ágy széle (17.4)
+    arm_in  = arm_out - cell_col_w_top                    # az ág belső éle (Y); ág-vastagság = w_top (9.4)
+    wb      = cell_col_w_base / 2                         # a közös szár/talp fél-szélessége (Y, =6)
+    jz      = cell_col_junction_z                         # a két ág egyesülési z-je (V-csúcs)
+    # A körvonal a Y-Z síkban (Plane.YZ lokális koord: (a,b) → globális (0, a, b)):
+    col_prof = Plane.YZ * Polygon(
+        (-arm_out, col_top), (-wb, jz), (-wb, 0), (wb, 0), (wb, jz),
+        (arm_out, col_top), (arm_in, col_top), (0, jz), (-arm_in, col_top),
+    )
+    # X-be extrudálva, a középvonalra centrálva (both=True) → x[−thick/2, +thick/2]:
+    housing += extrude(col_prof, amount=cell_col_thick_x / 2, both=True)
 
     # --- (A −Y falon korábbi PG7 tömszelence-furatok ELTÁVOLÍTVA, user kérés) ---
     # A kábel-bevezetés módja (cella-kábel, DS18B20) ezzel ÚJRA NYITOTT kérdés → lásd HANDOFF.
