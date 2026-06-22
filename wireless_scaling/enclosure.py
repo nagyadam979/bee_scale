@@ -116,6 +116,16 @@ ear_len          = 4.5    # [mm] a fül kilógása a +X külső falsíktól (foo
 ear_wid          = 7.0    # [mm] a fül szélessége (Y) — > boss_dia, anyag a pilot körül
 ear_pilot_inset  = 2.25   # [mm] a pilot furat távja a +X falsíktól (a fül közepe felé) — fél ear_len
 
+# ---- BOTTOM LID: megemelt belső "dugó" (spigot) — illeszkedés + szigetelés (user) -------
+# A fedél belső része ~1 mm-rel megemelve, hogy a doboz NYÍLÁSÁBA illeszkedjen (centrálás + labirintus-
+# szigetelés a gasket-en belül). A peremen TÖMÖR keret (egy falvastagság), középen DIAGONÁLIS (45°)
+# négyzetrács (anyagspórlás + merevítés). Kihagyások: a Y-oszlop szára (középen) + az 5 belső boss.
+lid_rise         = 1.0    # [mm] a megemelt dugó magassága (a doboz nyílásába nyúlik)
+lid_plug_gap     = 0.3    # [mm] rés a dugó és a kavitásfal közt (csúszó illesztés)
+lid_rim_w        = 1.6    # [mm] a tömör perem-keret szélessége ("egy vastagság")
+lid_grid_pitch   = 10.0   # [mm] a diagonális rács osztása
+lid_grid_rib     = 2.0    # [mm] a rács-bordák vastagsága
+
 # ---- FELSŐ PLATÓ: NÉGYZETES fél-hidas mérőcella (SC902/YZC ~34×34), BESÜLLYESZTVE ------
 # Koncepció: a cella a tető SÜLLYESZTETT pocketjében ül; a kaptár KÖZVETLENÜL a cella dómjára
 # fekszik. A pocket FENEKE TÖMÖR (nincs alatta furat → felülről teljesen vízálló).
@@ -491,6 +501,32 @@ def build_bottom_lid():
         )
         epx = ear_face_x + ear_pilot_inset
         lid -= Pos(epx, ey, 0) * Cylinder(screw_clear_dia / 2, lid_th + 2 * eps, align=(C, C, MAX))
+
+    # ---- Megemelt belső DUGÓ (spigot): a doboz nyílásába illeszkedik (centrálás + szigetelés) ----
+    # Perem: TÖMÖR keret (egy falvastagság). Közép: DIAGONÁLIS (45°) négyzetrács. Kihagyások: a Y-oszlop
+    # szára (közép) + az 5 belső boss (collar), hogy z[0,rise]-ben ne ütközzenek. A dugó a lap tetején
+    # (z[0, lid_rise]) ül, a kavitásba (inner_x×inner_y) nyúlik lid_plug_gap réssel.
+    pgx = inner_x - 2 * lid_plug_gap
+    pgy = inner_y - 2 * lid_plug_gap
+    foot = Box(pgx, pgy, lid_rise, align=(C, C, MIN))                      # z[0, rise]
+    rim  = foot - Box(pgx - 2 * lid_rim_w, pgy - 2 * lid_rim_w, lid_rise + 2 * eps, align=(C, C, MIN))
+    # Diagonális rács: két, ±45°-os vékony bordasereg, a dugó-footprintre vágva:
+    diag_len = pgx + pgy
+    nb = int((pgx + pgy) / (2 * lid_grid_pitch)) + 2
+    grid = None
+    for ang in (45, -45):
+        for k in range(-nb, nb + 1):
+            bar = Rot(0, 0, ang) * (Pos(0, k * lid_grid_pitch, 0) *
+                                    Box(diag_len, lid_grid_rib, lid_rise, align=(C, C, MIN)))
+            grid = bar if grid is None else grid + bar
+    plug = rim + (grid & foot)
+    # KIHAGYÁSOK: a Y-oszlop szára (közép) + az 5 belső boss (collar) — passzol az oszlop aljával:
+    plug -= Box(cell_col_thick_x + 2 * lid_plug_gap, cell_col_w_base + 2 * lid_plug_gap,
+                lid_rise + 2 * eps, align=(C, C, MIN))
+    for (px, py) in corner_positions + side_positions:
+        plug -= Pos(px, py, 0) * Cylinder((boss_collar_dia + 2 * lid_plug_gap) / 2,
+                                          lid_rise + 2 * eps, align=(C, C, MIN))
+    lid += plug
 
     return lid
 
