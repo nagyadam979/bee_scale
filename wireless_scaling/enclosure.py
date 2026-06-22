@@ -76,23 +76,19 @@ boss_h           = 22.0   # [mm] alsó-fedél sarok-bossok magassága (a z=0 sí
 corner_inset     = 9.0    # [mm] sarok-boss középpont behúzása a BELSŐ faltól
 
 # ---- FELSŐ PLATÓ: NÉGYZETES fél-hidas mérőcella (SC902/YZC ~34×34), BESÜLLYESZTVE ------
-# Koncepció: a cella a tető SÜLLYESZTETT pocketjében ül; a kaptár KÖZVETLENÜL a cella
-# felfelé álló dómjára fekszik (nincs közbeiktatott teherbevivő elem). A teher útja:
-#   kaptár → dóm (direkt kontakt) → cella → fix vég (2× M4) → háztető → állvány.
-# A fix perem (flange) a pocket sík fenekén fekszik; a dóm (7.8) a tető fölé áll ki.
+# Koncepció: a cella a tető SÜLLYESZTETT pocketjében ül; a kaptár KÖZVETLENÜL a cella dómjára
+# fekszik. A pocket FENEKE TÖMÖR (nincs alatta furat → felülről teljesen vízálló).
+# RÖGZÍTÉS: a cella saját furatképét NEM használjuk (kóta bizonytalan); helyette 2 db M4 heat-set
+# furat a süllyesztésen KÍVÜL, a HOSSZÚ (Y) középvonalon (x=0), a recess pereme mellett 3 mm-re
+# — ide egy áthidaló leszorító bracket csavarozható, ami a cellát a pocketben tartja.
 cell_size_xy     = 34.0   # [mm] a cella befoglaló négyzete (SC902/YZC) — megerősítendő darabon
 cell_clear       = 0.4    # [mm] pocket oldalrés a cella körül (laza, hőtágulás/illesztés)
 cell_recess_d    = 2.5    # [mm] ⚠️ PLACEHOLDER/LEMÉRENDŐ: pocket-mélység = a fix perem vastagsága
-                          #      (a perem süllyesztve felfekszik; a 7.8 dóm e fölé áll ki ~5 mm)
-# 3 furat EGY KÖZÉPVONALON (a pocket közepén végig, X mentén): középen 1 nagy TERHELŐ
-# (a dóm/terhelt vég szabad hajlásteréhez, ÁTMENŐ), két oldalán 2 kis FIX (M4 heat-set).
-# ⚠️ A furat-középtáv és átmérők NEM kótázottak a datasheeten (datasheets/cell_SC902/) → LEMÉRENDŐK.
-cell_fix_spacing = 25.0   # [mm] ⚠️ LEMÉRENDŐ: a 2 fix furat középtávja (a középvonalon)
+cell_screw_clearance = 3.0   # [mm] rés a süllyesztés pereme és a rögzítőfurat SZÉLE között ("3mm-re kívülre")
 cell_fix_dia     = 5.7    # [mm] ⚠️ M4 heat-set betét KEZDŐ furat — pontosítsd a betét adatlapról (~5.6–6.0)
 cell_fix_depth   = 8.0    # [mm] M4 heat-set betét mélység (a lefelé lógó boss adja a hosszt)
-cell_center_dia  = 14.0   # [mm] ⚠️ LEMÉRENDŐ: a nagy közép (terhelő/dóm) ÁTMENŐ furat — a terhelt vég szabadon hajolhat
 cell_fix_boss_dia = cell_fix_dia + 2 * 2.6   # [mm] a fix-furat boss külső átmérője (anyag a betét köré)
-cell_fix_boss_h   = cell_fix_depth + 3.0     # [mm] a boss lelógása a pocket-fenéktől a kavitásba (betét + tartalék)
+cell_fix_boss_h   = cell_fix_depth + 3.0     # [mm] a boss lelógása a tető aljától a kavitásba (betét + tartalék)
 
 # ---- Terhelést hordó MEREVÍTŐ BORDÁK a plató ALATT (~100 kg függőleges terhelés) ------
 # Placeholder rács; a PCB-pozíciók ismeretében finomítsd, hogy ne ütközzön panellel.
@@ -130,16 +126,14 @@ usb_ports = [
     ("SuperMini_USB", 28.0, 29.0),  # ⚠️ PLACEHOLDER y,z — a SuperMini USB-C csatlakozójához
 ]
 
-# ---- PG7 kábeltömszelencék (elülső −Y fal) -------------------------------------------
-# Áthaladó kábelek: (1) mérőcella kábel (Ø0.8 × 4/3 ér), (2) DS18B20 kábel.
-# ⚠️ A DS18B20 a SIMA TO-92 tranzisztortokos verzió (NEM a vízálló kapszulázott szonda) →
-#    a kábel 3 különálló vékony ér (nincs Ø4 mm-es köpeny). PG7 (kábeltartomány ~3–6.5 mm)
-#    vékony kábelre lazán tömít → vagy közös köpenybe húzd a 3 eret, vagy kisebb tömszelence
-#    (pl. PG5/M8) ehhez az egy furathoz. A gland_hole_dia furatonként külön is állítható.
-gland_hole_dia   = 12.5   # [mm] PG7 tömszelence furat
-gland_count      = 3      # [db] tömszelence-furatok száma
-gland_z          = 18.0   # [mm] furatok magassága a z=0 alaptól
-gland_spacing    = 20.0   # [mm] furatok közti X-osztás (a −Y fal közepére rendezve)
+# ---- PG7 kábeltömszelencék (elülső −Y fal) — JELENLEG HASZNÁLATON KÍVÜL ----------------
+# ⚠️ A −Y fali gland-furatok (user kérésére) ELTÁVOLÍTVA a build_housing-ból. Az alábbi
+#    paraméterek megmaradtak, de jelenleg NEM használja semmi. A kábel-bevezetés (cella-kábel,
+#    DS18B20) így NYITOTT kérdés — ha újra kell, a build_housing-ban a gland-szekciót vissza kell tenni.
+gland_hole_dia   = 12.5   # [mm] (unused) PG7 tömszelence furat
+gland_count      = 0      # [db] (unused) tömszelence-furatok száma — 0-ra állítva
+gland_z          = 18.0   # [mm] (unused) furatok magassága a z=0 alaptól
+gland_spacing    = 20.0   # [mm] (unused) furatok közti X-osztás
 
 # ---- 18650 akku-rekesz (+X oldal, válaszfallal leválasztva) ---------------------------
 # Holder (HESTORE/generic single 18650, vezetékkel), WEBRŐL forrásolt befoglaló: 74.5 × 21.5
@@ -252,38 +246,31 @@ def build_housing():
         if x < part_x:  # ne lógjon bele az akku-rekeszbe
             housing += Pos(x, 0, inner_z) * Box(rib_th, inner_y, rib_drop, align=(C, C, MAX))
 
-    # --- FELSŐ PLATÓ: BESÜLLYESZTETT mérőcella-pocket + 3-furatos képe ---
-    # 1) Pocket a tető felső lapjába (a cella fix pereme ide süllyed, a dóm fölé áll ki):
+    # --- FELSŐ PLATÓ: BESÜLLYESZTETT mérőcella-pocket (TÖMÖR FENÉK) + KÜLSŐ rögzítőfuratok ---
+    # 1) Pocket a tető felső lapjába (a cella ide süllyed). A pocket FENEKE TÖMÖR: NINCS alatta
+    #    furat → felülről teljesen vízálló (a korábbi közép- és fix-furatok eltávolítva).
     housing -= Pos(0, 0, housing_h) * Box(
         cell_size_xy + 2 * cell_clear, cell_size_xy + 2 * cell_clear, cell_recess_d + eps,
         align=(C, C, MAX)
     )
-    recess_floor_z = housing_h - cell_recess_d   # a pocket sík feneke (a perem felfekvő síkja)
-    # 2) Nagy KÖZÉP terhelő furat — ÁTMENŐ, a terhelt vég/dóm szabad hajlásteréhez:
-    housing -= Pos(0, 0, housing_h + eps) * Cylinder(
-        cell_center_dia / 2, top_th + 2 * eps, align=(C, C, MAX)
-    )
-    # 3) 2 kis FIX furat a középvonalon (X mentén), M4 heat-set + lefelé lógó boss a mélységhez:
-    for sx in (-1, 1):
-        fx = sx * cell_fix_spacing / 2
-        # boss a pocket-fenéktől LEFELÉ a kavitásba (betét-mélységet ad):
-        housing += Pos(fx, 0, recess_floor_z) * Cylinder(
+    # 2) 2 db M4 heat-set rögzítőfurat a süllyesztésen KÍVÜL, a HOSSZÚ (Y) középvonalon (x=0),
+    #    a recess pereme mellett cell_screw_clearance-re. Felülről BLIND (a boss tömör anyagba zár
+    #    → vízálló). Ide egy áthidaló leszorító bracket csavarozható a cella tartásához.
+    cell_pocket_half_y = (cell_size_xy + 2 * cell_clear) / 2
+    cell_screw_y = cell_pocket_half_y + cell_screw_clearance + cell_fix_dia / 2
+    for sy in (-1, 1):
+        cy_s = sy * cell_screw_y
+        # boss a tető aljától (z=inner_z) LEFELÉ a kavitásba (a blind furat-fenéknek anyag):
+        housing += Pos(0, cy_s, inner_z) * Cylinder(
             cell_fix_boss_dia / 2, cell_fix_boss_h, align=(C, C, MAX)
         )
-        # heat-set betét furat a pocket-fenéktől lefelé:
-        housing -= Pos(fx, 0, recess_floor_z) * Cylinder(
-            cell_fix_dia / 2, cell_fix_depth, align=(C, C, MAX)
+        # M4 heat-set betét furat FELÜLRŐL lefelé (blind, a tetőn át a bossba):
+        housing -= Pos(0, cy_s, housing_h) * Cylinder(
+            cell_fix_dia / 2, cell_fix_depth + eps, align=(C, C, MAX)
         )
 
-    # --- PG7 tömszelence-furatok az ELÜLSŐ (−Y) falon (vízszintes furatok, tengely Y) ---
-    front_y = -(inner_y / 2 + wall / 2)   # a −Y fal középsíkja
-    start_x = -(gland_count - 1) * gland_spacing / 2
-    for i in range(gland_count):
-        gx = start_x + i * gland_spacing
-        # Rot(−90,0,0): a henger Z-tengelye → Y-tengely; hossz 2*wall a falon át:
-        housing -= Pos(gx, front_y, gland_z) * Rot(-90, 0, 0) * Cylinder(
-            gland_hole_dia / 2, 2 * wall + 2 * eps, align=(C, C, C)
-        )
+    # --- (A −Y falon korábbi PG7 tömszelence-furatok ELTÁVOLÍTVA, user kérés) ---
+    # A kábel-bevezetés módja (cella-kábel, DS18B20) ezzel ÚJRA NYITOTT kérdés → lásd HANDOFF.
 
     # --- AKKU-AJTÓ: SÜLLYESZTETT (flush) a +X hosszú falon ---
     # Felépítés (mind a +X külső faltól befelé, −X): (1) rebate-pocket az ajtónak (bat_recess_d
