@@ -48,11 +48,14 @@ from pathlib import Path
 fit_gap          = 0.3    # [mm] összeillő alkatrészek közti rés (fedél/ajtó vs. ház)
 
 # ---- Falvastagság / belméret ----
-wall             = 3.0    # [mm] oldalfal-vastagság
-top_th           = 5.0    # [mm] FELSŐ plató vastagsága — vastagabb a falnál (terhelést visz!)
-inner_x          = 100.0  # [mm] belső szélesség  (bal–jobb)
-inner_y          = 80.0   # [mm] belső mélység    (elöl–hátul)
-inner_z          = 55.0   # [mm] belső magasság   (függőleges, tiszta belmagasság)
+# KOORDINÁTÁK (1-node layout): a HOSSZÚ él (80) az Y → ide fekszik a 18650 holder (74.5 ∥ Y).
+# A RÖVID él (60) az X. A két HOSSZÚ fal (Y mentén futó, ±X-en) hordozza az akku-ajtót (+X)
+# és az USB-C-t (−X, szemközt). A két RÖVID fal a ±Y-on van.
+wall             = 3.0    # [mm] általános oldalfal-vastagság
+top_th           = 7.0    # [mm] FELSŐ plató vastagsága — vastagabb (terhelést visz + cella-pocket süllyed bele)
+inner_x          = 60.0   # [mm] belső RÖVID él  (X) — 1-node-ra hangolva
+inner_y          = 80.0   # [mm] belső HOSSZÚ él (Y) — a 18650 holder (74.5) fekszik ide
+inner_z          = 45.0   # [mm] belső magasság  (Z, tiszta belmagasság)
 
 # ---- Heat-set menetes betétek (sárgaréz, M5) ----
 # M5 sárgaréz heat-set betéthez kezdő furat ~6.4 mm (insert_dia). Az adatlap szerint hangold.
@@ -65,24 +68,24 @@ boss_dia         = insert_dia + 2 * 2.6   # [mm] csavar-boss külső átmérő (
 boss_h           = 22.0   # [mm] alsó-fedél sarok-bossok magassága (a z=0 síktól felfelé)
 corner_inset     = 9.0    # [mm] sarok-boss középpont behúzása a BELSŐ faltól
 
-# ---- FELSŐ PLATÓ: mérőcella (HBS-SCL-50, 50 kg) FELÜLRE szerelve ----------------------
-# !!! PLACEHOLDER FURATKÉP !!! A HBS-SCL-50 pontos furatosztását MÉG NEM ismerjük.
-# Amint megvan az adatlap, CSAK az alábbi 3 értéket írd át. A minta a plató közepére esik.
-# Tipikus single-point cella: 2 furat a "fix" végen + 2 a "terhelt" végen → 2x2 téglalap.
-cell_hole_spacing_x = 40.0   # [mm] PLACEHOLDER — furatosztás X (bal–jobb)
-cell_hole_spacing_y = 15.0   # [mm] PLACEHOLDER — furatosztás Y (elöl–hátul)
-cell_hole_dia       = 5.5    # [mm] PLACEHOLDER — M5 átmenő furat a cella rögzítéséhez
-# A furatkép = (x,y) eltolások a plató közepétől. Alapból 2x2 téglalap a fenti osztásból.
-# Ha a celládnak más a mintája (pl. 1 sor 2 furat), CSAK ezt a listát írd át:
-cell_hole_pattern = [
-    (-cell_hole_spacing_x / 2, -cell_hole_spacing_y / 2),
-    ( cell_hole_spacing_x / 2, -cell_hole_spacing_y / 2),
-    (-cell_hole_spacing_x / 2,  cell_hole_spacing_y / 2),
-    ( cell_hole_spacing_x / 2,  cell_hole_spacing_y / 2),
-]
-# Megemelt rögzítő pad a furatkép körül (merevség + sík felfekvés a cellának):
-cell_pad_margin   = 12.0  # [mm] a pad pereme a szélső furatokon túl
-cell_pad_h        = 3.0   # [mm] a pad kiemelkedése a plató felett
+# ---- FELSŐ PLATÓ: NÉGYZETES fél-hidas mérőcella (SC902/YZC ~34×34), BESÜLLYESZTVE ------
+# Koncepció: a cella a tető SÜLLYESZTETT pocketjében ül; a kaptár KÖZVETLENÜL a cella
+# felfelé álló dómjára fekszik (nincs közbeiktatott teherbevivő elem). A teher útja:
+#   kaptár → dóm (direkt kontakt) → cella → fix vég (2× M4) → háztető → állvány.
+# A fix perem (flange) a pocket sík fenekén fekszik; a dóm (7.8) a tető fölé áll ki.
+cell_size_xy     = 34.0   # [mm] a cella befoglaló négyzete (SC902/YZC) — megerősítendő darabon
+cell_clear       = 0.4    # [mm] pocket oldalrés a cella körül (laza, hőtágulás/illesztés)
+cell_recess_d    = 2.5    # [mm] ⚠️ PLACEHOLDER/LEMÉRENDŐ: pocket-mélység = a fix perem vastagsága
+                          #      (a perem süllyesztve felfekszik; a 7.8 dóm e fölé áll ki ~5 mm)
+# 3 furat EGY KÖZÉPVONALON (a pocket közepén végig, X mentén): középen 1 nagy TERHELŐ
+# (a dóm/terhelt vég szabad hajlásteréhez, ÁTMENŐ), két oldalán 2 kis FIX (M4 heat-set).
+# ⚠️ A furat-középtáv és átmérők NEM kótázottak a datasheeten (datasheets/cell_SC902/) → LEMÉRENDŐK.
+cell_fix_spacing = 25.0   # [mm] ⚠️ LEMÉRENDŐ: a 2 fix furat középtávja (a középvonalon)
+cell_fix_dia     = 5.7    # [mm] ⚠️ M4 heat-set betét KEZDŐ furat — pontosítsd a betét adatlapról (~5.6–6.0)
+cell_fix_depth   = 8.0    # [mm] M4 heat-set betét mélység (a lefelé lógó boss adja a hosszt)
+cell_center_dia  = 14.0   # [mm] ⚠️ LEMÉRENDŐ: a nagy közép (terhelő/dóm) ÁTMENŐ furat — a terhelt vég szabadon hajolhat
+cell_fix_boss_dia = cell_fix_dia + 2 * 2.6   # [mm] a fix-furat boss külső átmérője (anyag a betét köré)
+cell_fix_boss_h   = cell_fix_depth + 3.0     # [mm] a boss lelógása a pocket-fenéktől a kavitásba (betét + tartalék)
 
 # ---- Terhelést hordó MEREVÍTŐ BORDÁK a plató ALATT (~100 kg függőleges terhelés) ------
 # Placeholder rács; a PCB-pozíciók ismeretében finomítsd, hogy ne ütközzön panellel.
@@ -112,12 +115,13 @@ gland_spacing    = 20.0   # [mm] furatok közti X-osztás (a −Y fal közepére
 # → A rekesz X-szélessége a 21.5-höz igazítva (bat_w − wall ≈ hasznos szélesség).
 # ⚠️ A holder hossza (74.5) majdnem kitölti az inner_y-t (80) → a végeken csak ~5 mm marad a
 #    rugós érintkezőnek + kábelhajlatnak. Ha szűk: növeld inner_y-t, vagy ültesd ferdén.
-bat_w            = 26.0   # [mm] az akku-rekesz X-szélessége (a belső +X faltól befelé)
-                          #      hasznos belső szélesség ≈ bat_w − wall = 23 mm (holder 21.5 befér)
+bat_w            = 24.0   # [mm] az akku-rekesz X-szélessége (a belső +X faltól befelé)
+                          #      hasznos belső szélesség ≈ bat_w − wall = 21 mm (holder 21.5 ~befér)
+                          #      a holder a +X strip-ben fekszik, hossza (74.5) ∥ Y
 bat_cable_dia    = 8.0    # [mm] kábel-átvezető furat a válaszfalon (holder vezetékei → elektronika)
-# Akku-ajtó NYÍLÁS a +X falon (a rekeszbe néz):
-bat_open_y       = 50.0   # [mm] ajtónyílás szélessége Y-ban
-bat_open_z       = 38.0   # [mm] ajtónyílás magassága Z-ben
+# Akku-ajtó NYÍLÁS a +X falon (a rekeszbe néz). A 2. commit teszi SÜLLYESZTETTÉ + véglegesíti.
+bat_open_y       = 50.0   # [mm] ajtónyílás szélessége Y-ban (commit2: ~76, > holder 74.5)
+bat_open_z       = 24.0   # [mm] ajtónyílás magassága Z-ben (akku 17.7 + hozzáférés; befér inner_z=45-be)
 bat_door_overlap = 8.0    # [mm] az ajtólap túlnyúlása a nyíláson (tömítés-felfekvés + boss-ok)
 door_th          = 4.0    # [mm] akku-ajtó lapvastagság
 bat_boss_inset   = 5.0    # [mm] akku-ajtó sarok-boss behúzása az ajtó szélétől
@@ -137,10 +141,13 @@ pcb_pad_h     = 2.5   # [mm] támasztópad magasság = forrasztás-hézag a fed�
 #   HX711 zöld generic ...... 34 x 21 mm   (sarokfurat-osztás bizonytalan → bordás fogás)
 #   ESP32-C3 SuperMini ...... 24 x 18 mm   (USB-C túlnyúlással; furat NINCS)
 #   TP4056 USB-C PROT ....... 29 x 17.3 mm (furat NINCS; USB-C hozzáférés kell töltéshez)
+# ⚠️ PLACEHOLDER POZÍCIÓK az új 60×80 envelope-ra: az elektronika a −X térfélben (x<part_x),
+#    az akku-rekesz a +X strip-ben (x>part_x). A SuperMini és a TP4056 a −X falhoz közel,
+#    USB-C élükkel a −X fal felé (oda jön a 2 süllyesztett USB-port). Tuningold a kábelezéshez.
 pcb_nests = [
-    ("HX711",     -28.0,  22.0, 34.0, 21.0),
-    ("SuperMini", -30.0, -22.0, 24.0, 18.0),
-    ("TP4056",      4.0,  -2.0, 29.0, 17.3),
+    ("HX711",     -10.0,   0.0, 34.0, 21.0),   # középen, USB-hozzáférés nem kell
+    ("SuperMini", -16.0,  26.0, 24.0, 18.0),   # −X falhoz közel, USB-C él −X felé
+    ("TP4056",    -14.0, -26.0, 29.0, 17.3),   # −X falhoz közel, USB-C él −X felé
 ]
 
 # =========================================================================================
@@ -198,18 +205,27 @@ def build_housing():
         if x < part_x:  # ne lógjon bele az akku-rekeszbe
             housing += Pos(x, 0, inner_z) * Box(rib_th, inner_y, rib_drop, align=(C, C, MAX))
 
-    # --- FELSŐ PLATÓ: megemelt mérőcella-pad + furatkép (PLACEHOLDER) ---
-    xs = [p[0] for p in cell_hole_pattern]
-    ys = [p[1] for p in cell_hole_pattern]
-    pad_x = (max(xs) - min(xs)) + 2 * cell_pad_margin
-    pad_y = (max(ys) - min(ys)) + 2 * cell_pad_margin
-    cx = (max(xs) + min(xs)) / 2
-    cy = (max(ys) + min(ys)) / 2
-    housing += Pos(cx, cy, housing_h) * Box(pad_x, pad_y, cell_pad_h, align=(C, C, MIN))
-    # Átmenő furatok a cella rögzítéséhez (a padon + platón át, felülről lefelé):
-    for (hx, hy) in cell_hole_pattern:
-        housing -= Pos(hx, hy, housing_h + cell_pad_h) * Cylinder(
-            cell_hole_dia / 2, top_th + cell_pad_h + 2 * eps, align=(C, C, MAX)
+    # --- FELSŐ PLATÓ: BESÜLLYESZTETT mérőcella-pocket + 3-furatos képe ---
+    # 1) Pocket a tető felső lapjába (a cella fix pereme ide süllyed, a dóm fölé áll ki):
+    housing -= Pos(0, 0, housing_h) * Box(
+        cell_size_xy + 2 * cell_clear, cell_size_xy + 2 * cell_clear, cell_recess_d + eps,
+        align=(C, C, MAX)
+    )
+    recess_floor_z = housing_h - cell_recess_d   # a pocket sík feneke (a perem felfekvő síkja)
+    # 2) Nagy KÖZÉP terhelő furat — ÁTMENŐ, a terhelt vég/dóm szabad hajlásteréhez:
+    housing -= Pos(0, 0, housing_h + eps) * Cylinder(
+        cell_center_dia / 2, top_th + 2 * eps, align=(C, C, MAX)
+    )
+    # 3) 2 kis FIX furat a középvonalon (X mentén), M4 heat-set + lefelé lógó boss a mélységhez:
+    for sx in (-1, 1):
+        fx = sx * cell_fix_spacing / 2
+        # boss a pocket-fenéktől LEFELÉ a kavitásba (betét-mélységet ad):
+        housing += Pos(fx, 0, recess_floor_z) * Cylinder(
+            cell_fix_boss_dia / 2, cell_fix_boss_h, align=(C, C, MAX)
+        )
+        # heat-set betét furat a pocket-fenéktől lefelé:
+        housing -= Pos(fx, 0, recess_floor_z) * Cylinder(
+            cell_fix_dia / 2, cell_fix_depth, align=(C, C, MAX)
         )
 
     # --- PG7 tömszelence-furatok az ELÜLSŐ (−Y) falon (vízszintes furatok, tengely Y) ---
