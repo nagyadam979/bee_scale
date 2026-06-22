@@ -76,17 +76,18 @@ COMPONENTS = [
     dict(name="DS18B20",   shape="box", size=(4.6, 4.6, 3.9),
          pos=(-27.0, 0.0, 3.0),                                color="#e74c3c"),
 
-    # --- AKKU (a +X stripben, a TETŐ ALÁ lógatva — NEM a bottom_lid-en!) ---
-    # A holder a tető plató aljára kerül (felső lapja az inner_z-n), így z[18.3,36] sávban van,
-    # a sarok-csavar-bossok (z[0,14]) FÖLÖTT → nincs ütközés a csavarokkal.
-    # ⚠️ A nyitott/behelyező oldala KIFELÉ (a +X akku-ajtó felé) néz → a cellát a száj felől
+    # --- AKKU (a +X stripben, a sarok-bossok TETEJE fölé ültetve) ---
+    # A holder alja a batt_z0-n (= boss_h + holder_gap), így a sarok-csavar-bossok (z[0,7]) FÖLÖTT
+    # ül holder_gap (~2 mm) hézaggal → "csavarfejek pár mm-re az akku tartótól" (user). Az akku-ajtó
+    # nyílása EHHEZ a sávhoz igazodik (bat_cz), nem a doboz közepéhez.
+    # ⚠️ A nyitott/behelyező oldala KIFELÉ (a +X akku-ajtó felé) néz → a holder+cella a száj felől
     #    told be. (Box-makett: az orientációt a tényleges holdernél a száj +X felé fordítva értsd.)
-    # 18650 holder befoglaló: 21.5 (X) × 74.5 (Y) × 17.7 (Z); felső lap az inner_z-n:
+    # 18650 holder befoglaló: 21.5 (X) × 74.5 (Y) × 17.7 (Z); alja a batt_z0-n:
     dict(name="18650_holder", shape="box", size=(21.5, 74.5, 17.7),
-         pos=(STRIP_CX, 0.0, e.inner_z - 17.7 / 2),            color="#9b59b6"),
-    # 18650 cella: Ø18.5 × 65, a holderben fekve (∥ Y), ugyanazon a magasságon:
+         pos=(STRIP_CX, 0.0, e.batt_z0 + 17.7 / 2),            color="#9b59b6"),
+    # 18650 cella: Ø18.5 × 65, a holderben fekve (∥ Y), alja szintén a batt_z0-n:
     dict(name="18650_cell",   shape="cyl", size=(18.5, 65.0),
-         pos=(STRIP_CX, 0.0, e.inner_z - 17.7 / 2), axis="y",  color="#8e44ad"),
+         pos=(STRIP_CX, 0.0, e.batt_z0 + 18.5 / 2), axis="y",  color="#8e44ad"),
 
     # --- MÉRŐCELLA (a tető pocketjében; az alja a pocket fenekén, a dóm felfelé) ---
     # Egyszerűsített befoglaló 34×34×7.8 (a dóm/perem-tagolás nélkül)
@@ -111,7 +112,7 @@ def main():
     housing = e.build_housing()
     bottom_lid = e.build_bottom_lid()
     battery_door = e.build_battery_door()
-    door_assembled = Pos(e.outer_x / 2 - e.bat_recess_d, 0, e.inner_z / 2) * Rot(0, 90, 90) * battery_door
+    door_assembled = Pos(e.outer_x / 2 - e.bat_recess_d, 0, e.bat_cz) * Rot(0, 90, 90) * battery_door
 
     comps = [(c["name"], c["color"], _build_component(c)) for c in COMPONENTS]
 
