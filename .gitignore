@@ -40,3 +40,9 @@ firebase/.firebase_info.txt
 
 # --- Claude Code runtime állapot (tranziens, gépfüggő) ---
 .claude/
+
+# --- Python / build123d CAD (wireless_scaling) ---
+wireless_scaling/.venv/
+__pycache__/
+*.pyc
+wireless_scaling/export/
