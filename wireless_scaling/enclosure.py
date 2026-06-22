@@ -107,6 +107,14 @@ cell_fix_dia     = pilot_dia    # [mm] M2.5 önmetsző PILOT furat (mint az als�
 cell_fix_depth   = pilot_depth  # [mm] pilot mélység = 6 (volt 8)
 cell_fix_boss_dia = boss_dia    # [mm] boss külső átmérő = 5.8, UGYANAZ mint az alsó sarok-boss
 cell_fix_boss_h   = cell_fix_depth + 3.0     # [mm] a boss lelógása a tető aljától a kavitásba (pilot + tartalék)
+# CELLA-TÁMASZTÁS (user): a fél-híd terhelés alatt LEHAJLIK — a SZÉLE megtámasztva (peremen ül), a
+# KÖZEPE szabadon hajlik le egy üregbe. Ehhez: (1) KARIMA — a pocket alatti fenék kiszélesítve
+# +flange_margin-nel körbe és lelógatva flange_drop-pal (megvastagított teherviselő talp); (2) DENT
+# — a pocket fenekének közepébe egy üreg (a cellánál dent_margin-nel kisebb körbe), ide hajlik a közép.
+cell_flange_margin = 5.0   # [mm] a karima ennyivel szélesebb a pocketnél, körbe (user: "+5mm körbe")
+cell_flange_drop   = 3.0   # [mm] a karima ennyivel lóg a fenék alá a kavitásba (megvastagítás, user)
+cell_dent_margin   = 3.0   # [mm] a dent ennyivel kisebb a pocketnél, körbe ("3-3 mm-el kisebb téglalap")
+cell_dent_d        = 3.0   # [mm] a dent (közép-üreg) mélysége a pocket fenekétől lefelé (user)
 
 # ---- MEREVÍTŐ BORDÁK — ELTÁVOLÍTVA (user: a statikai tervezést ő végzi) ----------------
 # A bordák tisztán merevítő (nem spec) szerepűek voltak → kivéve. A pozíció-listák ÜRESEK,
@@ -248,15 +256,10 @@ def build_housing():
     cavity = Pos(0, 0, -eps) * Box(inner_x, inner_y, inner_z + eps, align=(C, C, MIN))
     housing = outer - cavity
 
-    # --- Belső VÁLASZFAL: a +X oldalon leválasztja a 18650-rekeszt ---
-    # A válaszfal belső (−X felőli) lapja x = inner_x/2 − bat_w-nél; vastagsága partition_th (vékonyítva).
+    # --- Belső VÁLASZFAL ELTÁVOLÍTVA (user: "vedd ki az elosztó falat, a csavaroktól nem fog
+    #     beférni"). A 18650-rekesz nincs fizikailag leválasztva; a holder a +X térfélben marad
+    #     (layout STRIP_CX). A part_x csak REFERENCIA-koordináta (a rib-ciklushoz). ---
     part_x = inner_x / 2 - bat_w
-    partition = Pos(part_x, 0, 0) * Box(partition_th, inner_y, inner_z, align=(MIN, C, MIN))
-    housing += partition
-    # Kábel-átvezető furat a válaszfalon (a holder vezetékei a rekesz +Y vége felől jutnak
-    # át az elektronikához) — PLACEHOLDER pozíció a felső sarokban, tengely X:
-    housing -= Pos(part_x + partition_th / 2, inner_y / 2 - 12, inner_z - 8) * Rot(0, 90, 0) * \
-        Cylinder(bat_cable_dia / 2, partition_th + 2 * eps, align=(C, C, C))
 
     # --- Merevítő BORDÁK a plató alatt (lelógnak a tetőből a belső térbe) ---
     # X-irányú bordák (Y-pozíciókon), a tető alól rib_drop mélyen:
@@ -274,7 +277,19 @@ def build_housing():
         cell_size_xy + 2 * cell_clear, cell_size_xy + 2 * cell_clear, cell_recess_d + eps,
         align=(C, C, MAX)
     )
-    # 2) 2 db M4 heat-set rögzítőfurat a süllyesztésen KÍVÜL, a HOSSZÚ (Y) középvonalon (x=0),
+    # 1b) KARIMA: a pocket alatti fenék KISZÉLESÍTVE (+cell_flange_margin körbe) és LELÓGATVA
+    #     (cell_flange_drop) a kavitásba → megvastagított, teherviselő talp a cella alá. A fenék
+    #     alja inner_z-ről inner_z−drop-ra kerül (a 44.8×44.8 területen).
+    pocket_xy = cell_size_xy + 2 * cell_clear          # a pocket oldala (34.8)
+    flange_xy = pocket_xy + 2 * cell_flange_margin     # a karima oldala (44.8)
+    housing += Pos(0, 0, inner_z) * Box(flange_xy, flange_xy, cell_flange_drop, align=(C, C, MAX))
+    # 1c) DENT: a pocket fenekének KÖZEPÉBE egy üreg (a pocketnél cell_dent_margin-nel kisebb körbe),
+    #     a pocket fenekétől lefelé cell_dent_d mélyen → IDE hajlik le a cella KÖZEPE; a SZÉLE a dent
+    #     körüli peremen (pocket-fenék) marad megtámasztva. A dent alatt a karimában marad anyag.
+    dent_xy = pocket_xy - 2 * cell_dent_margin         # a dent oldala (28.8)
+    pocket_floor_z = housing_h - cell_recess_d         # a pocket feneke (32.5)
+    housing -= Pos(0, 0, pocket_floor_z) * Box(dent_xy, dent_xy, cell_dent_d + eps, align=(C, C, MAX))
+    # 2) 2 db M2.5 önmetsző rögzítőfurat a süllyesztésen KÍVÜL, a HOSSZÚ (Y) középvonalon (x=0),
     #    a recess pereme mellett cell_screw_clearance-re. Felülről BLIND (a boss tömör anyagba zár
     #    → vízálló). Ide egy áthidaló leszorító bracket csavarozható a cella tartásához.
     cell_pocket_half_y = (cell_size_xy + 2 * cell_clear) / 2
