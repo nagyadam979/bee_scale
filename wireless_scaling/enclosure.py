@@ -326,18 +326,22 @@ def build_housing():
                      gasket_groove_d, align=(C, C, MIN))
     housing -= (groove_out - groove_in)
 
-    # --- FŐ FEDÉL sarok-bossok a belső sarkokban (betétfurat alulról, z=0-tól felfelé) ---
-    # A fal túl vékony, hogy a boss egyszerre érje a falat ÉS elkerülje a tömítőhornyot,
-    # ezért a bosst SAROK-GUSSET köti a két falhoz — a horony FÖLÖTT (z ≥ gasket_groove_d),
-    # így a tömítőcsatorna a z=0 peremen sértetlen marad.
+    # --- FŐ FEDÉL sarok-bossok a belső sarkokban (pilot furat alulról, z=0-tól felfelé) ---
+    # A boss a belső térben áll (a faltól behúzva), ezért GUSSET köti a falhoz — a tömítőhorony
+    # FÖLÖTT (z ≥ gasket_groove_d), hogy a z=0 peremen a tömítőcsatorna sértetlen maradjon.
+    # ⚠️ A gusset CSAK a ±Y (RÖVID) fal felé nyúlik. A ±X (hosszú) falakban SÜLLYESZTÉS van
+    # (akku-ajtó rebate a +X-en, USB recess a −X-en); ha a gusset oda nyúlna, a rebate terébe /
+    # az ajtó tömítőhornyába lógna (a user által jelzett ütközés). A ±Y falnál rendes 3 mm tömör
+    # anyag van a horony felett → ide kapcsolódik robosztusan (boss+gusset+fal+plató = 1 solid).
+    gusset_wall_grip = 0.5   # [mm] a gusset ennyivel ér a belső falsík MÖGÉ (átfedés az 1 solidhoz)
     for (px, py) in corner_positions:
-        # Gusset: tömör sarokblokk a bosstól a két belső falig, a horony felett:
-        x_wall = (1 if px > 0 else -1) * inner_x / 2
-        y_wall = (1 if py > 0 else -1) * inner_y / 2
-        gxc, gyc = (px + x_wall) / 2, (py + y_wall) / 2
-        glx = abs(x_wall - px) + boss_dia / 2
-        gly = abs(y_wall - py) + boss_dia / 2
-        housing += Pos(gxc, gyc, gasket_groove_d) * Box(glx, gly, boss_h - gasket_groove_d, align=(C, C, MIN))
+        sy = 1 if py > 0 else -1
+        by_far = py - sy * boss_dia / 2                  # boss doboz-közép felőli széle (Y-ban)
+        wy     = sy * (inner_y / 2 + gusset_wall_grip)   # a ±Y belső falsík mögé grip-ig
+        gyc    = (by_far + wy) / 2
+        gly    = abs(wy - by_far)
+        # Gusset: a boss szélességében (X=boss_dia), a bosstól a ±Y falig (a horony felett):
+        housing += Pos(px, gyc, gasket_groove_d) * Box(boss_dia, gly, boss_h - gasket_groove_d, align=(C, C, MIN))
         # Maga a boss + ÖNMETSZŐ PILOT furat alulról (z=0-tól) — nincs heat-set betét:
         housing += Pos(px, py, 0) * Cylinder(boss_dia / 2, boss_h, align=(C, C, MIN))
         housing -= Pos(px, py, 0) * Cylinder(pilot_dia / 2, pilot_depth, align=(C, C, MIN))
