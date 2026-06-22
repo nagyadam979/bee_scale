@@ -73,11 +73,10 @@ inner_x          = 60.0   # [mm] belső RÖVID él  (X) — 1-node-ra hangolva
 inner_y          = 78.0   # [mm] belső HOSSZÚ él (Y) — 80→78: a ±Y fal befelé vastagodott (wall 3→4),
                           #      outer_y marad 86. A 18650 holder (74.5) befér: ~1.75 mm/vég marad a
                           #      rugós érintkezőnek+kábelnek (volt ~2.75). ⚠️ szűkebb — ha kevés, told ki outer-t.
-inner_z          = 30.0   # [mm] belső magasság (Z) — TOVÁBB MINIMALIZÁLVA (36→30, user). Az akku-
-                          #      rekesz a sarok-bossok TETEJE fölé ült (holder alja = boss_h+holder_gap),
-                          #      és az ajtó/nyílás EHHEZ a felső sávhoz igazodik (nem a doboz közepéhez),
-                          #      a karima 1 mm-re csökkent → a doboz ~6 mm-rel alacsonyabb. Kötő korlát
-                          #      most: batt_z0(9) + 18650 Ø18.5 + felső margó ⇒ ~30. (Lásd akku-szekció.)
+inner_z          = 25.0   # [mm] belső magasság (Z) — ALACSONYÍTVA (30→25, user: "egy jó fél centivel").
+                          #      Lehetővé tette: a +X bossok kikerültek a holder alól → a holder lejjebb
+                          #      ülhet (batt_z0 9→3), így a 18650 (Ø18.5) teteje ~21.5 < inner_z=25 (≥3 mm
+                          #      margó). Az elektronika a tető alá lóg, bőven elfér. housing_h = 25+3.5 = 28.5.
 
 # ---- Sarok-rögzítés: M2.5 ÖNMETSZŐ MŰANYAG (nylon) csavar — heat-set betét NÉLKÜL ----
 # USER-DÖNTÉS: az M5 sárgaréz heat-set + fém csavar lecserélve FELE átmérőjű/hosszúságú MŰANYAG
@@ -132,7 +131,10 @@ cell_fix_dia     = pilot_dia    # [mm] M2.5 önmetsző PILOT furat (mint az als�
 cell_fix_depth   = pilot_depth  # [mm] pilot mélység = 6 (volt 8)
 cell_fix_boss_dia = pilot_dia + 2 * 1.85   # [mm] cella-mount boss ~5.8 — LECSATOLVA a fedél-bosstól
                                            #      (a fedél-boss vékonyodott; a cella-mount marad vastag)
-cell_fix_boss_h   = cell_fix_depth + 3.0     # [mm] a boss lelógása a tető aljától a kavitásba (pilot + tartalék)
+cell_fix_boss_h   = cell_fix_depth - top_th + 1.0   # [mm] a boss CSAK a furatig + 1 mm fenék (user:
+                                                    #   "a furaton túlnyúló szegmenst levágni"). A pilot a
+                                                    #   tetőből (housing_h) jön cell_fix_depth mélyen; ebből
+                                                    #   top_th a platóban → a boss csak a maradékot fedi (=3.5).
 # CELLA-TÁMASZTÁS (user): a fél-híd terhelés alatt LEHAJLIK — a SZÉLE megtámasztva (peremen ül), a
 # KÖZEPE szabadon hajlik le egy üregbe. Ehhez: (1) KARIMA — a pocket alatti fenék kiszélesítve
 # +flange_margin-nel körbe és lelógatva flange_drop-pal (megvastagított teherviselő talp); (2) DENT
@@ -209,11 +211,11 @@ bat_w            = 26.0   # [mm] az akku-rekesz X-szélessége (a belső +X falt
                           #      marad hézag: hasznos ≈ bat_w − partition_th = 23.5 mm (holder 21.5 befér)
                           #      a holder a +X strip-ben fekszik, hossza (74.5) ∥ Y
 bat_cable_dia    = 8.0    # [mm] kábel-átvezető furat a válaszfalon (holder vezetékei → elektronika)
-# AKKU-REKESZ Z-POZÍCIÓ: a holder+aksi a sarok-bossok TETEJE fölé ül holder_gap-pel ("csavarfejek
-# pár mm-re az akku tartótól"). OLDALSÓ AKKU-AJTÓ NINCS (user: törölve) → a 18650-hez ALULRÓL, a
-# bottom_lid felől férsz hozzá; a +X fal tömör. (A bat_open_*/door_* paraméterek törölve.)
-holder_gap       = 2.0    # [mm] hézag a sarok-boss teteje (boss_h) és az akku-tartó alja közt
-batt_z0          = boss_h + holder_gap   # [mm] az akku-rekesz (holder+aksi) ALJA z-ben (=9.0)
+# AKKU-REKESZ Z-POZÍCIÓ: a +X bossok KÜLSŐ fülre kerültek → a holder ALATT már NINCS boss, így a holder
+# LEJJEBB ülhet (nem kell a boss-tetőt elkerülnie). A 18650-hez ALULRÓL, a bottom_lid felől férsz hozzá.
+# DECOUPLED a boss_h-tól (user: doboz alacsonyítva); a holder a fedél megemelt belső peremén/rácsán ül.
+holder_gap       = 2.0    # [mm] (referencia) hézag a fedél belső felülete és az akku-tartó alja közt
+batt_z0          = 3.0    # [mm] az akku (holder+18650) ALJA z-ben — 9→3 (lásd fent). 18650 teteje ~21.5
 
 # ---- PCB-k rögzítése — ⚠️ A HÁZ MÁR NEM ÉPÍT TARTÓT (user döntés) ----------------------
 # DÖNTÉS (user): minden komponens EGY közös alaplapra forrasztva; a board-tartást a felhasználó
@@ -366,6 +368,9 @@ def build_housing():
     )
     # X-be extrudálva, a középvonalra centrálva (both=True) → x[−thick/2, +thick/2]:
     housing += extrude(col_prof, amount=cell_col_thick_x / 2, both=True)
+    # A Y-OSZLOP ALJÁBA önmetsző PILOT furat (x=0, y=0, ALULRÓL) — a fedél középen ide csavaroz: a
+    # teherút (cella→oszlop→CSAVAR→fedél→talaj) középen is záródik, és a fedél-közép meghúzható (user).
+    housing -= Pos(0, 0, 0) * Cylinder(pilot_dia / 2, pilot_depth, align=(C, C, MIN))
 
     # --- (A −Y falon korábbi PG7 tömszelence-furatok ELTÁVOLÍTVA, user kérés) ---
     # A kábel-bevezetés módja (cella-kábel, DS18B20) ezzel ÚJRA NYITOTT kérdés → lásd HANDOFF.
@@ -471,6 +476,9 @@ def build_bottom_lid():
     # 5 BELSŐ átmenő csavarfurat (M2.5) a ház bossaihoz, alulról (−X 2 sarok + −X/+Y/−Y oldal-közép):
     for (px, py) in corner_positions + side_positions:
         lid -= Pos(px, py, 0) * Cylinder(screw_clear_dia / 2, lid_th + 2 * eps, align=(C, C, MAX))
+
+    # KÖZÉPSŐ csavar a Y-oszlop aljához (clearance furat, x=0,y=0) — a fedél itt is meghúzható (user):
+    lid -= Pos(0, 0, 0) * Cylinder(screw_clear_dia / 2, lid_th + 2 * eps, align=(C, C, MAX))
 
     # +X KÜLSŐ FÜLEK párja a fedélen: a lap +X éléről kinyúló nyúlvány a ház-fül alá + clearance furat.
     lid_edge_x = outer_x / 2 - fit_gap             # a lap +X éle (33.7)
