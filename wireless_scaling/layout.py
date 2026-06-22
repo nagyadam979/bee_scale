@@ -22,7 +22,7 @@ C, MIN, MAX = Align.CENTER, Align.MIN, Align.MAX
 
 # Hasznos referenciaszintek az enclosure.py-ból (a defaultok ezekhez igazítva):
 PART_X      = e.inner_x / 2 - e.bat_w            # válaszfal belső lapja (elektronika x < PART_X)
-STRIP_CX    = (PART_X + e.inner_x / 2) / 2       # a 18650-strip közepe X-ben
+STRIP_CX    = (PART_X + e.partition_th + e.inner_x / 2) / 2  # a 18650-strip HASZNOS közepe (válaszfal után)
 SEAT_Z      = e.pcb_seat_z                       # a tető alá lógatott panelok FELSŐ lapja
 POCKET_FLR  = e.housing_h - e.cell_recess_d      # a cella-pocket feneke (a cella alja ide ül)
 
@@ -58,13 +58,17 @@ COMPONENTS = [
     dict(name="DS18B20",   shape="box", size=(4.6, 4.6, 3.9),
          pos=(-27.0, 0.0, 3.0),                                color="#e74c3c"),
 
-    # --- AKKU (a +X stripben, az alján; a holder ∥ Y) ---
-    # 18650 holder befoglaló: 21.5 (X) × 74.5 (Y) × 17.7 (Z), az aljától (z=0) felfelé
+    # --- AKKU (a +X stripben, a TETŐ ALÁ lógatva — NEM a bottom_lid-en!) ---
+    # A holder a tető plató aljára kerül (felső lapja az inner_z-n), így z[18.3,36] sávban van,
+    # a sarok-csavar-bossok (z[0,14]) FÖLÖTT → nincs ütközés a csavarokkal.
+    # ⚠️ A nyitott/behelyező oldala KIFELÉ (a +X akku-ajtó felé) néz → a cellát a száj felől
+    #    told be. (Box-makett: az orientációt a tényleges holdernél a száj +X felé fordítva értsd.)
+    # 18650 holder befoglaló: 21.5 (X) × 74.5 (Y) × 17.7 (Z); felső lap az inner_z-n:
     dict(name="18650_holder", shape="box", size=(21.5, 74.5, 17.7),
-         pos=(STRIP_CX, 0.0, 17.7 / 2),                        color="#9b59b6"),
-    # 18650 cella: Ø18.5 × 65, a holderben fekve (∥ Y)
+         pos=(STRIP_CX, 0.0, e.inner_z - 17.7 / 2),            color="#9b59b6"),
+    # 18650 cella: Ø18.5 × 65, a holderben fekve (∥ Y), ugyanazon a magasságon:
     dict(name="18650_cell",   shape="cyl", size=(18.5, 65.0),
-         pos=(STRIP_CX, 0.0, 17.7 / 2), axis="y",              color="#8e44ad"),
+         pos=(STRIP_CX, 0.0, e.inner_z - 17.7 / 2), axis="y",  color="#8e44ad"),
 
     # --- MÉRŐCELLA (a tető pocketjében; az alja a pocket fenekén, a dóm felfelé) ---
     # Egyszerűsített befoglaló 34×34×7.8 (a dóm/perem-tagolás nélkül)
