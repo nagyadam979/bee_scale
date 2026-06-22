@@ -28,9 +28,9 @@ KOORDINÁTA-RENDSZER:
 A 3 nyomtatandó alkatrész:
   1) housing       — falak + tömör tető plató (bordákkal + BESÜLLYESZTETT cella-pocket + 3 furat),
                      válaszfal, tömszelence-furatok, SÜLLYESZTETT akku-ajtó (+X) + USB-portok (−X),
-                     alsó-zárás tömítőhorony + sarok-bossok.
-  2) bottom_lid    — alsó fedéllap, körbefutó tömítőhoronyhoz illeszkedő sík felület,
-                     4 sarok átmenő csavarfurat, szorítóbordás PCB-fészkek.
+                     a tető alá lógatott SZORÍTÓBORDÁS PCB-fészkek, alsó-zárás tömítőhorony + sarok-bossok.
+  2) bottom_lid    — SÍK alsó záró fedéllap, körbefutó tömítőhoronyhoz illeszkedő felület,
+                     4 sarok átmenő csavarfurat (PCB-fészkek MÁR NEM itt vannak).
   3) battery_door  — süllyesztett akku-ajtó lap, 4 sarok csavarfurat + tömítőhorony az ajtóban.
 
 A slicer dolga (NEM itt állítjuk): kitöltés %, rétegmagasság, support.
@@ -123,10 +123,11 @@ usb_open_h       = 3.0    # [mm] átmenő STADION-nyílás MAGASSÁG (Z) = 2.56 
 usb_recess_w     = 14.0   # [mm] rebate-pocket SZÉLESSÉG (Y) — overmold/dugó-perem ⚠️ PLACEHOLDER
 usb_recess_h     = 8.0    # [mm] rebate-pocket MAGASSÁG (Z) ⚠️ PLACEHOLDER
 usb_recess_d     = 2.5    # [mm] rebate mélység a −X külső faltól (a dugó ide süllyed, flush)
-# (név, y_közép, z_közép) a −X falon — a SuperMini és a TP4056 fészkek (y=±26) felé igazítva:
+# (név, y_közép, z_közép) a −X falon — a SuperMini/TP4056 fészkekhez igazítva (y=±28), a port
+# Z-szintje a board-szinten (a panelok pcb_seat_z=32 alá lógatva → a csatlakozó ~z=29):
 usb_ports = [
-    ("TP4056_USB", -26.0, 8.0),   # ⚠️ PLACEHOLDER y,z — a TP4056 USB-C csatlakozójához
-    ("SuperMini_USB", 26.0, 8.0), # ⚠️ PLACEHOLDER y,z — a SuperMini USB-C csatlakozójához
+    ("TP4056_USB", -28.0, 29.0),    # ⚠️ PLACEHOLDER y,z — a TP4056 USB-C csatlakozójához
+    ("SuperMini_USB", 28.0, 29.0),  # ⚠️ PLACEHOLDER y,z — a SuperMini USB-C csatlakozójához
 ]
 
 # ---- PG7 kábeltömszelencék (elülső −Y fal) -------------------------------------------
@@ -159,28 +160,27 @@ door_th          = 3.0    # [mm] akku-ajtó lapvastagság = a rebate mélysége 
 bat_recess_d     = door_th  # [mm] rebate (besüllyesztés) mélysége a +X külső faltól → az ajtó síkban van
 bat_boss_inset   = 5.0    # [mm] akku-ajtó sarok-boss behúzása a váll szélétől
 
-# ---- PCB-k rögzítése az ALSÓ FEDÉLEN: SZORÍTÓBORDÁS fészkek (CSAVAR NÉLKÜL) -----------
-# DÖNTÉS (web-kutatás alapján): a SuperMini és a TP4056 furat NÉLKÜLI, a HX711 furatképe
-# klón-/gyártófüggő és bizonytalan → MINDEGYIK panelt becsúsztatós szorítóbordák közé
-# fogjuk, nincs heat-set betét a PCB-khez. A panel felülről becsúszik, a sarok-padokon ül,
-# a sarok-oszlopok oldalról fogják. Forrasztás-hézag a pad-magasságból.
+# ---- PCB-k rögzítése a HOUSING-BAN, a TETŐ ALÁ LÓGATVA: SZORÍTÓBORDÁS fészkek -----------
+# DÖNTÉS (user): a fészkek NEM a bottom_lid-en, hanem a HOUSING-on vannak → a panelok a tető
+# plató ALÁ lógatva ülnek (a lid csak zár). A SuperMini/TP4056 furat nélküli, a HX711 furatképe
+# bizonytalan → becsúsztatós szorítóbordák, nincs csavar. A panel ALULRÓL betolva ül, a fenti
+# támasztópadokhoz fekszik, a sarok-oszlopok oldalról fogják (súrlódó/becsúsztatós tartás).
+#
+# Z-SZINT (kulcs — így NINCS ütközés): a board FELSŐ lapja pcb_seat_z-re kerül, ami a tető alatti
+# bordák (z=inner_z−rib_drop=33) ÉS a cella-fix-bossok (z≈38.5) ALÁ esik, a fő-fedél sarok-bossok
+# (z≤22) FÖLÉ. Így a felülről lógatott fészek egyiket sem metszi.
 pcb_post_sz   = 3.0   # [mm] sarok-szorítóoszlop keresztmetszete (négyzet)
-pcb_post_h    = 8.0   # [mm] oszlopmagasság (a panel-él fölé ér, oldalt fog)
-pcb_pad_sz    = 3.5   # [mm] sarok-támasztópad mérete (a panel sarka ezen ül)
-pcb_pad_h     = 2.5   # [mm] támasztópad magasság = forrasztás-hézag a fedél felett
-# Panelfészkek: (név, közép_x, közép_y, szélesség_x, mélység_y) — befoglaló méretek WEBRŐL,
-# forrásolva. A POZÍCIÓK PLACEHOLDER: tuningold a tényleges kábelezés/USB-C hozzáférés szerint.
-# Az elektronika a −X/közép térfélen ül; az akku-rekesz a +X oldalon (oda ne tegyél fészket).
-#   HX711 zöld generic ...... 34 x 21 mm   (sarokfurat-osztás bizonytalan → bordás fogás)
-#   ESP32-C3 SuperMini ...... 24 x 18 mm   (USB-C túlnyúlással; furat NINCS)
-#   TP4056 USB-C PROT ....... 29 x 17.3 mm (furat NINCS; USB-C hozzáférés kell töltéshez)
-# ⚠️ PLACEHOLDER POZÍCIÓK az új 60×80 envelope-ra: az elektronika a −X térfélben (x<part_x),
-#    az akku-rekesz a +X strip-ben (x>part_x). A SuperMini és a TP4056 a −X falhoz közel,
-#    USB-C élükkel a −X fal felé (oda jön a 2 süllyesztett USB-port). Tuningold a kábelezéshez.
+pcb_pad_sz    = 3.5   # [mm] sarok-támasztópad mérete (a panel felső sarka ehhez fekszik)
+pcb_seat_z    = 32.0  # [mm] a board FELSŐ lapjának Z-szintje (a tető alá lógatva; bordák/cella alatt)
+pcb_grip      = 6.0   # [mm] a szorítóoszlop a seat ALATT ennyivel fogja a panel élét (vastagság+tér)
+# Panelfészkek: (név, közép_x, közép_y, szélesség_x, mélység_y) — befoglaló méretek WEBRŐL.
+# ⚠️ POZÍCIÓK PLACEHOLDER: az elektronika a −X/közép térfélen (x<part_x), az akku-rekesz a +X
+#    strip-ben. A boardok BELJEBB tolva (Y-ban szétosztva), hogy ne lógjanak a sarkokba/cellába:
+#   HX711 ...... 34×21 (középen, USB nem kell) | SuperMini 24×18 + TP4056 29×17.3 (USB-él −X felé)
 pcb_nests = [
-    ("HX711",     -10.0,   0.0, 34.0, 21.0),   # középen, USB-hozzáférés nem kell
-    ("SuperMini", -16.0,  26.0, 24.0, 18.0),   # −X falhoz közel, USB-C él −X felé
-    ("TP4056",    -14.0, -26.0, 29.0, 17.3),   # −X falhoz közel, USB-C él −X felé
+    ("HX711",     -12.0,   0.0, 34.0, 21.0),   # középen (y=0), a cella-boss FÖLÉ már nem ér (Z-ben alatta)
+    ("SuperMini", -14.0,  28.0, 24.0, 18.0),   # +Y vég felé, USB-C él −X felé
+    ("TP4056",    -14.0, -28.0, 29.0, 17.3),   # −Y vég felé, USB-C él −X felé
 ]
 
 # =========================================================================================
@@ -332,6 +332,26 @@ def build_housing():
             long_wall_th + 2 * eps, usb_open_w, usb_open_h
         )
 
+    # --- PCB-fészkek a TETŐ ALÁ LÓGATVA (a housing tartja, nem a bottom_lid) ---
+    # A board FELSŐ lapja pcb_seat_z-re kerül: a sarok-támasztópadok a tetőből (z=inner_z) idáig
+    # lógnak le (a panel ehhez fekszik felülről), a sarok-szorítóoszlopok a seat ALÁ (pcb_grip)
+    # is érnek és oldalról fogják a panel élét. Z-ben a bordák (z=33) és cella-bossok (z≈38.5)
+    # ALÁ, a sarok-bossok (z≤22) FÖLÉ esik → egyiket sem metszi. Ahol egy oszlop a falba/válaszfalba
+    # ér (széles HX711), ott összeolvad vele — ez extra tartás, 1 solid marad.
+    pad_len  = inner_z - pcb_seat_z                 # támasztópad (standoff) hossza a tetőtől lefelé
+    post_len = inner_z - (pcb_seat_z - pcb_grip)    # szorítóoszlop hossza (a seat alá is ér, fog)
+    for (_name, cx, cy, w, hh) in pcb_nests:
+        for sx in (-1, 1):
+            for sy in (-1, 1):
+                # sarok-szorítóoszlop a panel élén KÍVÜL, a tetőből lefelé:
+                ox = cx + sx * (w / 2 + fit_gap + pcb_post_sz / 2)
+                oy = cy + sy * (hh / 2 + fit_gap + pcb_post_sz / 2)
+                housing += Pos(ox, oy, inner_z) * Box(pcb_post_sz, pcb_post_sz, post_len, align=(C, C, MAX))
+                # sarok-támasztópad a panel sarka FÖLÖTT (a panel felső lapja ehhez fekszik):
+                px = cx + sx * (w / 2 - pcb_pad_sz / 2)
+                py = cy + sy * (hh / 2 - pcb_pad_sz / 2)
+                housing += Pos(px, py, inner_z) * Box(pcb_pad_sz, pcb_pad_sz, pad_len, align=(C, C, MAX))
+
     # --- FŐ (alsó) ZÁRÁS: körbefutó tömítőhorony az ALSÓ peremfelületen (z=0, felfelé) ---
     groove_out = Box(2 * groove_half_x + gasket_groove_w, 2 * groove_half_y + gasket_groove_w,
                      gasket_groove_d, align=(C, C, MIN))
@@ -359,30 +379,17 @@ def build_housing():
 
 
 # =========================================================================================
-#  2)  A L S Ó   F E D É L   ( bottom_lid )  —  egyben a PCB-tartó alaplap
+#  2)  A L S Ó   F E D É L   ( bottom_lid )  —  sík záró lap (a PCB-fészkek a HOUSING-ban vannak)
 # =========================================================================================
 def build_bottom_lid():
     # Lap: a teljes külső alaprajzot lefedi, fit_gap rés a kerület mentén; z ∈ [−lid_th, 0].
+    # A PCB-fészkek MÁR NEM itt vannak — a housing tartja a panelokat a tető alá lógatva.
     lid_th = wall
     lid = Box(outer_x - 2 * fit_gap, outer_y - 2 * fit_gap, lid_th, align=(C, C, MAX))
 
     # 4 sarok átmenő csavarfurat (M5) a ház sarok-bossaihoz, alulról:
     for (px, py) in corner_positions:
         lid -= Pos(px, py, 0) * Cylinder(screw_clear_dia / 2, lid_th + 2 * eps, align=(C, C, MAX))
-
-    # SZORÍTÓBORDÁS PCB-fészkek (csavar nélkül): panelenként 4 sarok-szorítóoszlop +
-    # 4 sarok-támasztópad. A panel felülről becsúszik, a padokon ül, az oszlopok oldalt fogják.
-    for (_name, cx, cy, w, hh) in pcb_nests:
-        for sx in (-1, 1):
-            for sy in (-1, 1):
-                # sarok-szorítóoszlop a panel élén KÍVÜL (a panelt oldalról fogja):
-                ox = cx + sx * (w / 2 + fit_gap + pcb_post_sz / 2)
-                oy = cy + sy * (hh / 2 + fit_gap + pcb_post_sz / 2)
-                lid += Pos(ox, oy, 0) * Box(pcb_post_sz, pcb_post_sz, pcb_post_h, align=(C, C, MIN))
-                # sarok-támasztópad a panel sarka ALATT (a panel pereme erre ül):
-                px = cx + sx * (w / 2 - pcb_pad_sz / 2)
-                py = cy + sy * (hh / 2 - pcb_pad_sz / 2)
-                lid += Pos(px, py, 0) * Box(pcb_pad_sz, pcb_pad_sz, pcb_pad_h, align=(C, C, MIN))
 
     return lid
 
