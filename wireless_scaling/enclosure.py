@@ -51,7 +51,10 @@ fit_gap          = 0.3    # [mm] összeillő alkatrészek közti rés (fedél/aj
 # KOORDINÁTÁK (1-node layout): a HOSSZÚ él (80) az Y → ide fekszik a 18650 holder (74.5 ∥ Y).
 # A RÖVID él (60) az X. A két HOSSZÚ fal (Y mentén futó, ±X-en) hordozza az akku-ajtót (+X)
 # és az USB-C-t (−X, szemközt). A két RÖVID fal a ±Y-on van.
-wall             = 3.0    # [mm] általános oldalfal-vastagság
+wall             = 3.0    # [mm] általános oldalfal-vastagság (rövid ±Y falak, alsó fedél)
+long_wall_th     = 5.0    # [mm] a két HOSSZÚ fal (±X) vastagsága — vastagabb, mert ide süllyed
+                          #      az akku-ajtó (+X) és az USB-C portok (−X). A doboz KIFELÉ nő
+                          #      (outer_x = inner_x + 2*long_wall_th), a belső holder-strip változatlan.
 top_th           = 7.0    # [mm] FELSŐ plató vastagsága — vastagabb (terhelést visz + cella-pocket süllyed bele)
 inner_x          = 60.0   # [mm] belső RÖVID él  (X) — 1-node-ra hangolva
 inner_y          = 80.0   # [mm] belső HOSSZÚ él (Y) — a 18650 holder (74.5) fekszik ide
@@ -119,12 +122,14 @@ bat_w            = 24.0   # [mm] az akku-rekesz X-szélessége (a belső +X falt
                           #      hasznos belső szélesség ≈ bat_w − wall = 21 mm (holder 21.5 ~befér)
                           #      a holder a +X strip-ben fekszik, hossza (74.5) ∥ Y
 bat_cable_dia    = 8.0    # [mm] kábel-átvezető furat a válaszfalon (holder vezetékei → elektronika)
-# Akku-ajtó NYÍLÁS a +X falon (a rekeszbe néz). A 2. commit teszi SÜLLYESZTETTÉ + véglegesíti.
-bat_open_y       = 50.0   # [mm] ajtónyílás szélessége Y-ban (commit2: ~76, > holder 74.5)
-bat_open_z       = 24.0   # [mm] ajtónyílás magassága Z-ben (akku 17.7 + hozzáférés; befér inner_z=45-be)
-bat_door_overlap = 8.0    # [mm] az ajtólap túlnyúlása a nyíláson (tömítés-felfekvés + boss-ok)
-door_th          = 4.0    # [mm] akku-ajtó lapvastagság
-bat_boss_inset   = 5.0    # [mm] akku-ajtó sarok-boss behúzása az ajtó szélétől
+# Akku-ajtó: SÜLLYESZTETT (flush) a +X hosszú falon. A 18650 a +X strip-ben fekszik (∥ Y);
+# az ajtó "kicsit nagyobb mint az akku" → a nyílás > cella, hogy a 18650 kivehető legyen.
+bat_open_y       = 68.0   # [mm] ⚠️ PLACEHOLDER: ajtónyílás Y-ban (> 18650 cella 65, hogy kivehető legyen)
+bat_open_z       = 22.0   # [mm] ajtónyílás Z-ben (18650 Ø18.5 + hozzáférés)
+bat_door_overlap = 6.0    # [mm] váll-szélesség a nyíláson túl (rebate-váll + sarok-bossok)
+door_th          = 3.0    # [mm] akku-ajtó lapvastagság = a rebate mélysége (FLUSH a fallal)
+bat_recess_d     = door_th  # [mm] rebate (besüllyesztés) mélysége a +X külső faltól → az ajtó síkban van
+bat_boss_inset   = 5.0    # [mm] akku-ajtó sarok-boss behúzása a váll szélétől
 
 # ---- PCB-k rögzítése az ALSÓ FEDÉLEN: SZORÍTÓBORDÁS fészkek (CSAVAR NÉLKÜL) -----------
 # DÖNTÉS (web-kutatás alapján): a SuperMini és a TP4056 furat NÉLKÜLI, a HX711 furatképe
@@ -153,8 +158,8 @@ pcb_nests = [
 # =========================================================================================
 #  S Z Á R M A Z T A T O T T   ( ne állítsd kézzel )
 # =========================================================================================
-outer_x   = inner_x + 2 * wall          # külső szélesség
-outer_y   = inner_y + 2 * wall          # külső mélység
+outer_x   = inner_x + 2 * long_wall_th  # külső szélesség (a HOSSZÚ ±X falak vastagabbak)
+outer_y   = inner_y + 2 * wall          # külső mélység   (a rövid ±Y falak)
 housing_h = inner_z + top_th            # ház teljes magassága (alja nyitott, teteje plató)
 eps       = 0.5                         # [mm] boolean-tisztasághoz extra túllógás
 
@@ -167,7 +172,7 @@ corner_positions = [
 ]
 
 # Tömítőhorony középvonalának fél-kiterjedése (a falközépen fut körbe):
-groove_half_x = inner_x / 2 + wall / 2
+groove_half_x = inner_x / 2 + long_wall_th / 2
 groove_half_y = inner_y / 2 + wall / 2
 
 C = Align.CENTER
@@ -238,35 +243,38 @@ def build_housing():
             gland_hole_dia / 2, 2 * wall + 2 * eps, align=(C, C, C)
         )
 
-    # --- AKKU-AJTÓ nyílás a +X falon (a rekeszbe néz) ---
-    face_x = outer_x / 2                  # +X külső fal
-    housing -= Pos(face_x, 0, inner_z / 2) * Box(
-        2 * wall + 2 * eps, bat_open_y, bat_open_z, align=(C, C, C)
+    # --- AKKU-AJTÓ: SÜLLYESZTETT (flush) a +X hosszú falon ---
+    # Felépítés (mind a +X külső faltól befelé, −X): (1) rebate-pocket az ajtónak (bat_recess_d
+    # mély, váll-méretű) → az ajtó síkban ül; (2) a rebate-fenéken át a kavitásba nyíló ÁTMENŐ
+    # nyílás; (3) 4 sarok-boss + heat-set betét a rebate-fenéktől befelé (a 18650 fölé/alá esnek
+    # Z-ben, ezért nem ütköznek a holderrel). A tömítőhorony az AJTÓBAN van (lásd build_battery_door).
+    face_x   = outer_x / 2                       # +X külső falsík
+    bat_cz   = inner_z / 2                        # az ajtó Z-középpontja
+    reb_y    = bat_open_y + 2 * bat_door_overlap  # rebate (váll) Y-mérete
+    reb_z    = bat_open_z + 2 * bat_door_overlap  # rebate (váll) Z-mérete
+    # (1) rebate-pocket: a +X külső faltól befelé bat_recess_d mélyen (az ajtó + fit_gap belefér):
+    housing -= Pos(face_x, 0, bat_cz) * Box(
+        bat_recess_d + eps, reb_y + 2 * fit_gap, reb_z + 2 * fit_gap, align=(MAX, C, C)
     )
-
-    # --- AKKU-AJTÓ tömítőhorony a +X KÜLSŐ falfelületen (téglalap-gyűrű, befelé maratva) ---
-    # A horony a nyílás körül, gasket_groove_w szélesen, gasket_groove_d mélyen (−X felé).
-    g_out_y = bat_open_y + 2 * (bat_door_overlap - gasket_groove_w)   # gyűrű külső Y
-    g_out_z = bat_open_z + 2 * (bat_door_overlap - gasket_groove_w)   # gyűrű külső Z
-    g_in_y  = g_out_y - 2 * gasket_groove_w
-    g_in_z  = g_out_z - 2 * gasket_groove_w
-    groove_outer = Pos(face_x, 0, inner_z / 2) * Box(2 * gasket_groove_d, g_out_y, g_out_z, align=(MAX, C, C))
-    groove_inner = Pos(face_x, 0, inner_z / 2) * Box(2 * gasket_groove_d, g_in_y, g_in_z, align=(MAX, C, C))
-    housing -= (groove_outer - groove_inner)
-
-    # --- AKKU-AJTÓ sarok-bossok a +X fal mögött (betétfurat kívülről, −X felé) ---
+    # (2) ÁTMENŐ nyílás a rebate-fenéktől a kavitásba (a teljes hosszú falon át):
+    housing -= Pos(face_x, 0, bat_cz) * Box(
+        long_wall_th + 2 * eps, bat_open_y, bat_open_z, align=(MAX, C, C)
+    )
+    # (3) 4 sarok-boss + heat-set betétfurat. A boss a belső +X faltól befelé (−X) a kavitásba;
+    #     a betétfurat a REBATE-FENÉKTŐL (face_x − bat_recess_d) befelé, így az ajtón átmenő
+    #     csavar ebbe fog. by/bz a nyílás SARKAIBA esik → Z-ben a holder (a nyíláson belül) fölé/alá.
+    reb_floor_x = face_x - bat_recess_d
     by = bat_open_y / 2 + bat_door_overlap - bat_boss_inset
     bz = bat_open_z / 2 + bat_door_overlap - bat_boss_inset
+    bat_boss_h = bat_recess_d + insert_depth + 2.0   # elég hosszú, hogy a betét belefér
     for sy in (-1, 1):
         for sz in (-1, 1):
-            bpos = (inner_x / 2, sy * by, inner_z / 2 + sz * bz)
-            # Boss: henger X-tengellyel, a belső +X faltól BEFELÉ a kavitásba (−X).
-            # Rot(0,90,0): lokál +Z → +X; az align=MAX a lokál −Z felé húz → globál −X.
-            housing += Pos(*bpos) * Rot(0, 90, 0) * Cylinder(boss_dia / 2, boss_h, align=(C, C, MAX))
-            # Betétfurat: a +X KÜLSŐ felülettől befelé (−X) a bossba:
-            housing -= Pos(outer_x / 2, sy * by, inner_z / 2 + sz * bz) * Rot(0, 90, 0) * Cylinder(
-                insert_dia / 2, insert_depth, align=(C, C, MAX)
-            )
+            # Boss: henger X-tengellyel, a belső +X faltól BEFELÉ (−X):
+            housing += Pos(inner_x / 2, sy * by, bat_cz + sz * bz) * Rot(0, 90, 0) * \
+                Cylinder(boss_dia / 2, bat_boss_h, align=(C, C, MAX))
+            # Heat-set betétfurat a rebate-fenéktől befelé (−X):
+            housing -= Pos(reb_floor_x, sy * by, bat_cz + sz * bz) * Rot(0, 90, 0) * \
+                Cylinder(insert_dia / 2, insert_depth, align=(C, C, MAX))
 
     # --- FŐ (alsó) ZÁRÁS: körbefutó tömítőhorony az ALSÓ peremfelületen (z=0, felfelé) ---
     groove_out = Box(2 * groove_half_x + gasket_groove_w, 2 * groove_half_y + gasket_groove_w,
@@ -327,6 +335,8 @@ def build_bottom_lid():
 #  3)  A K K U - A J T Ó   ( battery_door )  —  lokális XY síkban, laposan nyomtatható
 # =========================================================================================
 def build_battery_door():
+    # Az ajtó a rebate-be ül (footprint = rebate − fit_gap körben). Lokál: X=szélesség (→Y a
+    # házon), Y=magasság (→Z), Z=vastagság (→X). A lokál Z=0 lap a ház felé néz (rebate-fenék).
     dw = bat_open_y + 2 * bat_door_overlap - 2 * fit_gap
     dh = bat_open_z + 2 * bat_door_overlap - 2 * fit_gap
     door = Box(dw, dh, door_th, align=(C, C, MIN))
@@ -337,6 +347,15 @@ def build_battery_door():
     for sy in (-1, 1):
         for sz in (-1, 1):
             door -= Pos(sy * by, sz * bz, 0) * Cylinder(screw_clear_dia / 2, door_th + 2 * eps, align=(C, C, MIN))
+
+    # TÖMÍTŐHORONY az ajtó HÁZ-FELŐLI (lokál Z=0) lapján, a nyílás körül körbe (téglalap-gyűrű).
+    # A szilikon zsinór ebbe fekszik, és a ház rebate-fenekére tömít. Középvonal a vállon:
+    cl_w = bat_open_y + bat_door_overlap   # gyűrű-középvonal Y-átmérője (op + 1× overlap)
+    cl_h = bat_open_z + bat_door_overlap   # gyűrű-középvonal Z-átmérője
+    # VAK horony (mélység < door_th, hogy az ajtó 1 összefüggő solid maradjon):
+    g_out = Box(cl_w + gasket_groove_w, cl_h + gasket_groove_w, gasket_groove_d, align=(C, C, MIN))
+    g_in  = Box(cl_w - gasket_groove_w, cl_h - gasket_groove_w, gasket_groove_d, align=(C, C, MIN))
+    door -= (g_out - g_in)
 
     return door
 
@@ -349,12 +368,12 @@ def main():
     bottom_lid = build_bottom_lid()
     battery_door = build_battery_door()
 
-    # Az akku-ajtó az ASSEMBLY nézethez a +X falra forgatva/helyezve.
+    # Az akku-ajtó az ASSEMBLY nézethez a +X falra forgatva/helyezve, a REBATE-BE süllyesztve.
     # Rot(0,90,90):  lokál +X → globál +Y (szélesség),  lokál +Y → +Z (magasság),
     #                lokál +Z → +X (vastagság). Így a 4 sarokfurat a ház bossaira esik.
-    # A lapot a +X külső falra ültetjük: a door lokál Z=0 lapja (MIN-align) a +X külső
-    # falra (outer_x/2) kerül, így a 4 mm vastag ajtó a falra fekszik (rá tömít a horonyra).
-    door_assembled = Pos(outer_x / 2, 0, inner_z / 2) * Rot(0, 90, 90) * battery_door
+    # A door lokál Z=0 lapja a rebate FENEKÉRE (outer_x/2 − bat_recess_d) kerül, és +X felé
+    # door_th vastagon a külső falsíkig (outer_x/2) ér → FLUSH a fallal.
+    door_assembled = Pos(outer_x / 2 - bat_recess_d, 0, inner_z / 2) * Rot(0, 90, 90) * battery_door
 
     # --- Élő viewer (ocp_vscode). Headless futásnál ne dőljön el az export miatt. ---
     try:
