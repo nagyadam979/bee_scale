@@ -41,6 +41,16 @@ POCKET_FLR  = e.housing_h - e.cell_recess_d      # a cella-pocket feneke (a cell
 # 18650 az alján a stripben, cella a tető pocketjében). A panel-magasságok BECSÜLTEK.
 PCB_TH = 1.6   # [mm] FR4 alaplap-vastagság — MINDEGYIK panelnél ezzel számolunk (komponens-burok nélkül)
 
+# Flat panelok (tető alá lógatva) közös Z-középpontja + a két USB-C-s panel elhelyezése:
+BOARD_Z = SEAT_Z - PCB_TH / 2        # a flat panel közép-Z-je
+SM_X, SM_Y, SM_W = -14.0, 13.0, 24.0   # SuperMini közép-X, közép-Y, szélesség(X)
+TP_X, TP_Y, TP_W = -14.0, -11.0, 18.0  # TP4056   közép-X, közép-Y, szélesség(X)
+# USB-C connector makett (a panel −X élén kilóg a −X fal felé): mély(X) × szél(Y) × mag(Z)
+USBC_D, USBC_W, USBC_H = 7.0, 9.0, 3.2
+_sm_edge = SM_X - SM_W / 2           # SuperMini −X éle
+_tp_edge = TP_X - TP_W / 2           # TP4056 −X éle
+_usbc_z  = BOARD_Z - PCB_TH / 2 - USBC_H / 2   # a panel alatt (komponens-oldal lefelé)
+
 COMPONENTS = [
     # --- ELEKTRONIKA (a −X térfélben, a tető alá lógatva: a panel FELSŐ lapja SEAT_Z-n) ---
     # A panelok csak az ALAPLAP-vastagsággal (PCB_TH). A komponensek (header, USB-C, sorkapocs)
@@ -50,12 +60,18 @@ COMPONENTS = [
     # és NEM ér le az aljáig: a bottom_gap hézag marad alatta.
     dict(name="HX711",     shape="box", size=(34.0, PCB_TH, 21.0),
          pos=(-12.0, 0.0, 6.0 + 21.0 / 2),                     color="#2ecc71"),  # alja z=6 (hézag)
-    # ESP32-C3 SuperMini: 24×18.4 panel (user-mért) — beljebb húzva (a HX711 most vékony Y-ban)
+    # ESP32-C3 SuperMini: 24×18.4 panel (user-mért) — ~3 mm hézag a HX711-től
     dict(name="SuperMini", shape="box", size=(24.0, 18.4, PCB_TH),
-         pos=(-14.0, 11.0, SEAT_Z - PCB_TH / 2),               color="#3498db"),
-    # TP4056 USB-C: 18×14 panel (user-mért) — beljebb húzva
+         pos=(SM_X, SM_Y, BOARD_Z),                            color="#3498db"),
+    # ESP32 USB-C connector a −X élen, a −X fal felé kilógva:
+    dict(name="SuperMini_USBC", shape="box", size=(USBC_D, USBC_W, USBC_H),
+         pos=(_sm_edge - USBC_D / 2, SM_Y, _usbc_z),           color="#555555"),
+    # TP4056 USB-C: 18×14 panel (user-mért) — ~3 mm hézag a HX711-től
     dict(name="TP4056",    shape="box", size=(18.0, 14.0, PCB_TH),
-         pos=(-14.0, -9.0, SEAT_Z - PCB_TH / 2),               color="#e67e22"),
+         pos=(TP_X, TP_Y, BOARD_Z),                            color="#e67e22"),
+    # TP4056 USB-C connector a −X élen:
+    dict(name="TP4056_USBC", shape="box", size=(USBC_D, USBC_W, USBC_H),
+         pos=(_tp_edge - USBC_D / 2, TP_Y, _usbc_z),           color="#555555"),
     # DS18B20 TO-92 (~4.6×4.6×3.9) — diszkrét alkatrész, nem panel; placeholder a −X fal mellett
     dict(name="DS18B20",   shape="box", size=(4.6, 4.6, 3.9),
          pos=(-27.0, 0.0, 3.0),                                color="#e74c3c"),
