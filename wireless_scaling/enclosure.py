@@ -40,7 +40,6 @@ build123d 0.11.0 (algebra API) + ocp_vscode élő viewer.
 
 from build123d import (
     Box, Cylinder, Pos, Rot, Align, Compound,
-    Polygon, extrude, Plane,
     export_stl, export_step,
 )
 from pathlib import Path
@@ -116,13 +115,7 @@ cell_flange_margin = 4.0   # [mm] a karima ennyivel szélesebb a pocketnél, kö
 cell_flange_drop   = 3.0   # [mm] a karima ennyivel lóg a fenék alá a kavitásba (megvastagítás, user)
 cell_dent_margin   = 3.0   # [mm] a dent ennyivel kisebb a pocketnél, körbe ("3-3 mm-el kisebb téglalap")
 cell_dent_d        = 3.0   # [mm] a dent (közép-üreg) mélysége a pocket fenekétől lefelé (user)
-# CELLA-TÁMASZTÓ OSZLOP a platform alatt, a hosszanti (Y) középvonalon (x=0) — a teher útja a
-# cella→platform→oszlop→talp(→lid/talaj). ÁLLÓ "Y": a két ÁG FELÜL indul a load-cell ágytól (a
-# cella-ágy két széle), lefelé a V-csúcsban EGYESÜL, onnan közös szár/talp a doboz aljáig.
-# (A szélesség X-ben értendő; az oszlop Y-ban fut a platform hosszán.)
-cell_col_w_top      = 8.0    # [mm] az oszlop ÁG-vastagsága (X) — user: ≥8
-cell_col_w_base     = 12.0   # [mm] a közös TALP/szár szélessége (X) alul — user: ≥12
-cell_col_junction_z = 14.0   # [mm] a két ág EZEN a z-n EGYESÜL (V-csúcs); ez alatt közös szár/talp
+# CELLA-TÁMASZTÓ OSZLOP — ⚠️ a paraméterek TÖRÖLVE; a következő agent építi meg (lásd hand-off).
 
 # ---- MEREVÍTŐ BORDÁK — ELTÁVOLÍTVA (user: a statikai tervezést ő végzi) ----------------
 # A bordák tisztán merevítő (nem spec) szerepűek voltak → kivéve. A pozíció-listák ÜRESEK,
@@ -313,21 +306,7 @@ def build_housing():
             cell_fix_dia / 2, cell_fix_depth + eps, align=(C, C, MAX)
         )
 
-    # 3) CELLA-TÁMASZTÓ OSZLOP: a hosszanti (Y) középvonalon (x=0), ÁLLÓ "Y" forma — a két ÁG FELÜL
-    #    a load-cell ágytól (a cella-ágy két széle, z=col_top) indul, lefelé a V-csúcsban (jz)
-    #    EGYESÜL, onnan közös szár/talp a doboz aljáig (z=0). Y-ban a karima hosszán fut → a 2
-    #    cella-fix csavar (a karimán át) köti a végeit. Az x=0 középvonal miatt a +X-térfél
-    #    (akku-holder) szabad marad (user: a holdert ő helyezgeti).
-    col_top = (housing_h - cell_recess_d) - cell_dent_d   # az oszlop teteje = a dent feneke (29.5)
-    arm_out = (cell_size_xy + 2 * cell_clear) / 2         # a két ág KÜLSŐ széle = a cella-ágy (pocket) széle
-    arm_in  = arm_out - cell_col_w_top                    # az ág belső széle (ág-vastagság = w_top)
-    wb      = cell_col_w_base / 2                         # a közös szár/talp fél-szélessége
-    jz      = cell_col_junction_z                         # a két ág egyesülési z-je (V-csúcs)
-    col_prof = Plane.XZ * Polygon(
-        (-arm_out, col_top), (-wb, jz), (-wb, 0), (wb, 0), (wb, jz),
-        (arm_out, col_top), (arm_in, col_top), (0, jz), (-arm_in, col_top),
-    )
-    housing += extrude(col_prof, amount=flange_xy / 2, both=True)   # Y-ban a karima hosszán, centrálva
+    # 3) CELLA-TÁMASZTÓ OSZLOP — ⚠️ TÖRÖLVE (a következő agent építi meg, lásd hand-off prompt). ---
 
     # --- (A −Y falon korábbi PG7 tömszelence-furatok ELTÁVOLÍTVA, user kérés) ---
     # A kábel-bevezetés módja (cella-kábel, DS18B20) ezzel ÚJRA NYITOTT kérdés → lásd HANDOFF.
