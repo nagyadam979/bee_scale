@@ -112,11 +112,17 @@ gasket_groove_d  = 2.0    # [mm] tömítőhorony mélység
 # sapka, a recess-méretre — geometriát itt nem modellezünk hozzá (placeholder).
 # ⚠️ A POZÍCIÓK (y,z) és MÉRETEK PLACEHOLDER: a tényleges USB-C csatlakozó helye a panelon +
 #    a panel-fészek pozíciója határozza meg → a fizikai elrendezésnél pontosítandó.
-usb_open_w       = 14.0   # [mm] átmenő nyílás Y-ban (USB-C dugó/kábel hozzáférés; csatlakozó ~9 széles)
-usb_open_h       = 8.0    # [mm] átmenő nyílás Z-ben (csatlakozó ~3.2 + dugó-tér)
-usb_recess_w     = 20.0   # [mm] rebate-pocket Y-mérete (a dugó/sapka pereme)
-usb_recess_h     = 14.0   # [mm] rebate-pocket Z-mérete
-usb_recess_d     = 2.0    # [mm] rebate mélység a −X külső faltól (a dugó ide süllyed)
+# Az ÁTMENŐ nyílás a connector VALÓS geometriájához igazítva (STADION / obround alak):
+#   USB Type-C plug fém héj: ~8.4 mm SZÉLES × 2.56 mm MAGAS, teljesen lekerekített végek
+#   (végsugár = magasság/2 ≈ 1.28 mm). Receptacle belső nyílás ~8.34 × 2.56.
+#   Forrás: USB-IF USB Type-C Cable & Connector Spec R2.0 (2019), usb.org.
+usb_open_w       = 9.0    # [mm] átmenő STADION-nyílás SZÉLESSÉG (Y) = 8.4 plug + ~0.3/oldal hézag
+usb_open_h       = 3.0    # [mm] átmenő STADION-nyílás MAGASSÁG (Z) = 2.56 + hézag; végsugár = h/2 = 1.5
+# A DUGÓ/sapka SÜLLYESZTÉSE (recess): az overmold (a kábel tövének műanyag burka) NEM szabványos,
+# gyártófüggő → a recess bővebb és ⚠️ PLACEHOLDER (a használt kábel/dugó overmoldjához igazítandó):
+usb_recess_w     = 14.0   # [mm] rebate-pocket SZÉLESSÉG (Y) — overmold/dugó-perem ⚠️ PLACEHOLDER
+usb_recess_h     = 8.0    # [mm] rebate-pocket MAGASSÁG (Z) ⚠️ PLACEHOLDER
+usb_recess_d     = 2.5    # [mm] rebate mélység a −X külső faltól (a dugó ide süllyed, flush)
 # (név, y_közép, z_közép) a −X falon — a SuperMini és a TP4056 fészkek (y=±26) felé igazítva:
 usb_ports = [
     ("TP4056_USB", -26.0, 8.0),   # ⚠️ PLACEHOLDER y,z — a TP4056 USB-C csatlakozójához
@@ -200,6 +206,20 @@ groove_half_y = inner_y / 2 + wall / 2
 C = Align.CENTER
 MIN = Align.MIN
 MAX = Align.MAX
+
+
+def stadium_x(depth, width, height):
+    """STADION (obround) keresztmetszet a Y–Z síkban, X mentén `depth` hosszan extrudálva.
+    width ≥ height; a két vég TELJES körív (sugár = height/2) → ez az USB-C connector valós
+    profilja. Origóra központosítva. (Henger X-tengelyre: Rot(0,90,0) — empirikusan ellenőrzött.)"""
+    r = height / 2.0
+    flat = width - height          # a középső EGYENES szakasz hossza Y-ban (a két körív között)
+    cyl_p = Pos(0,  flat / 2, 0) * Rot(0, 90, 0) * Cylinder(r, depth, align=(C, C, C))
+    cyl_n = Pos(0, -flat / 2, 0) * Rot(0, 90, 0) * Cylinder(r, depth, align=(C, C, C))
+    s = cyl_p + cyl_n
+    if flat > 1e-6:
+        s = s + Box(depth, flat, height, align=(C, C, C))
+    return s
 
 
 # =========================================================================================
@@ -303,13 +323,13 @@ def build_housing():
     # ide süllyed, flush); (2) átmenő nyílás a rebate-fenéktől a kavitásba a csatlakozóhoz.
     usb_face_x = -outer_x / 2                 # −X külső falsík
     for (_name, uy, uz) in usb_ports:
-        # (1) rebate-pocket (a −X faltól BEFELÉ, +X irány → align MIN):
-        housing -= Pos(usb_face_x, uy, uz) * Box(
-            usb_recess_d + eps, usb_recess_w, usb_recess_h, align=(MIN, C, C)
+        # (1) rebate-pocket STADION-alakban (a dugó/sapka pereméhez), a −X faltól befelé:
+        housing -= Pos(usb_face_x + usb_recess_d / 2, uy, uz) * stadium_x(
+            usb_recess_d + eps, usb_recess_w, usb_recess_h
         )
-        # (2) átmenő nyílás a teljes hosszú falon át a kavitásba:
-        housing -= Pos(usb_face_x, uy, uz) * Box(
-            long_wall_th + 2 * eps, usb_open_w, usb_open_h, align=(MIN, C, C)
+        # (2) átmenő STADION-nyílás a connector VALÓS profiljához (a teljes falon át a kavitásba):
+        housing -= Pos(usb_face_x + long_wall_th / 2, uy, uz) * stadium_x(
+            long_wall_th + 2 * eps, usb_open_w, usb_open_h
         )
 
     # --- FŐ (alsó) ZÁRÁS: körbefutó tömítőhorony az ALSÓ peremfelületen (z=0, felfelé) ---
