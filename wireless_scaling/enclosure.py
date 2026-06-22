@@ -62,13 +62,17 @@ fit_gap          = 0.3    # [mm] összeillő alkatrészek közti rés (fedél/aj
 #   * ±Y (wall): a körbefutó TÖMÍTŐHORONY (gasket_groove_w=2.5) → fal ≥ ~3 (különben a horony átvágja).
 #   * ±X (long_wall_th): az ajtó/USB REBATE (bat_recess_d=3) + ~1 fenék → ≥ ~4.
 #   * tető (top_th): a cella-POCKET (cell_recess_d=2.5) + ~1 fenék → ≥ ~3.5.
-wall             = 3.0    # [mm] rövid ±Y falak — a tömítőhorony pinneli (min ~3), nem mehet lejjebb
+wall             = 4.0    # [mm] rövid ±Y falak — VASTAGÍTVA a hosszú falak szintjére (3→4, user), BEFELÉ
+                          #      (outer_y marad 86, inner_y csökken). Így mindkét fal-típus 4 mm → a horony
+                          #      egyforma távra ül a belső faltól → a boss-horony rés KÖRBE EGYENLETES.
 long_wall_th     = 4.0    # [mm] hosszú ±X falak (ajtó/USB rebate 3 + 1 fenék) — 5→4 vékonyítva
 lid_th           = 1.5    # [mm] alsó fedél vastagsága — leválasztva a wall-ról, vékonyítva (statika: user)
 partition_th     = 2.5    # [mm] belső válaszfal (akku-rekesz leválasztó) — 1.5→2.5 vastagítva (user)
 top_th           = 3.5    # [mm] FELSŐ plató — a cella-pocket (2.5) + ~1 fenék minimumára (7→3.5). TERHELÉST VISZ → user statika
 inner_x          = 60.0   # [mm] belső RÖVID él  (X) — 1-node-ra hangolva
-inner_y          = 80.0   # [mm] belső HOSSZÚ él (Y) — a 18650 holder (74.5) fekszik ide
+inner_y          = 78.0   # [mm] belső HOSSZÚ él (Y) — 80→78: a ±Y fal befelé vastagodott (wall 3→4),
+                          #      outer_y marad 86. A 18650 holder (74.5) befér: ~1.75 mm/vég marad a
+                          #      rugós érintkezőnek+kábelnek (volt ~2.75). ⚠️ szűkebb — ha kevés, told ki outer-t.
 inner_z          = 30.0   # [mm] belső magasság (Z) — TOVÁBB MINIMALIZÁLVA (36→30, user). Az akku-
                           #      rekesz a sarok-bossok TETEJE fölé ült (holder alja = boss_h+holder_gap),
                           #      és az ajtó/nyílás EHHEZ a felső sávhoz igazodik (nem a doboz közepéhez),
@@ -84,18 +88,22 @@ screw_nom_dia    = 2.5    # [mm] M2.5 névleges (az eddigi M5 fele)
 screw_clear_dia  = 2.9    # [mm] M2.5 átmenő (clearance) furat a fedélben
 pilot_dia        = 2.1    # [mm] ⚠️ önmetsző PILOT furat a bossban — M2.5 nylonhoz ~2.0–2.1 (csavar/anyag-függő, hangold)
 pilot_depth      = 6.0    # [mm] pilot mélység a bossban (csavar-behatolás) — ~fele az eddigi 9-nek
-boss_dia         = pilot_dia + 2 * 1.85   # [mm] boss külső átmérő (~5.8; elég fal a pilot köré) — ~fele az eddigi 11.6-nak
+boss_wall        = 1.2    # [mm] fal a pilot körül — KISEBB RÁHAGYÁS (user, 1.85→1.2). ⚠️ vékony: M2.5
+                          #      önmetsző nylonhoz alsó határ közeli (a csavar feszíti); ha reped, növeld.
+boss_dia         = pilot_dia + 2 * boss_wall   # [mm] FEDÉL-boss külső átmérő (~4.5; a cella-mount NEM ez)
 
 # ---- Sarok csavar-bossok (fő fedél + akku-ajtó közös rendszere) ----
 boss_h           = 7.0    # [mm] alsó-fedél sarok-bossok magassága (z=0-tól) = pilot_depth(6) + ~1 fenék — FELE a 14-nek
-corner_inset     = 2.8    # [mm] boss-közép behúzása a BELSŐ faltól (user: "közelebb a falhoz") — 3.0→2.8.
-                          #      A boss SZÉLE így ~0.1 mm-re a FALBA ér (x_edge=30.1 / y_edge=40.1), DE a
-                          #      tömítőhorony belső éle még kintebb (x=31 / y=40.5) → a horony SÉRTETLEN
-                          #      (IP65). KORLÁT: a +Y fal a szűk (horony 40.5) → ez pinneli a ~2.8 minimumot.
-side_inset       = corner_inset  # [mm] az OLDAL-KÖZÉP bossok behúzása a faltól (ugyanaz a logika)
+# BOSS BEHÚZÁS: a furat MAJDNEM ÉRINTSE a falat (user). A behúzást NEM rögzítjük, hanem a boss SZÉLÉT
+# a tömítőhorony belső éle elé húzzuk EGYENLETES groove_clear réssel → a furat a lehető legközelebb a
+# falhoz, miközben a horony (IP65) sértetlen. A behúzást (inset_x/inset_y) a SZÁRMAZTATOTT szakasz
+# számolja fal-típusonként (most mindkét fal 4 mm → a két érték egyenlő). KORLÁT: groove_clear ≥ ~0.2,
+# különben a boss alja (z[0,gd]) a hornyot vágja.
+groove_clear     = 0.3    # [mm] a boss SZÉLE ennyire marad a horony belső élétől, KÖRBE egyenletesen
 # FÉLKÖR (D) MEREVÍTŐ COLLAR a boss körül (a téglalap-gusset helyett, user): boss_collar_dia átmérőjű
 # henger a horony FÖLÖTT (z[gd,boss_h]), a falsíkon túli rész levágva, collar_merge-dzsel a falba nyúlva.
-boss_collar_dia  = boss_dia + 2 * 1.6   # [mm] collar külső átmérő (~9.0; ~1.6 mm gyűrű a boss köré)
+collar_ring      = 0.8    # [mm] a collar gyűrűvastagsága a boss körül — KISEBB RÁHAGYÁS (user, 1.6→0.8)
+boss_collar_dia  = boss_dia + 2 * collar_ring   # [mm] collar külső átmérő (~6.1)
 collar_merge     = 0.6    # [mm] a collar lapos oldala ennyivel nyúlik a falsík MÖGÉ (a fallal egyesülés;
                           #      a horony fölött (z≥gd) van → nem éri a hornyot, IP65 marad)
 
@@ -112,7 +120,8 @@ cell_recess_d    = 1.0    # [mm] pocket-mélység: a cella csak ~1 mm-re süllye
 cell_screw_clearance = 3.0   # [mm] rés a süllyesztés pereme és a rögzítőfurat SZÉLE között ("3mm-re kívülre")
 cell_fix_dia     = pilot_dia    # [mm] M2.5 önmetsző PILOT furat (mint az alsó sarkok; volt M4 heat-set 5.7)
 cell_fix_depth   = pilot_depth  # [mm] pilot mélység = 6 (volt 8)
-cell_fix_boss_dia = boss_dia    # [mm] boss külső átmérő = 5.8, UGYANAZ mint az alsó sarok-boss
+cell_fix_boss_dia = pilot_dia + 2 * 1.85   # [mm] cella-mount boss ~5.8 — LECSATOLVA a fedél-bosstól
+                                           #      (a fedél-boss vékonyodott; a cella-mount marad vastag)
 cell_fix_boss_h   = cell_fix_depth + 3.0     # [mm] a boss lelógása a tető aljától a kavitásba (pilot + tartalék)
 # CELLA-TÁMASZTÁS (user): a fél-híd terhelés alatt LEHAJLIK — a SZÉLE megtámasztva (peremen ül), a
 # KÖZEPE szabadon hajlik le egy üregbe. Ehhez: (1) KARIMA — a pocket alatti fenék kiszélesítve
@@ -223,20 +232,26 @@ outer_y   = inner_y + 2 * wall          # külső mélység   (a rövid ±Y fala
 housing_h = inner_z + top_th            # ház teljes magassága (alja nyitott, teteje plató)
 eps       = 0.5                         # [mm] boolean-tisztasághoz extra túllógás
 
-# A sarok-boss középpontok (a 4 belső sarokban) — fő fedél rögzítéséhez (L-gusset mindkét falhoz):
+# BOSS BEHÚZÁS fal-típusonként, hogy a boss SZÉLE EGYENLETES groove_clear-re legyen a horony belső
+# élétől (a furat a lehető legközelebb a falhoz, IP65 sértetlen). A horony belső éle a belső falsíktól
+# (fal_th/2 − groove_w/2)-vel kintebb van. Most mindkét fal 4 mm → inset_x == inset_y (egyenletes rés).
+inset_x = boss_dia / 2 - (long_wall_th / 2 - gasket_groove_w / 2) + groove_clear
+inset_y = boss_dia / 2 - (wall / 2 - gasket_groove_w / 2) + groove_clear
+
+# A sarok-boss középpontok (a 4 belső sarokban) — a furat majdnem érinti a falat, körbe egyenletes rés:
 corner_positions = [
-    ( inner_x / 2 - corner_inset,  inner_y / 2 - corner_inset),
-    (-inner_x / 2 + corner_inset,  inner_y / 2 - corner_inset),
-    ( inner_x / 2 - corner_inset, -inner_y / 2 + corner_inset),
-    (-inner_x / 2 + corner_inset, -inner_y / 2 + corner_inset),
+    ( inner_x / 2 - inset_x,  inner_y / 2 - inset_y),
+    (-inner_x / 2 + inset_x,  inner_y / 2 - inset_y),
+    ( inner_x / 2 - inset_x, -inner_y / 2 + inset_y),
+    (-inner_x / 2 + inset_x, -inner_y / 2 + inset_y),
 ]
-# OLDAL-KÖZÉP boss középpontok (mind a 4 fal közepén) — extra fedél-rögzítés (user). Egy-irányú
-# gusset a saját falához. (A +X fal közepe az akku-rekesz fölött van — a boss a holder ALATT, lásd lent.)
+# OLDAL-KÖZÉP boss középpontok (mind a 4 fal közepén) — extra fedél-rögzítés (user). Félkör-collar a
+# saját falához. (A +X fal közepe az akku-rekesz fölött van — a boss a holder ALATT, lásd lent.)
 side_positions = [
-    ( inner_x / 2 - side_inset, 0.0),   # +X fal közép
-    (-inner_x / 2 + side_inset, 0.0),   # −X fal közép (az USB-portok y=−11/+13 közé, z-ben alá esik)
-    (0.0,  inner_y / 2 - side_inset),   # +Y fal közép
-    (0.0, -inner_y / 2 + side_inset),   # −Y fal közép
+    ( inner_x / 2 - inset_x, 0.0),   # +X fal közép
+    (-inner_x / 2 + inset_x, 0.0),   # −X fal közép (az USB-portok y=−11/+13 közé, z-ben alá esik)
+    (0.0,  inner_y / 2 - inset_y),   # +Y fal közép
+    (0.0, -inner_y / 2 + inset_y),   # −Y fal közép
 ]
 
 # Tömítőhorony középvonalának fél-kiterjedése (a falközépen fut körbe):
@@ -375,7 +390,8 @@ def build_housing():
     housing -= (groove_out - groove_in)
 
     # --- FŐ FEDÉL rögzítő-bossok: 4 SAROK + 4 OLDAL-KÖZÉP (M2.5 önmetsző, pilot furat alulról) ---
-    # A boss-okat a falhoz HÚZTUK (corner/side_inset=2.8) → a boss SZÉLE a falsíkba ér. A korábbi
+    # A boss-okat a falhoz HÚZTUK (inset_x/inset_y, a furat majdnem érinti a falat) → a boss SZÉLE a
+    # horony belső éle elé ér, körbe EGYENLETES groove_clear réssel. A korábbi
     # téglalap-GUSSET helyett FÉLKÖR (D) COLLAR fut a boss körül: boss_collar_dia henger a horony
     # FÖLÖTT (z[gd,boss_h]), a legközelebbi falsík(ok)on túli része levágva, collar_merge-dzsel a falba
     # nyúlva (egyesülés). A horony csak z[0,gd]-ben van → a collar (z≥gd) szabadon a falba olvadhat,

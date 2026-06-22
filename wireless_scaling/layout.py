@@ -51,48 +51,19 @@ _sm_edge = SM_X - SM_W / 2           # SuperMini −X éle
 _tp_edge = TP_X - TP_W / 2           # TP4056 −X éle
 _usbc_z  = BOARD_Z - PCB_TH / 2 - USBC_H / 2   # a panel alatt (komponens-oldal lefelé)
 
+# ⚠️ A TÖBBI MAKETT (HX711, SuperMini, TP4056, USB-C, DS18B20, load_cell) TÖRÖLVE (user kérés):
+#    most CSAK az ELEM (18650 holder + cella) + a TOK (housing+lid, lent mindig megjelenik) látszik.
+#    Ha kellenek vissza, lásd a git history-t (ez a commit előtti változat).
 COMPONENTS = [
-    # --- ELEKTRONIKA (a −X térfélben, a tető alá lógatva: a panel FELSŐ lapja SEAT_Z-n) ---
-    # A panelok csak az ALAPLAP-vastagsággal (PCB_TH). A komponensek (header, USB-C, sorkapocs)
-    # NINCSENEK belemodellezve — ha kell a kilógásukkal számolni, külön add hozzá.
-    # HX711 zöld generic: 34×21 panel, a HOSSZANTI (X) tengelye körül 90°-kal ELFORGATVA → ÁLLÓ,
-    # élére állítva (34 X × PCB_TH Y × 21 Z). Egy kis SLOT-ba csúszik (a slot a házban: TODO),
-    # és NEM ér le az aljáig: a bottom_gap hézag marad alatta.
-    dict(name="HX711",     shape="box", size=(34.0, PCB_TH, 21.0),
-         pos=(-12.0, 0.0, 6.0 + 21.0 / 2),                     color="#2ecc71"),  # alja z=6 (hézag)
-    # ESP32-C3 SuperMini: 24×18.4 panel (user-mért) — ~3 mm hézag a HX711-től
-    dict(name="SuperMini", shape="box", size=(24.0, 18.4, PCB_TH),
-         pos=(SM_X, SM_Y, BOARD_Z),                            color="#3498db"),
-    # ESP32 USB-C connector a −X élen, a −X fal felé kilógva:
-    dict(name="SuperMini_USBC", shape="box", size=(USBC_D, USBC_W, USBC_H),
-         pos=(_sm_edge - USBC_D / 2, SM_Y, _usbc_z),           color="#555555"),
-    # TP4056 USB-C: 18×14 panel (user-mért) — ~3 mm hézag a HX711-től
-    dict(name="TP4056",    shape="box", size=(18.0, 14.0, PCB_TH),
-         pos=(TP_X, TP_Y, BOARD_Z),                            color="#e67e22"),
-    # TP4056 USB-C connector a −X élen:
-    dict(name="TP4056_USBC", shape="box", size=(USBC_D, USBC_W, USBC_H),
-         pos=(_tp_edge - USBC_D / 2, TP_Y, _usbc_z),           color="#555555"),
-    # DS18B20 TO-92 (~4.6×4.6×3.9) — diszkrét alkatrész, nem panel; placeholder a −X fal mellett
-    dict(name="DS18B20",   shape="box", size=(4.6, 4.6, 3.9),
-         pos=(-27.0, 0.0, 3.0),                                color="#e74c3c"),
-
-    # --- AKKU (a +X stripben, a sarok-bossok TETEJE fölé ültetve) ---
+    # --- AKKU / ELEM (a +X stripben, a sarok-bossok TETEJE fölé ültetve) ---
     # A holder alja a batt_z0-n (= boss_h + holder_gap), így a sarok-csavar-bossok (z[0,7]) FÖLÖTT
-    # ül holder_gap (~2 mm) hézaggal → "csavarfejek pár mm-re az akku tartótól" (user). Az akku-ajtó
-    # nyílása EHHEZ a sávhoz igazodik (bat_cz), nem a doboz közepéhez.
-    # ⚠️ A nyitott/behelyező oldala KIFELÉ (a +X akku-ajtó felé) néz → a holder+cella a száj felől
-    #    told be. (Box-makett: az orientációt a tényleges holdernél a száj +X felé fordítva értsd.)
+    # ül holder_gap (~2 mm) hézaggal → "csavarfejek pár mm-re az akku tartótól" (user).
     # 18650 holder befoglaló: 21.5 (X) × 74.5 (Y) × 17.7 (Z); alja a batt_z0-n:
     dict(name="18650_holder", shape="box", size=(21.5, 74.5, 17.7),
          pos=(STRIP_CX, 0.0, e.batt_z0 + 17.7 / 2),            color="#9b59b6"),
     # 18650 cella: Ø18.5 × 65, a holderben fekve (∥ Y), alja szintén a batt_z0-n:
     dict(name="18650_cell",   shape="cyl", size=(18.5, 65.0),
          pos=(STRIP_CX, 0.0, e.batt_z0 + 18.5 / 2), axis="y",  color="#8e44ad"),
-
-    # --- MÉRŐCELLA (a tető pocketjében; az alja a pocket fenekén, a dóm felfelé) ---
-    # Egyszerűsített befoglaló 34×34×7.8 (a dóm/perem-tagolás nélkül)
-    dict(name="load_cell", shape="box", size=(34.0, 34.0, 7.8),
-         pos=(0.0, 0.0, POCKET_FLR + 7.8 / 2),                 color="#f1c40f"),
 ]
 
 
