@@ -48,11 +48,11 @@ COMPONENTS = [
     # HX711 zöld generic: 34×21 panel
     dict(name="HX711",     shape="box", size=(34.0, 21.0, PCB_TH),
          pos=(-12.0, 0.0,  SEAT_Z - PCB_TH / 2),               color="#2ecc71"),
-    # ESP32-C3 SuperMini: 24×18 panel
-    dict(name="SuperMini", shape="box", size=(24.0, 18.0, PCB_TH),
+    # ESP32-C3 SuperMini: 24×18.4 panel (user-mért)
+    dict(name="SuperMini", shape="box", size=(24.0, 18.4, PCB_TH),
          pos=(-14.0, 21.0, SEAT_Z - PCB_TH / 2),               color="#3498db"),
-    # TP4056 USB-C: 29×17.3 panel
-    dict(name="TP4056",    shape="box", size=(29.0, 17.3, PCB_TH),
+    # TP4056 USB-C: 18×14 panel (user-mért)
+    dict(name="TP4056",    shape="box", size=(18.0, 14.0, PCB_TH),
          pos=(-14.0, -21.0, SEAT_Z - PCB_TH / 2),              color="#e67e22"),
     # DS18B20 TO-92 (~4.6×4.6×3.9) — diszkrét alkatrész, nem panel; placeholder a −X fal mellett
     dict(name="DS18B20",   shape="box", size=(4.6, 4.6, 3.9),

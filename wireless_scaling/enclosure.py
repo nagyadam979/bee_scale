@@ -184,8 +184,8 @@ pcb_grip      = 6.0   # [mm] a szorítóoszlop a seat ALATT ennyivel fogja a pan
 #   HX711 ...... 34×21 (középen, USB nem kell) | SuperMini 24×18 + TP4056 29×17.3 (USB-él −X felé)
 pcb_nests = [
     ("HX711",     -12.0,   0.0, 34.0, 21.0),   # középen (y=0); X-ben is maximálisan középen (a +X felet az akku foglalja)
-    ("SuperMini", -14.0,  21.0, 24.0, 18.0),   # SZOROSAN a HX711 fölött (~1.5 mm rés), USB-C él −X felé
-    ("TP4056",    -14.0, -21.0, 29.0, 17.3),   # SZOROSAN a HX711 alatt (~1.5 mm rés), USB-C él −X felé
+    ("SuperMini", -14.0,  21.0, 24.0, 18.4),   # SZOROSAN a HX711 fölött, USB-C él −X felé (24×18.4 user-mért)
+    ("TP4056",    -14.0, -21.0, 18.0, 14.0),   # SZOROSAN a HX711 alatt, USB-C él −X felé (18×14 user-mért)
 ]
 
 # =========================================================================================
