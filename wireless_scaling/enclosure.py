@@ -64,7 +64,7 @@ fit_gap          = 0.3    # [mm] összeillő alkatrészek közti rés (fedél/aj
 wall             = 3.0    # [mm] rövid ±Y falak — a tömítőhorony pinneli (min ~3), nem mehet lejjebb
 long_wall_th     = 4.0    # [mm] hosszú ±X falak (ajtó/USB rebate 3 + 1 fenék) — 5→4 vékonyítva
 lid_th           = 1.5    # [mm] alsó fedél vastagsága — leválasztva a wall-ról, vékonyítva (statika: user)
-partition_th     = 1.5    # [mm] belső válaszfal (akku-rekesz leválasztó) — vékonyítva (csak osztó, nem teherviselő)
+partition_th     = 2.5    # [mm] belső válaszfal (akku-rekesz leválasztó) — 1.5→2.5 vastagítva (user)
 top_th           = 3.5    # [mm] FELSŐ plató — a cella-pocket (2.5) + ~1 fenék minimumára (7→3.5). TERHELÉST VISZ → user statika
 inner_x          = 60.0   # [mm] belső RÖVID él  (X) — 1-node-ra hangolva
 inner_y          = 80.0   # [mm] belső HOSSZÚ él (Y) — a 18650 holder (74.5) fekszik ide
@@ -94,17 +94,18 @@ corner_inset     = boss_dia / 2 + 2.0  # [mm] sarok-boss közép behúzása a BE
 # ---- FELSŐ PLATÓ: NÉGYZETES fél-hidas mérőcella (SC902/YZC ~34×34), BESÜLLYESZTVE ------
 # Koncepció: a cella a tető SÜLLYESZTETT pocketjében ül; a kaptár KÖZVETLENÜL a cella dómjára
 # fekszik. A pocket FENEKE TÖMÖR (nincs alatta furat → felülről teljesen vízálló).
-# RÖGZÍTÉS: a cella saját furatképét NEM használjuk (kóta bizonytalan); helyette 2 db M4 heat-set
-# furat a süllyesztésen KÍVÜL, a HOSSZÚ (Y) középvonalon (x=0), a recess pereme mellett 3 mm-re
-# — ide egy áthidaló leszorító bracket csavarozható, ami a cellát a pocketben tartja.
+# RÖGZÍTÉS: a cella saját furatképét NEM használjuk (kóta bizonytalan); helyette 2 db furat a
+# süllyesztésen KÍVÜL, a HOSSZÚ (Y) középvonalon (x=0), a recess pereme mellett 3 mm-re — ide egy
+# áthidaló leszorító bracket csavarozható. A CSAVAR UGYANAZ mint az alsó sarkokon: M2.5 ÖNMETSZŐ
+# MŰANYAG, pilot furat, heat-set betét NÉLKÜL (user: "olyan mint az alján").
 cell_size_xy     = 34.0   # [mm] a cella befoglaló négyzete (SC902/YZC) — megerősítendő darabon
 cell_clear       = 0.4    # [mm] pocket oldalrés a cella körül (laza, hőtágulás/illesztés)
 cell_recess_d    = 1.0    # [mm] pocket-mélység: a cella csak ~1 mm-re süllyed (user). Fenék így 3.5−1.0=2.5 mm (vastagabb)
 cell_screw_clearance = 3.0   # [mm] rés a süllyesztés pereme és a rögzítőfurat SZÉLE között ("3mm-re kívülre")
-cell_fix_dia     = 5.7    # [mm] ⚠️ M4 heat-set betét KEZDŐ furat — pontosítsd a betét adatlapról (~5.6–6.0)
-cell_fix_depth   = 8.0    # [mm] M4 heat-set betét mélység (a lefelé lógó boss adja a hosszt)
-cell_fix_boss_dia = cell_fix_dia + 2 * 2.6   # [mm] a fix-furat boss külső átmérője (anyag a betét köré)
-cell_fix_boss_h   = cell_fix_depth + 3.0     # [mm] a boss lelógása a tető aljától a kavitásba (betét + tartalék)
+cell_fix_dia     = pilot_dia    # [mm] M2.5 önmetsző PILOT furat (mint az alsó sarkok; volt M4 heat-set 5.7)
+cell_fix_depth   = pilot_depth  # [mm] pilot mélység = 6 (volt 8)
+cell_fix_boss_dia = boss_dia    # [mm] boss külső átmérő = 5.8, UGYANAZ mint az alsó sarok-boss
+cell_fix_boss_h   = cell_fix_depth + 3.0     # [mm] a boss lelógása a tető aljától a kavitásba (pilot + tartalék)
 
 # ---- MEREVÍTŐ BORDÁK — ELTÁVOLÍTVA (user: a statikai tervezést ő végzi) ----------------
 # A bordák tisztán merevítő (nem spec) szerepűek voltak → kivéve. A pozíció-listák ÜRESEK,
@@ -158,8 +159,9 @@ gland_spacing    = 20.0   # [mm] (unused) furatok közti X-osztás
 # → A rekesz X-szélessége a 21.5-höz igazítva (bat_w − wall ≈ hasznos szélesség).
 # ⚠️ A holder hossza (74.5) majdnem kitölti az inner_y-t (80) → a végeken csak ~5 mm marad a
 #    rugós érintkezőnek + kábelhajlatnak. Ha szűk: növeld inner_y-t, vagy ültesd ferdén.
-bat_w            = 24.0   # [mm] az akku-rekesz X-szélessége (a belső +X faltól befelé)
-                          #      hasznos belső szélesség ≈ bat_w − wall = 21 mm (holder 21.5 ~befér)
+bat_w            = 26.0   # [mm] az akku-rekesz X-szélessége (a belső +X faltól befelé) — 24→26: a
+                          #      válaszfal 2 mm-rel HÁTRÉBB (−X), így a vastagabb (2.5) fal mellett is
+                          #      marad hézag: hasznos ≈ bat_w − partition_th = 23.5 mm (holder 21.5 befér)
                           #      a holder a +X strip-ben fekszik, hossza (74.5) ∥ Y
 bat_cable_dia    = 8.0    # [mm] kábel-átvezető furat a válaszfalon (holder vezetékei → elektronika)
 # Akku-ajtó: SÜLLYESZTETT (flush) a +X hosszú falon. A 18650 a +X strip-ben fekszik (∥ Y);
