@@ -62,7 +62,11 @@ long_wall_th     = 5.0    # [mm] a két HOSSZÚ fal (±X) vastagsága — vastag
 top_th           = 7.0    # [mm] FELSŐ plató vastagsága — vastagabb (terhelést visz + cella-pocket süllyed bele)
 inner_x          = 60.0   # [mm] belső RÖVID él  (X) — 1-node-ra hangolva
 inner_y          = 80.0   # [mm] belső HOSSZÚ él (Y) — a 18650 holder (74.5) fekszik ide
-inner_z          = 45.0   # [mm] belső magasság  (Z, tiszta belmagasság)
+inner_z          = 36.0   # [mm] belső magasság (Z) — MINIMALIZÁLVA. Kötő korlát: az oldalsó
+                          #      akku-ajtó nyílása (≥ 18650 Ø18.5 ≈ 20) + a sarok-bossok, amiknek a
+                          #      nyílás FÖLÉ/ALÁ kell esniük (a holder Z-ben kitölti a középsávot).
+                          #      A holder maga csak 17.7. → ha az oldalajtó elhagyható (akku alulról,
+                          #      a lid felől cserélve), inner_z ~22-ig vihető. (Lásd HANDOFF.)
 
 # ---- Heat-set menetes betétek (sárgaréz, M5) ----
 # M5 sárgaréz heat-set betéthez kezdő furat ~6.4 mm (insert_dia). Az adatlap szerint hangold.
@@ -72,7 +76,7 @@ screw_clear_dia  = 5.5    # [mm] M5 átmenő (clearance) furat a fedélben/ajtó
 boss_dia         = insert_dia + 2 * 2.6   # [mm] csavar-boss külső átmérő (elég falvastagság a betét köré)
 
 # ---- Sarok csavar-bossok (fő fedél + akku-ajtó közös rendszere) ----
-boss_h           = 22.0   # [mm] alsó-fedél sarok-bossok magassága (a z=0 síktól felfelé)
+boss_h           = 14.0   # [mm] alsó-fedél sarok-bossok magassága (z=0-tól) = insert_depth(9) + tartalék
 corner_inset     = 9.0    # [mm] sarok-boss középpont behúzása a BELSŐ faltól
 
 # ---- FELSŐ PLATÓ: NÉGYZETES fél-hidas mérőcella (SC902/YZC ~34×34), BESÜLLYESZTVE ------
@@ -122,8 +126,8 @@ usb_recess_d     = 2.5    # [mm] rebate mélység a −X külső faltól (a dug�
 # (név, y_közép, z_közép) a −X falon — a SuperMini/TP4056 fészkekhez igazítva (y=±28), a port
 # Z-szintje a board-szinten (a panelok pcb_seat_z=32 alá lógatva → a csatlakozó ~z=29):
 usb_ports = [
-    ("TP4056_USB", -21.0, 29.0),    # ⚠️ PLACEHOLDER y,z — a TP4056 USB-C csatlakozójához (board y=−21)
-    ("SuperMini_USB", 21.0, 29.0),  # ⚠️ PLACEHOLDER y,z — a SuperMini USB-C csatlakozójához (board y=+21)
+    ("TP4056_USB", -21.0, 19.0),    # ⚠️ PLACEHOLDER y,z — a TP4056 USB-C csatlakozójához (board y=−21, z~board-szint)
+    ("SuperMini_USB", 21.0, 19.0),  # ⚠️ PLACEHOLDER y,z — a SuperMini USB-C csatlakozójához (board y=+21)
 ]
 
 # ---- PG7 kábeltömszelencék (elülső −Y fal) — JELENLEG HASZNÁLATON KÍVÜL ----------------
@@ -148,7 +152,7 @@ bat_cable_dia    = 8.0    # [mm] kábel-átvezető furat a válaszfalon (holder 
 # Akku-ajtó: SÜLLYESZTETT (flush) a +X hosszú falon. A 18650 a +X strip-ben fekszik (∥ Y);
 # az ajtó "kicsit nagyobb mint az akku" → a nyílás > cella, hogy a 18650 kivehető legyen.
 bat_open_y       = 68.0   # [mm] ⚠️ PLACEHOLDER: ajtónyílás Y-ban (> 18650 cella 65, hogy kivehető legyen)
-bat_open_z       = 22.0   # [mm] ajtónyílás Z-ben (18650 Ø18.5 + hozzáférés)
+bat_open_z       = 20.0   # [mm] ajtónyílás Z-ben (18650 Ø18.5 + 1.5 kivételi hézag) — magasság-minimalizálva
 bat_door_overlap = 6.0    # [mm] váll-szélesség a nyíláson túl (rebate-váll + sarok-bossok)
 door_th          = 3.0    # [mm] akku-ajtó lapvastagság = a rebate mélysége (FLUSH a fallal)
 bat_recess_d     = door_th  # [mm] rebate (besüllyesztés) mélysége a +X külső faltól → az ajtó síkban van
@@ -165,7 +169,7 @@ bat_boss_inset   = 5.0    # [mm] akku-ajtó sarok-boss behúzása a váll szél�
 # (z≤22) FÖLÉ. Így a felülről lógatott fészek egyiket sem metszi.
 pcb_post_sz   = 3.0   # [mm] sarok-szorítóoszlop keresztmetszete (négyzet)
 pcb_pad_sz    = 3.5   # [mm] sarok-támasztópad mérete (a panel felső sarka ehhez fekszik)
-pcb_seat_z    = 32.0  # [mm] a board FELSŐ lapjának Z-szintje (a tető alá lógatva; bordák/cella alatt)
+pcb_seat_z    = 22.0  # [mm] a board FELSŐ lapjának Z-szintje (a tető alá lógatva; bordák z=24/cella-boss z=25 alatt)
 pcb_grip      = 6.0   # [mm] a szorítóoszlop a seat ALATT ennyivel fogja a panel élét (vastagság+tér)
 # Panelfészkek: (név, közép_x, közép_y, szélesség_x, mélység_y) — befoglaló méretek WEBRŐL.
 # ⚠️ POZÍCIÓK PLACEHOLDER: az elektronika a −X/közép térfélen (x<part_x), az akku-rekesz a +X
