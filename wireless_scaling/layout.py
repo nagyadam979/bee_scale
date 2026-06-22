@@ -45,15 +45,17 @@ COMPONENTS = [
     # --- ELEKTRONIKA (a −X térfélben, a tető alá lógatva: a panel FELSŐ lapja SEAT_Z-n) ---
     # A panelok csak az ALAPLAP-vastagsággal (PCB_TH). A komponensek (header, USB-C, sorkapocs)
     # NINCSENEK belemodellezve — ha kell a kilógásukkal számolni, külön add hozzá.
-    # HX711 zöld generic: 34×21 panel
-    dict(name="HX711",     shape="box", size=(34.0, 21.0, PCB_TH),
-         pos=(-12.0, 0.0,  SEAT_Z - PCB_TH / 2),               color="#2ecc71"),
-    # ESP32-C3 SuperMini: 24×18.4 panel (user-mért)
+    # HX711 zöld generic: 34×21 panel, a HOSSZANTI (X) tengelye körül 90°-kal ELFORGATVA → ÁLLÓ,
+    # élére állítva (34 X × PCB_TH Y × 21 Z). Egy kis SLOT-ba csúszik (a slot a házban: TODO),
+    # és NEM ér le az aljáig: a bottom_gap hézag marad alatta.
+    dict(name="HX711",     shape="box", size=(34.0, PCB_TH, 21.0),
+         pos=(-12.0, 0.0, 6.0 + 21.0 / 2),                     color="#2ecc71"),  # alja z=6 (hézag)
+    # ESP32-C3 SuperMini: 24×18.4 panel (user-mért) — beljebb húzva (a HX711 most vékony Y-ban)
     dict(name="SuperMini", shape="box", size=(24.0, 18.4, PCB_TH),
-         pos=(-14.0, 21.0, SEAT_Z - PCB_TH / 2),               color="#3498db"),
-    # TP4056 USB-C: 18×14 panel (user-mért)
+         pos=(-14.0, 11.0, SEAT_Z - PCB_TH / 2),               color="#3498db"),
+    # TP4056 USB-C: 18×14 panel (user-mért) — beljebb húzva
     dict(name="TP4056",    shape="box", size=(18.0, 14.0, PCB_TH),
-         pos=(-14.0, -21.0, SEAT_Z - PCB_TH / 2),              color="#e67e22"),
+         pos=(-14.0, -9.0, SEAT_Z - PCB_TH / 2),               color="#e67e22"),
     # DS18B20 TO-92 (~4.6×4.6×3.9) — diszkrét alkatrész, nem panel; placeholder a −X fal mellett
     dict(name="DS18B20",   shape="box", size=(4.6, 4.6, 3.9),
          pos=(-27.0, 0.0, 3.0),                                color="#e74c3c"),
