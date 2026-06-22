@@ -133,8 +133,8 @@ usb_recess_d     = 2.5    # [mm] rebate mélység a −X külső faltól (a dug�
 # (név, y_közép, z_közép) a −X falon — a SuperMini/TP4056 fészkekhez igazítva (y=±28), a port
 # Z-szintje a board-szinten (a panelok pcb_seat_z=32 alá lógatva → a csatlakozó ~z=29):
 usb_ports = [
-    ("TP4056_USB", -21.0, 19.0),    # ⚠️ PLACEHOLDER y,z — a TP4056 USB-C csatlakozójához (board y=−21, z~board-szint)
-    ("SuperMini_USB", 21.0, 19.0),  # ⚠️ PLACEHOLDER y,z — a SuperMini USB-C csatlakozójához (board y=+21)
+    ("TP4056_USB", -11.0, 18.8),    # a TP4056 USB-C connectoráhez (board y=−11, z≈18.8 — layout.py)
+    ("SuperMini_USB", 13.0, 18.8),  # a SuperMini USB-C connectoráhez (board y=+13, z≈18.8 — layout.py)
 ]
 
 # ---- PG7 kábeltömszelencék (elülső −Y fal) — JELENLEG HASZNÁLATON KÍVÜL ----------------
