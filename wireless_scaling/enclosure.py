@@ -140,6 +140,9 @@ lid_bottom_chamfer = 0.7    # [mm] a fedél ALSÓ (kifelé néző) peremének k�
 ear_wall_cham_top  = 3.5    # [mm] a KÜLSŐ fül↔fal FELSŐ csatlakozása → rámpa FELFELÉ a falba (agresszív)
 ear_wall_cham_side = 2.0    # [mm] a KÜLSŐ fül↔fal OLDALSÓ csatlakozása → rámpa OLDALIRÁNYBAN a falba
 collar_top_cham    = 1.2    # [mm] a BELSŐ boss-collarok tetejének kónusza (fokozatosabb arc-besüllyedés)
+col_fillet_r       = 4.0    # [mm] a Y-OSZLOP nem-kontakt profil-sarkainak lekerekítése (2 ág-tő + V-csúcs)
+                            #      — user: "éles sarok = weak point". A teteje (karima-fúzió) + alja
+                            #      (fedél-kontakt) ÉLES marad.
 
 # ---- FELSŐ PLATÓ: NÉGYZETES fél-hidas mérőcella (SC902/YZC ~34×34), BESÜLLYESZTVE ------
 # Koncepció: a cella a tető SÜLLYESZTETT pocketjében ül; a kaptár KÖZVETLENÜL a cella dómjára
@@ -398,11 +401,22 @@ def build_housing():
     arm_in  = arm_out - cell_col_w_top                    # az ág belső éle (Y); ág-vastagság = w_top (9.4)
     wb      = cell_col_w_base / 2                         # a közös szár/talp fél-szélessége (Y, =6)
     jz      = cell_col_junction_z                         # a két ág egyesülési z-je (V-csúcs)
-    # A körvonal a Y-Z síkban (Plane.YZ lokális koord: (a,b) → globális (0, a, b)):
-    col_prof = Plane.YZ * Polygon(
+    # A körvonal a Y-Z síkban (lokális (a,b) → globális (0, a, b)):
+    col_poly = Polygon(
         (-arm_out, col_top), (-wb, jz), (-wb, 0), (wb, 0), (wb, jz),
         (arm_out, col_top), (arm_in, col_top), (0, jz), (-arm_in, col_top),
     )
+    # A NEM-kontakt PROFIL-sarkok lekerekítése (user: éles sarok = weak point): a két ág-tő (±wb, jz)
+    # és a V-csúcs (0, jz). 2D-ben (a profilon) fillet-elünk → robusztus; az extrude hengeres átmenetet
+    # ad X-ben. A TETŐ (col_top, karima-fúzió) és az ALJ (z=0, fedél-kontakt) sarkai ÉLESEK maradnak.
+    if print_round_enable and col_fillet_r > 0:
+        try:
+            vts = [v for v in col_poly.vertices()
+                   if abs(v.Y - jz) < 0.01 and (abs(abs(v.X) - wb) < 0.01 or abs(v.X) < 0.01)]
+            col_poly = fillet(vts, radius=col_fillet_r)
+        except Exception as ex:
+            print(f"[col_fillet] SKIP: {str(ex)[:60]}")
+    col_prof = Plane.YZ * col_poly
     # X-be extrudálva, a középvonalra centrálva (both=True) → x[−thick/2, +thick/2]:
     housing += extrude(col_prof, amount=cell_col_thick_x / 2, both=True)
     # A Y-OSZLOP ALJÁBA önmetsző PILOT furat (x=0, y=0, ALULRÓL) — a fedél középen ide csavaroz: a
