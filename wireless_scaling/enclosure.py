@@ -113,7 +113,7 @@ rib_x_positions  = []     # [mm] X-irányú bordák Y-pozíciói — ÜRES (ninc
 rib_y_positions  = []     # [mm] Y-irányú bordák X-pozíciói — ÜRES (nincs borda)
 
 # ---- Körbefutó tömítőhorony (szilikon tömítéshez) — alsó zárás ÉS akku-ajtó ----------
-gasket_groove_w  = 2.5    # [mm] tömítőhorony szélesség
+gasket_groove_w  = 2.0    # [mm] tömítőhorony szélesség — 2.5→2.0 (user: egységesen ~2 mm max körbe, ajtó+fő zárás)
 gasket_groove_d  = 2.0    # [mm] tömítőhorony mélység
 
 # ---- USB-C portok a −X HOSSZÚ falon (2 KÜLÖN, süllyesztett) ---------------------------
