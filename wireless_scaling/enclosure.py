@@ -122,8 +122,8 @@ usb_recess_d     = 2.5    # [mm] rebate mélység a −X külső faltól (a dug�
 # (név, y_közép, z_közép) a −X falon — a SuperMini/TP4056 fészkekhez igazítva (y=±28), a port
 # Z-szintje a board-szinten (a panelok pcb_seat_z=32 alá lógatva → a csatlakozó ~z=29):
 usb_ports = [
-    ("TP4056_USB", -28.0, 29.0),    # ⚠️ PLACEHOLDER y,z — a TP4056 USB-C csatlakozójához
-    ("SuperMini_USB", 28.0, 29.0),  # ⚠️ PLACEHOLDER y,z — a SuperMini USB-C csatlakozójához
+    ("TP4056_USB", -21.0, 29.0),    # ⚠️ PLACEHOLDER y,z — a TP4056 USB-C csatlakozójához (board y=−21)
+    ("SuperMini_USB", 21.0, 29.0),  # ⚠️ PLACEHOLDER y,z — a SuperMini USB-C csatlakozójához (board y=+21)
 ]
 
 # ---- PG7 kábeltömszelencék (elülső −Y fal) — JELENLEG HASZNÁLATON KÍVÜL ----------------
@@ -172,9 +172,9 @@ pcb_grip      = 6.0   # [mm] a szorítóoszlop a seat ALATT ennyivel fogja a pan
 #    strip-ben. A boardok BELJEBB tolva (Y-ban szétosztva), hogy ne lógjanak a sarkokba/cellába:
 #   HX711 ...... 34×21 (középen, USB nem kell) | SuperMini 24×18 + TP4056 29×17.3 (USB-él −X felé)
 pcb_nests = [
-    ("HX711",     -12.0,   0.0, 34.0, 21.0),   # középen (y=0), a cella-boss FÖLÉ már nem ér (Z-ben alatta)
-    ("SuperMini", -14.0,  28.0, 24.0, 18.0),   # +Y vég felé, USB-C él −X felé
-    ("TP4056",    -14.0, -28.0, 29.0, 17.3),   # −Y vég felé, USB-C él −X felé
+    ("HX711",     -12.0,   0.0, 34.0, 21.0),   # középen (y=0); X-ben is maximálisan középen (a +X felet az akku foglalja)
+    ("SuperMini", -14.0,  21.0, 24.0, 18.0),   # SZOROSAN a HX711 fölött (~1.5 mm rés), USB-C él −X felé
+    ("TP4056",    -14.0, -21.0, 29.0, 17.3),   # SZOROSAN a HX711 alatt (~1.5 mm rés), USB-C él −X felé
 ]
 
 # =========================================================================================
