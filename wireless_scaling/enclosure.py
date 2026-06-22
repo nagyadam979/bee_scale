@@ -134,8 +134,12 @@ lid_grid_rib     = 2.0    # [mm] a rács-bordák vastagsága
 print_round_enable = True   # mester kapcsoló (False → minden él éles, gyors export/debug)
 corner_fillet_r    = 3.0    # [mm] a 4 KÜLSŐ függőleges doboz-sarok lekerekítése
 top_chamfer        = 1.0    # [mm] a FELSŐ külső perem kónusza (a cella-ágyat nem érinti)
-ear_chamfer        = 0.8    # [mm] a +X külső fülek külső függőleges éleinek kónusza
+ear_chamfer        = 0.8    # [mm] a +X külső fülek külső függőleges éleinek kónusza (szabad sarkok)
 lid_bottom_chamfer = 0.7    # [mm] a fedél ALSÓ (kifelé néző) peremének kónusza (a tető-sík éles marad)
+# AGRESSZÍV KÓNUSZ a csavar-foglalatok körül — fokozatos besüllyedés a falba (user, "főleg a külsőknél"):
+ear_wall_cham_top  = 3.5    # [mm] a KÜLSŐ fül↔fal FELSŐ csatlakozása → rámpa FELFELÉ a falba (agresszív)
+ear_wall_cham_side = 2.0    # [mm] a KÜLSŐ fül↔fal OLDALSÓ csatlakozása → rámpa OLDALIRÁNYBAN a falba
+collar_top_cham    = 1.2    # [mm] a BELSŐ boss-collarok tetejének kónusza (fokozatosabb arc-besüllyedés)
 
 # ---- FELSŐ PLATÓ: NÉGYZETES fél-hidas mérőcella (SC902/YZC ~34×34), BESÜLLYESZTVE ------
 # Koncepció: a cella a tető SÜLLYESZTETT pocketjében ül; a kaptár KÖZVETLENÜL a cella dómjára
@@ -496,6 +500,7 @@ def build_housing():
 
     # --- NYOMTATÁS-ERŐSÍTŐ ÉL-KEZELÉS (nem-kontakt élek; a kontaktok ÉLESEK maradnak) ---
     ox, oy = outer_x / 2, outer_y / 2
+    bosses = corner_positions + side_positions
     # 1) 4 KÜLSŐ függőleges doboz-sarok → fillet:
     housing = round_edges(housing, "fillet", [
         ed for ed in housing.edges().filter_by(Axis.Z)
@@ -507,10 +512,27 @@ def build_housing():
         if abs(ed.center().Z - housing_h) < 0.01
         and (abs(abs(ed.center().X) - ox) < 0.6 or abs(abs(ed.center().Y) - oy) < 0.6)
     ], top_chamfer)
-    # 3) +X KÜLSŐ fülek külső függőleges élei → chamfer (a pilot-furat és a fül-alja érintetlen):
+    # 3) KÜLSŐ FÜL↔FAL csatlakozás — AGRESSZÍV kónusz, fokozatos besüllyedés a falba (user):
+    #    3a) FELSŐ csatlakozó él (z=boss_h, x=falsík, Y-mentén) → rámpa FELFELÉ a falba:
+    housing = round_edges(housing, "chamfer", [
+        ed for ed in housing.edges()
+        if abs(ed.center().X - ox) < 0.3 and abs(ed.center().Z - boss_h) < 0.1 and 6.0 < ed.length < 8.0
+    ], ear_wall_cham_top)
+    #    3b) OLDALSÓ csatlakozó élek (függőleges, x=falsík, a fülek y-szélein) → rámpa OLDALIRÁNYBAN:
+    housing = round_edges(housing, "chamfer", [
+        ed for ed in housing.edges().filter_by(Axis.Z)
+        if abs(ed.center().X - ox) < 0.3 and any(abs(ed.center().Y - ey) < ear_wid for ey in ext_ear_positions)
+    ], ear_wall_cham_side)
+    # 4) +X KÜLSŐ fülek külső (szabad) függőleges élei → kisebb chamfer (a pilot/alj érintetlen):
     housing = round_edges(housing, "chamfer", [
         ed for ed in housing.edges().filter_by(Axis.Z) if ed.center().X > ox + 2.0
     ], ear_chamfer)
+    # 5) BELSŐ boss-collarok TETEJE → chamfer (fokozatosabb arc-besüllyedés, a furat-belső éles marad):
+    housing = round_edges(housing, "chamfer", [
+        ed for ed in housing.edges()
+        if abs(ed.center().Z - boss_h) < 0.1 and ed.center().X < ox - 1.0
+        and any((ed.center().X - bx) ** 2 + (ed.center().Y - by) ** 2 < 25.0 for bx, by in bosses)
+    ], collar_top_cham)
 
     return housing
 
