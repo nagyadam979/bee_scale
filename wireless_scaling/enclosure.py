@@ -55,11 +55,17 @@ fit_gap          = 0.3    # [mm] összeillő alkatrészek közti rés (fedél/aj
 # KOORDINÁTÁK (1-node layout): a HOSSZÚ él (80) az Y → ide fekszik a 18650 holder (74.5 ∥ Y).
 # A RÖVID él (60) az X. A két HOSSZÚ fal (Y mentén futó, ±X-en) hordozza az akku-ajtót (+X)
 # és az USB-C-t (−X, szemközt). A két RÖVID fal a ±Y-on van.
-wall             = 3.0    # [mm] általános oldalfal-vastagság (rövid ±Y falak, alsó fedél)
-long_wall_th     = 5.0    # [mm] a két HOSSZÚ fal (±X) vastagsága — vastagabb, mert ide süllyed
-                          #      az akku-ajtó (+X) és az USB-C portok (−X). A doboz KIFELÉ nő
-                          #      (outer_x = inner_x + 2*long_wall_th), a belső holder-strip változatlan.
-top_th           = 7.0    # [mm] FELSŐ plató vastagsága — vastagabb (terhelést visz + cella-pocket süllyed bele)
+# MINIMALIZÁLT FALAK (a felhasználó végzi a statikai tervezést → itt csak a SPEC-FEATURE
+# minimumok maradnak; minden tisztán-merevítő tömeg eltávolítva). Minden érték a spec-szerep
+# minimumára húzva, NEM lehet 1 mm, mert egy-egy feature pinneli:
+#   * ±Y (wall): a körbefutó TÖMÍTŐHORONY (gasket_groove_w=2.5) → fal ≥ ~3 (különben a horony átvágja).
+#   * ±X (long_wall_th): az ajtó/USB REBATE (bat_recess_d=3) + ~1 fenék → ≥ ~4.
+#   * tető (top_th): a cella-POCKET (cell_recess_d=2.5) + ~1 fenék → ≥ ~3.5.
+wall             = 3.0    # [mm] rövid ±Y falak — a tömítőhorony pinneli (min ~3), nem mehet lejjebb
+long_wall_th     = 4.0    # [mm] hosszú ±X falak (ajtó/USB rebate 3 + 1 fenék) — 5→4 vékonyítva
+lid_th           = 1.5    # [mm] alsó fedél vastagsága — leválasztva a wall-ról, vékonyítva (statika: user)
+partition_th     = 1.5    # [mm] belső válaszfal (akku-rekesz leválasztó) — vékonyítva (csak osztó, nem teherviselő)
+top_th           = 3.5    # [mm] FELSŐ plató — a cella-pocket (2.5) + ~1 fenék minimumára (7→3.5). TERHELÉST VISZ → user statika
 inner_x          = 60.0   # [mm] belső RÖVID él  (X) — 1-node-ra hangolva
 inner_y          = 80.0   # [mm] belső HOSSZÚ él (Y) — a 18650 holder (74.5) fekszik ide
 inner_z          = 36.0   # [mm] belső magasság (Z) — MINIMALIZÁLVA. Kötő korlát: az oldalsó
@@ -94,12 +100,13 @@ cell_fix_depth   = 8.0    # [mm] M4 heat-set betét mélység (a lefelé lógó 
 cell_fix_boss_dia = cell_fix_dia + 2 * 2.6   # [mm] a fix-furat boss külső átmérője (anyag a betét köré)
 cell_fix_boss_h   = cell_fix_depth + 3.0     # [mm] a boss lelógása a tető aljától a kavitásba (betét + tartalék)
 
-# ---- Terhelést hordó MEREVÍTŐ BORDÁK a plató ALATT (~100 kg függőleges terhelés) ------
-# Placeholder rács; a PCB-pozíciók ismeretében finomítsd, hogy ne ütközzön panellel.
-rib_th           = 3.0    # [mm] borda vastagság
-rib_drop         = 12.0   # [mm] mennyire lóg le a borda a tető alól a belső térbe
-rib_x_positions  = [-25.0, 25.0]   # [mm] X-irányú bordák Y-pozíciói (a tető alatt végigfutnak X-ben)
-rib_y_positions  = [-20.0, 20.0]   # [mm] Y-irányú bordák X-pozíciói
+# ---- MEREVÍTŐ BORDÁK — ELTÁVOLÍTVA (user: a statikai tervezést ő végzi) ----------------
+# A bordák tisztán merevítő (nem spec) szerepűek voltak → kivéve. A pozíció-listák ÜRESEK,
+# így a build_housing rib-ciklusai nem adnak hozzá semmit. Ha kellenek, töltsd fel a listákat.
+rib_th           = 3.0    # [mm] (unused) borda vastagság
+rib_drop         = 12.0   # [mm] (unused) borda lelógás
+rib_x_positions  = []     # [mm] X-irányú bordák Y-pozíciói — ÜRES (nincs borda)
+rib_y_positions  = []     # [mm] Y-irányú bordák X-pozíciói — ÜRES (nincs borda)
 
 # ---- Körbefutó tömítőhorony (szilikon tömítéshez) — alsó zárás ÉS akku-ajtó ----------
 gasket_groove_w  = 2.5    # [mm] tömítőhorony szélesség
@@ -232,14 +239,14 @@ def build_housing():
     housing = outer - cavity
 
     # --- Belső VÁLASZFAL: a +X oldalon leválasztja a 18650-rekeszt ---
-    # A válaszfal belső (−X felőli) lapja x = inner_x/2 − bat_w-nél; vastagsága 'wall'.
+    # A válaszfal belső (−X felőli) lapja x = inner_x/2 − bat_w-nél; vastagsága partition_th (vékonyítva).
     part_x = inner_x / 2 - bat_w
-    partition = Pos(part_x, 0, 0) * Box(wall, inner_y, inner_z, align=(MIN, C, MIN))
+    partition = Pos(part_x, 0, 0) * Box(partition_th, inner_y, inner_z, align=(MIN, C, MIN))
     housing += partition
     # Kábel-átvezető furat a válaszfalon (a holder vezetékei a rekesz +Y vége felől jutnak
     # át az elektronikához) — PLACEHOLDER pozíció a felső sarokban, tengely X:
-    housing -= Pos(part_x + wall / 2, inner_y / 2 - 12, inner_z - 8) * Rot(0, 90, 0) * \
-        Cylinder(bat_cable_dia / 2, wall + 2 * eps, align=(C, C, C))
+    housing -= Pos(part_x + partition_th / 2, inner_y / 2 - 12, inner_z - 8) * Rot(0, 90, 0) * \
+        Cylinder(bat_cable_dia / 2, partition_th + 2 * eps, align=(C, C, C))
 
     # --- Merevítő BORDÁK a plató alatt (lelógnak a tetőből a belső térbe) ---
     # X-irányú bordák (Y-pozíciókon), a tető alól rib_drop mélyen:
@@ -375,7 +382,7 @@ def build_housing():
 def build_bottom_lid():
     # Lap: a teljes külső alaprajzot lefedi, fit_gap rés a kerület mentén; z ∈ [−lid_th, 0].
     # A PCB-fészkek MÁR NEM itt vannak — a housing tartja a panelokat a tető alá lógatva.
-    lid_th = wall
+    # lid_th vékonyítva (modul-szintű paraméter); a statikát a user végzi.
     lid = Box(outer_x - 2 * fit_gap, outer_y - 2 * fit_gap, lid_th, align=(C, C, MAX))
 
     # 4 sarok átmenő csavarfurat (M5) a ház sarok-bossaihoz, alulról:
