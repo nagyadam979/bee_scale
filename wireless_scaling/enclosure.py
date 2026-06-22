@@ -93,7 +93,7 @@ corner_inset     = 9.0    # [mm] sarok-boss középpont behúzása a BELSŐ falt
 # — ide egy áthidaló leszorító bracket csavarozható, ami a cellát a pocketben tartja.
 cell_size_xy     = 34.0   # [mm] a cella befoglaló négyzete (SC902/YZC) — megerősítendő darabon
 cell_clear       = 0.4    # [mm] pocket oldalrés a cella körül (laza, hőtágulás/illesztés)
-cell_recess_d    = 2.5    # [mm] ⚠️ PLACEHOLDER/LEMÉRENDŐ: pocket-mélység = a fix perem vastagsága
+cell_recess_d    = 1.0    # [mm] pocket-mélység: a cella csak ~1 mm-re süllyed (user). Fenék így 3.5−1.0=2.5 mm (vastagabb)
 cell_screw_clearance = 3.0   # [mm] rés a süllyesztés pereme és a rögzítőfurat SZÉLE között ("3mm-re kívülre")
 cell_fix_dia     = 5.7    # [mm] ⚠️ M4 heat-set betét KEZDŐ furat — pontosítsd a betét adatlapról (~5.6–6.0)
 cell_fix_depth   = 8.0    # [mm] M4 heat-set betét mélység (a lefelé lógó boss adja a hosszt)
@@ -165,15 +165,11 @@ door_th          = 3.0    # [mm] akku-ajtó lapvastagság = a rebate mélysége 
 bat_recess_d     = door_th  # [mm] rebate (besüllyesztés) mélysége a +X külső faltól → az ajtó síkban van
 bat_boss_inset   = 5.0    # [mm] akku-ajtó sarok-boss behúzása a váll szélétől
 
-# ---- PCB-k rögzítése a HOUSING-BAN, a TETŐ ALÁ LÓGATVA: SZORÍTÓBORDÁS fészkek -----------
-# DÖNTÉS (user): a fészkek NEM a bottom_lid-en, hanem a HOUSING-on vannak → a panelok a tető
-# plató ALÁ lógatva ülnek (a lid csak zár). A SuperMini/TP4056 furat nélküli, a HX711 furatképe
-# bizonytalan → becsúsztatós szorítóbordák, nincs csavar. A panel ALULRÓL betolva ül, a fenti
-# támasztópadokhoz fekszik, a sarok-oszlopok oldalról fogják (súrlódó/becsúsztatós tartás).
-#
-# Z-SZINT (kulcs — így NINCS ütközés): a board FELSŐ lapja pcb_seat_z-re kerül, ami a tető alatti
-# bordák (z=inner_z−rib_drop=33) ÉS a cella-fix-bossok (z≈38.5) ALÁ esik, a fő-fedél sarok-bossok
-# (z≤22) FÖLÉ. Így a felülről lógatott fészek egyiket sem metszi.
+# ---- PCB-k rögzítése — ⚠️ A HÁZ MÁR NEM ÉPÍT TARTÓT (user döntés) ----------------------
+# DÖNTÉS (user): minden komponens EGY közös alaplapra forrasztva; a board-tartást a felhasználó
+# maga oldja meg. A korábbi tető-alá-lógatott szorítóoszlop/támasztópad fészkek a build_housing-ból
+# ELTÁVOLÍTVA. Az alábbi pcb_* paraméterek + pcb_nests CSAK REFERENCIÁNAK maradtak (layout.py
+# SEAT_Z + a makett-pakolás Z-szintjéhez), a ház geometriáját NEM befolyásolják.
 pcb_post_sz   = 3.0   # [mm] sarok-szorítóoszlop keresztmetszete (négyzet)
 pcb_pad_sz    = 3.5   # [mm] sarok-támasztópad mérete (a panel felső sarka ehhez fekszik)
 pcb_seat_z    = 22.0  # [mm] a board FELSŐ lapjának Z-szintje (a tető alá lógatva; bordák z=24/cella-boss z=25 alatt)
@@ -314,25 +310,10 @@ def build_housing():
             long_wall_th + 2 * eps, usb_open_w, usb_open_h
         )
 
-    # --- PCB-fészkek a TETŐ ALÁ LÓGATVA (a housing tartja, nem a bottom_lid) ---
-    # A board FELSŐ lapja pcb_seat_z-re kerül: a sarok-támasztópadok a tetőből (z=inner_z) idáig
-    # lógnak le (a panel ehhez fekszik felülről), a sarok-szorítóoszlopok a seat ALÁ (pcb_grip)
-    # is érnek és oldalról fogják a panel élét. Z-ben a bordák (z=33) és cella-bossok (z≈38.5)
-    # ALÁ, a sarok-bossok (z≤22) FÖLÉ esik → egyiket sem metszi. Ahol egy oszlop a falba/válaszfalba
-    # ér (széles HX711), ott összeolvad vele — ez extra tartás, 1 solid marad.
-    pad_len  = inner_z - pcb_seat_z                 # támasztópad (standoff) hossza a tetőtől lefelé
-    post_len = inner_z - (pcb_seat_z - pcb_grip)    # szorítóoszlop hossza (a seat alá is ér, fog)
-    for (_name, cx, cy, w, hh) in pcb_nests:
-        for sx in (-1, 1):
-            for sy in (-1, 1):
-                # sarok-szorítóoszlop a panel élén KÍVÜL, a tetőből lefelé:
-                ox = cx + sx * (w / 2 + fit_gap + pcb_post_sz / 2)
-                oy = cy + sy * (hh / 2 + fit_gap + pcb_post_sz / 2)
-                housing += Pos(ox, oy, inner_z) * Box(pcb_post_sz, pcb_post_sz, post_len, align=(C, C, MAX))
-                # sarok-támasztópad a panel sarka FÖLÖTT (a panel felső lapja ehhez fekszik):
-                px = cx + sx * (w / 2 - pcb_pad_sz / 2)
-                py = cy + sy * (hh / 2 - pcb_pad_sz / 2)
-                housing += Pos(px, py, inner_z) * Box(pcb_pad_sz, pcb_pad_sz, pad_len, align=(C, C, MAX))
+    # --- PCB-fészkek ELTÁVOLÍTVA (user: minden EGY alaplapra forrasztva; a board-tartást a
+    #     felhasználó maga oldja meg). A ház NEM épít szorítóoszlopot/támasztópadot.
+    #     Az USB-C portok (usb_ports, fent) MARADNAK. A pcb_nests/pcb_* paraméterek a fájlban
+    #     maradtak referenciának (layout.py SEAT_Z + pakolás), de itt már semmit nem építenek. ---
 
     # --- FŐ (alsó) ZÁRÁS: körbefutó tömítőhorony az ALSÓ peremfelületen (z=0, felfelé) ---
     groove_out = Box(2 * groove_half_x + gasket_groove_w, 2 * groove_half_y + gasket_groove_w,
