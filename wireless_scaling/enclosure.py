@@ -283,11 +283,10 @@ def build_housing():
     # --- (A −Y falon korábbi PG7 tömszelence-furatok ELTÁVOLÍTVA, user kérés) ---
     # A kábel-bevezetés módja (cella-kábel, DS18B20) ezzel ÚJRA NYITOTT kérdés → lásd HANDOFF.
 
-    # --- AKKU-AJTÓ: SÜLLYESZTETT (flush) a +X hosszú falon ---
-    # Felépítés (mind a +X külső faltól befelé, −X): (1) rebate-pocket az ajtónak (bat_recess_d
-    # mély, váll-méretű) → az ajtó síkban ül; (2) a rebate-fenéken át a kavitásba nyíló ÁTMENŐ
-    # nyílás; (3) 4 sarok-boss + heat-set betét a rebate-fenéktől befelé (a 18650 fölé/alá esnek
-    # Z-ben, ezért nem ütköznek a holderrel). A tömítőhorony az AJTÓBAN van (lásd build_battery_door).
+    # --- AKKU-AJTÓ: SÜLLYESZTETT (flush) fedő a +X hosszú falon, CSAVAR NÉLKÜL ---
+    # (user: a csavarozás kivéve — marad a süllyesztett fedő + a tömítőhorony az ajtóban.)
+    # (1) rebate-pocket az ajtónak (bat_recess_d mély, váll-méretű) → az ajtó síkban ül;
+    # (2) a rebate-fenéken át a kavitásba nyíló ÁTMENŐ nyílás. NINCS sarok-boss / betétfurat.
     face_x   = outer_x / 2                       # +X külső falsík
     bat_cz   = inner_z / 2                        # az ajtó Z-középpontja
     reb_y    = bat_open_y + 2 * bat_door_overlap  # rebate (váll) Y-mérete
@@ -300,21 +299,6 @@ def build_housing():
     housing -= Pos(face_x, 0, bat_cz) * Box(
         long_wall_th + 2 * eps, bat_open_y, bat_open_z, align=(MAX, C, C)
     )
-    # (3) 4 sarok-boss + heat-set betétfurat. A boss a belső +X faltól befelé (−X) a kavitásba;
-    #     a betétfurat a REBATE-FENÉKTŐL (face_x − bat_recess_d) befelé, így az ajtón átmenő
-    #     csavar ebbe fog. by/bz a nyílás SARKAIBA esik → Z-ben a holder (a nyíláson belül) fölé/alá.
-    reb_floor_x = face_x - bat_recess_d
-    by = bat_open_y / 2 + bat_door_overlap - bat_boss_inset
-    bz = bat_open_z / 2 + bat_door_overlap - bat_boss_inset
-    bat_boss_h = bat_recess_d + insert_depth + 2.0   # elég hosszú, hogy a betét belefér
-    for sy in (-1, 1):
-        for sz in (-1, 1):
-            # Boss: henger X-tengellyel, a belső +X faltól BEFELÉ (−X):
-            housing += Pos(inner_x / 2, sy * by, bat_cz + sz * bz) * Rot(0, 90, 0) * \
-                Cylinder(boss_dia / 2, bat_boss_h, align=(C, C, MAX))
-            # Heat-set betétfurat a rebate-fenéktől befelé (−X):
-            housing -= Pos(reb_floor_x, sy * by, bat_cz + sz * bz) * Rot(0, 90, 0) * \
-                Cylinder(insert_dia / 2, insert_depth, align=(C, C, MAX))
 
     # --- USB-C portok a −X HOSSZÚ falon (2 KÜLÖN, süllyesztett dugóhoz) ---
     # Portonként: (1) rebate-pocket a −X külső faltól befelé (+X) usb_recess_d mélyen (a dugó
@@ -402,12 +386,8 @@ def build_battery_door():
     dh = bat_open_z + 2 * bat_door_overlap - 2 * fit_gap
     door = Box(dw, dh, door_th, align=(C, C, MIN))
 
-    # 4 sarok átmenő csavarfurat a ház akku-bossaihoz:
-    by = bat_open_y / 2 + bat_door_overlap - bat_boss_inset
-    bz = bat_open_z / 2 + bat_door_overlap - bat_boss_inset
-    for sy in (-1, 1):
-        for sz in (-1, 1):
-            door -= Pos(sy * by, sz * bz, 0) * Cylinder(screw_clear_dia / 2, door_th + 2 * eps, align=(C, C, MIN))
+    # (CSAVARFURATOK ELTÁVOLÍTVA — user: a csavarozás kivéve, marad a sima süllyesztett fedő.)
+    # Retenció így nincs modellezve (súrlódó/becsúsztatott fedő, vagy később pattintó/klips) → NYITOTT.
 
     # TÖMÍTŐHORONY az ajtó HÁZ-FELŐLI (lokál Z=0) lapján, a nyílás körül körbe (téglalap-gyűrű).
     # A szilikon zsinór ebbe fekszik, és a ház rebate-fenekére tömít. Középvonal a vállon:
