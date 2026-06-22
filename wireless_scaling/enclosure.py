@@ -87,7 +87,9 @@ boss_dia         = pilot_dia + 2 * 1.85   # [mm] boss külső átmérő (~5.8; e
 
 # ---- Sarok csavar-bossok (fő fedél + akku-ajtó közös rendszere) ----
 boss_h           = 7.0    # [mm] alsó-fedél sarok-bossok magassága (z=0-tól) = pilot_depth(6) + ~1 fenék — FELE a 14-nek
-corner_inset     = 9.0    # [mm] sarok-boss középpont behúzása a BELSŐ faltól
+corner_inset     = boss_dia / 2 + 2.0  # [mm] sarok-boss közép behúzása a BELSŐ faltól: a boss SZÉLE
+                          #      2 mm-re a falsíktól (user: "majdnem a szélére"). =4.9; a tömítőhorony
+                          #      belső éle (x=31/y=40.5) még kintebb → a boss nem éri (IP65 sértetlen).
 
 # ---- FELSŐ PLATÓ: NÉGYZETES fél-hidas mérőcella (SC902/YZC ~34×34), BESÜLLYESZTVE ------
 # Koncepció: a cella a tető SÜLLYESZTETT pocketjében ül; a kaptár KÖZVETLENÜL a cella dómjára
