@@ -40,6 +40,7 @@ build123d 0.11.0 (algebra API) + ocp_vscode élő viewer.
 
 from build123d import (
     Box, Cylinder, Pos, Rot, Align, Compound,
+    Polygon, extrude, Plane,
     export_stl, export_step,
 )
 from pathlib import Path
@@ -111,10 +112,16 @@ cell_fix_boss_h   = cell_fix_depth + 3.0     # [mm] a boss lelógása a tető al
 # KÖZEPE szabadon hajlik le egy üregbe. Ehhez: (1) KARIMA — a pocket alatti fenék kiszélesítve
 # +flange_margin-nel körbe és lelógatva flange_drop-pal (megvastagított teherviselő talp); (2) DENT
 # — a pocket fenekének közepébe egy üreg (a cellánál dent_margin-nel kisebb körbe), ide hajlik a közép.
-cell_flange_margin = 5.0   # [mm] a karima ennyivel szélesebb a pocketnél, körbe (user: "+5mm körbe")
+cell_flange_margin = 4.0   # [mm] a karima ennyivel szélesebb a pocketnél, körbe — 5→4 (user: "vegyél vissza 1mm-t")
 cell_flange_drop   = 3.0   # [mm] a karima ennyivel lóg a fenék alá a kavitásba (megvastagítás, user)
 cell_dent_margin   = 3.0   # [mm] a dent ennyivel kisebb a pocketnél, körbe ("3-3 mm-el kisebb téglalap")
 cell_dent_d        = 3.0   # [mm] a dent (közép-üreg) mélysége a pocket fenekétől lefelé (user)
+# CELLA-TÁMASZTÓ OSZLOP a platform alatt, a hosszanti (Y) középvonalon (x=0) — a teher útja a
+# cella→platform→oszlop→talp(→lid/talaj). Lefelé "Y" formába szélesedik (szár → talp), a 2 cella-
+# fix csavar köti a végeit. (A szélesség X-ben értendő; az oszlop Y-ban fut a platform hosszán.)
+cell_col_w_top   = 8.0    # [mm] az oszlop SZÁR szélessége (X) felül — user: ≥8
+cell_col_w_base  = 12.0   # [mm] az oszlop TALP szélessége (X) alul — user: ≥12
+cell_col_taper_z = 14.0   # [mm] eddig (z) szár (8 mm); ez ALATT szélesedik a talpra (12 mm) — az "Y" villa
 
 # ---- MEREVÍTŐ BORDÁK — ELTÁVOLÍTVA (user: a statikai tervezést ő végzi) ----------------
 # A bordák tisztán merevítő (nem spec) szerepűek voltak → kivéve. A pozíció-listák ÜRESEK,
@@ -300,10 +307,22 @@ def build_housing():
         housing += Pos(0, cy_s, inner_z) * Cylinder(
             cell_fix_boss_dia / 2, cell_fix_boss_h, align=(C, C, MAX)
         )
-        # M4 heat-set betét furat FELÜLRŐL lefelé (blind, a tetőn át a bossba):
+        # M2.5 önmetsző pilot furat FELÜLRŐL lefelé (blind, a tetőn át a bossba):
         housing -= Pos(0, cy_s, housing_h) * Cylinder(
             cell_fix_dia / 2, cell_fix_depth + eps, align=(C, C, MAX)
         )
+
+    # 3) CELLA-TÁMASZTÓ OSZLOP: a hosszanti (Y) középvonalon (x=0), a megvastagított platform
+    #    aljától (a dent feneke) a doboz aljáig (z=0); lefelé "Y" formába szélesedő láb (szár →
+    #    talp). Y-ban a karima hosszán fut → a 2 cella-fix csavar köti a végeit. Az x=0 középvonal
+    #    miatt a +X-térfél (akku-holder) szabad marad (user: a holdert ő helyezgeti).
+    col_top = (housing_h - cell_recess_d) - cell_dent_d   # az oszlop teteje = a dent feneke (29.5)
+    wt, wb  = cell_col_w_top / 2, cell_col_w_base / 2
+    tz      = cell_col_taper_z
+    col_prof = Plane.XZ * Polygon(
+        (-wb, 0), (wb, 0), (wt, tz), (wt, col_top), (-wt, col_top), (-wt, tz)
+    )
+    housing += extrude(col_prof, amount=flange_xy / 2, both=True)   # Y-ban a karima hosszán, centrálva
 
     # --- (A −Y falon korábbi PG7 tömszelence-furatok ELTÁVOLÍTVA, user kérés) ---
     # A kábel-bevezetés módja (cella-kábel, DS18B20) ezzel ÚJRA NYITOTT kérdés → lásd HANDOFF.
