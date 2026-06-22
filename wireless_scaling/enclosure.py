@@ -88,10 +88,16 @@ boss_dia         = pilot_dia + 2 * 1.85   # [mm] boss külső átmérő (~5.8; e
 
 # ---- Sarok csavar-bossok (fő fedél + akku-ajtó közös rendszere) ----
 boss_h           = 7.0    # [mm] alsó-fedél sarok-bossok magassága (z=0-tól) = pilot_depth(6) + ~1 fenék — FELE a 14-nek
-corner_inset     = 3.0    # [mm] sarok-boss közép behúzása a BELSŐ faltól — PONTOSAN A SAROKBA (user).
-                          #      A boss SZÉLE így ~0.1 mm-re a falsík, a tömítőhorony belső éle
-                          #      (x=31/y=40.5) még kintebb → a boss nem éri a hornyot (IP65 sértetlen).
+corner_inset     = 2.8    # [mm] boss-közép behúzása a BELSŐ faltól (user: "közelebb a falhoz") — 3.0→2.8.
+                          #      A boss SZÉLE így ~0.1 mm-re a FALBA ér (x_edge=30.1 / y_edge=40.1), DE a
+                          #      tömítőhorony belső éle még kintebb (x=31 / y=40.5) → a horony SÉRTETLEN
+                          #      (IP65). KORLÁT: a +Y fal a szűk (horony 40.5) → ez pinneli a ~2.8 minimumot.
 side_inset       = corner_inset  # [mm] az OLDAL-KÖZÉP bossok behúzása a faltól (ugyanaz a logika)
+# FÉLKÖR (D) MEREVÍTŐ COLLAR a boss körül (a téglalap-gusset helyett, user): boss_collar_dia átmérőjű
+# henger a horony FÖLÖTT (z[gd,boss_h]), a falsíkon túli rész levágva, collar_merge-dzsel a falba nyúlva.
+boss_collar_dia  = boss_dia + 2 * 1.6   # [mm] collar külső átmérő (~9.0; ~1.6 mm gyűrű a boss köré)
+collar_merge     = 0.6    # [mm] a collar lapos oldala ennyivel nyúlik a falsík MÖGÉ (a fallal egyesülés;
+                          #      a horony fölött (z≥gd) van → nem éri a hornyot, IP65 marad)
 
 # ---- FELSŐ PLATÓ: NÉGYZETES fél-hidas mérőcella (SC902/YZC ~34×34), BESÜLLYESZTVE ------
 # Koncepció: a cella a tető SÜLLYESZTETT pocketjében ül; a kaptár KÖZVETLENÜL a cella dómjára
@@ -369,10 +375,13 @@ def build_housing():
     housing -= (groove_out - groove_in)
 
     # --- FŐ FEDÉL rögzítő-bossok: 4 SAROK + 4 OLDAL-KÖZÉP (M2.5 önmetsző, pilot furat alulról) ---
-    # A boss a belső térben áll (a faltól behúzva), ezért GUSSET köti a falhoz — a tömítőhorony
-    # FÖLÖTT (z ≥ gasket_groove_d), hogy a z=0 peremen a tömítőcsatorna sértetlen maradjon. Most már
-    # NINCS oldalsó süllyesztés (akku-ajtó törölve) → a gusset MINDKÉT falig mehet a sarkokban.
+    # A boss-okat a falhoz HÚZTUK (corner/side_inset=2.8) → a boss SZÉLE a falsíkba ér. A korábbi
+    # téglalap-GUSSET helyett FÉLKÖR (D) COLLAR fut a boss körül: boss_collar_dia henger a horony
+    # FÖLÖTT (z[gd,boss_h]), a legközelebbi falsík(ok)on túli része levágva, collar_merge-dzsel a falba
+    # nyúlva (egyesülés). A horony csak z[0,gd]-ben van → a collar (z≥gd) szabadon a falba olvadhat,
+    # IP65 sértetlen. A kavitásból nézve félkör-dudor; sarkon a két sík metszete (lekerekített buttress).
     gd = gasket_groove_d
+    big = 50.0   # [mm] segéd-vágódoboz (a falsíkon túli collar-rész levágásához)
 
     def add_boss(px, py):
         """Boss + önmetsző pilot furat alulról (z=0-tól), heat-set betét nélkül."""
@@ -380,33 +389,32 @@ def build_housing():
         h  = Pos(px, py, 0) * Cylinder(pilot_dia / 2, pilot_depth, align=(C, C, MIN))
         return b, h
 
-    def x_gusset(px, py):
-        """Gusset a bosstól a ±X falig, a boss szélességében (Y), a horony felett."""
-        sx = 1 if px > 0 else -1
-        x_wall = sx * inner_x / 2
-        gxc = (px + x_wall) / 2
-        glx = abs(x_wall - px) + boss_dia / 2
-        return Pos(gxc, py, gd) * Box(glx, boss_dia, boss_h - gd, align=(C, C, MIN))
+    def collar(px, py, walls):
+        """Félkör (D) merevítő a boss körül a horony felett (z[gd,boss_h]); a `walls`-ban megadott
+        falsík(ok)on túli rész levágva, collar_merge-dzsel a falba nyúlva. walls: ('x'/'y', előjel) párok."""
+        c = Pos(px, py, gd) * Cylinder(boss_collar_dia / 2, boss_h - gd, align=(C, C, MIN))
+        for (ax, sign) in walls:
+            if ax == "x":
+                plane = sign * (inner_x / 2 + collar_merge)
+                cutter = Pos(plane, 0, 0) * Box(big, big, big, align=(MIN if sign > 0 else MAX, C, C))
+            else:
+                plane = sign * (inner_y / 2 + collar_merge)
+                cutter = Pos(0, plane, 0) * Box(big, big, big, align=(C, MIN if sign > 0 else MAX, C))
+            c = c - cutter
+        return c
 
-    def y_gusset(px, py):
-        """Gusset a bosstól a ±Y falig, a boss szélességében (X), a horony felett."""
-        sy = 1 if py > 0 else -1
-        y_wall = sy * inner_y / 2
-        gyc = (py + y_wall) / 2
-        gly = abs(y_wall - py) + boss_dia / 2
-        return Pos(px, gyc, gd) * Box(boss_dia, gly, boss_h - gd, align=(C, C, MIN))
-
-    # SAROK-bossok: L-gusset MINDKÉT falhoz (X + Y) — "összekötve mindkét oldallal" (user):
+    # SAROK-bossok: a collar MINDKÉT falsíkra vágva (a sarkot kitöltő lekerekített buttress):
     for (px, py) in corner_positions:
-        housing += x_gusset(px, py)
-        housing += y_gusset(px, py)
+        sx, sy = (1 if px > 0 else -1), (1 if py > 0 else -1)
+        housing += collar(px, py, [("x", sx), ("y", sy)])
         b, h = add_boss(px, py)
         housing += b
         housing -= h
 
-    # OLDAL-KÖZÉP bossok: egy-irányú gusset a LEGKÖZELEBBI falhoz:
+    # OLDAL-KÖZÉP bossok: a collar a LEGKÖZELEBBI EGY falsíkra vágva → tiszta félkör (D):
     for (px, py) in side_positions:
-        housing += (x_gusset(px, py) if abs(px) > abs(py) else y_gusset(px, py))
+        wall = ("x", 1 if px > 0 else -1) if abs(px) > abs(py) else ("y", 1 if py > 0 else -1)
+        housing += collar(px, py, [wall])
         b, h = add_boss(px, py)
         housing += b
         housing -= h
