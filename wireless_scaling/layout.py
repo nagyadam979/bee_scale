@@ -39,18 +39,22 @@ POCKET_FLR  = e.housing_h - e.cell_recess_d      # a cella-pocket feneke (a cell
 #
 # A z-pozíciók defaultja a jelenlegi enclosure-elrendezésből (panelok a tető alá lógatva,
 # 18650 az alján a stripben, cella a tető pocketjében). A panel-magasságok BECSÜLTEK.
+PCB_TH = 1.6   # [mm] FR4 alaplap-vastagság — MINDEGYIK panelnél ezzel számolunk (komponens-burok nélkül)
+
 COMPONENTS = [
     # --- ELEKTRONIKA (a −X térfélben, a tető alá lógatva: a panel FELSŐ lapja SEAT_Z-n) ---
-    # HX711 zöld generic: 34×21 panel; ⚠️ a csavaros sorkapocs magas lehet (h becsült!)
-    dict(name="HX711",     shape="box", size=(34.0, 21.0, 12.0),
-         pos=(-12.0, 0.0,  SEAT_Z - 12.0 / 2),                color="#2ecc71"),
-    # ESP32-C3 SuperMini: 24×18 (USB-C-vel); alacsony SMD profil + USB-C ~3.2
-    dict(name="SuperMini", shape="box", size=(24.0, 18.0, 6.0),
-         pos=(-14.0, 21.0, SEAT_Z - 6.0 / 2),                 color="#3498db"),
-    # TP4056 USB-C: 29×17.3×4.3 (USB-C-vel)
-    dict(name="TP4056",    shape="box", size=(29.0, 17.3, 5.0),
-         pos=(-14.0, -21.0, SEAT_Z - 5.0 / 2),                color="#e67e22"),
-    # DS18B20 TO-92 (~4.6×4.6×3.9) — hova kerül? placeholder a −X fal mellett
+    # A panelok csak az ALAPLAP-vastagsággal (PCB_TH). A komponensek (header, USB-C, sorkapocs)
+    # NINCSENEK belemodellezve — ha kell a kilógásukkal számolni, külön add hozzá.
+    # HX711 zöld generic: 34×21 panel
+    dict(name="HX711",     shape="box", size=(34.0, 21.0, PCB_TH),
+         pos=(-12.0, 0.0,  SEAT_Z - PCB_TH / 2),               color="#2ecc71"),
+    # ESP32-C3 SuperMini: 24×18 panel
+    dict(name="SuperMini", shape="box", size=(24.0, 18.0, PCB_TH),
+         pos=(-14.0, 21.0, SEAT_Z - PCB_TH / 2),               color="#3498db"),
+    # TP4056 USB-C: 29×17.3 panel
+    dict(name="TP4056",    shape="box", size=(29.0, 17.3, PCB_TH),
+         pos=(-14.0, -21.0, SEAT_Z - PCB_TH / 2),              color="#e67e22"),
+    # DS18B20 TO-92 (~4.6×4.6×3.9) — diszkrét alkatrész, nem panel; placeholder a −X fal mellett
     dict(name="DS18B20",   shape="box", size=(4.6, 4.6, 3.9),
          pos=(-27.0, 0.0, 3.0),                                color="#e74c3c"),
 
