@@ -6,28 +6,32 @@ Anyag: ASA (kültéri, UV-álló). Ez CSAK megjegyzés — a geometriát nem ér
 Védelmi cél: ~IP65 (eső + por): körbefutó tömítőhornyok, PG7 kábeltömszelencék,
 nyitott rés nincs.
 
-ARCHITEKTÚRA-DÖNTÉSEK (átgondolt, dokumentált — szabadon átírható):
+ARCHITEKTÚRA-DÖNTÉSEK (1-node koncepció, dokumentált — szabadon átírható):
 -------------------------------------------------------------------
-* A doboz ALUL NYITOTT. A teteje tömör, merev plató: ide kerül FELÜLRE a single-point
-  mérőcella (HBS-SCL-50, 50 kg). Felül nincs nyílás → felülről nem szivárog be a víz.
-* Szerelés ALULRÓL: a FŐ FEDÉL = az alsó lap (bottom_lid). A PCB-tartóoszlopok ezen
-  az alsó fedélen állnak (ez a feladat "mounting boss az alján" kitétele). Beépíted az
-  elektronikát a fedélre, majd felcsavarozod a házra.
-* BELSŐ VÁLASZFAL a +X oldalon leválaszt egy 18650-rekeszt. Ehhez OLDALSÓ AKKU-AJTÓ ad
-  hozzáférést (a +X falon), így a cella a fő elektronika bolygatása nélkül cserélhető.
-* PG7 tömszelencék az ELÜLSŐ (−Y) falon (mérőcella-kábel, DS18B20-kábel).
+* 1 node = 1 önálló sarokegység: 1 db NÉGYZETES FÉL-HIDAS mérőcella (SC902/YZC ~34×34) +
+  ESP32-C3 SuperMini + HX711 + TP4056 + 18650 (holderrel) + DS18B20. 4 node a kaptár 4 sarka alatt.
+* A doboz ALUL NYITOTT. A teteje tömör, merev plató: ide kerül FELÜLRE a cella, BESÜLLYESZTVE
+  (pocket). A kaptár KÖZVETLENÜL a cella felfelé álló dómjára fekszik (nincs teherbevivő elem).
+  Felül nincs nyitott rés → felülről nem szivárog be a víz.
+* Szerelés ALULRÓL: a FŐ FEDÉL = az alsó lap (bottom_lid). A PCB-k szorítóbordás fészkekben
+  ülnek a fedélen (csavar nélkül). Beépíted az elektronikát, majd felcsavarozod a házra.
+* BELSŐ VÁLASZFAL a +X oldalon leválaszt egy 18650-rekeszt (a holder ∥ Y fekszik). Ehhez
+  SÜLLYESZTETT OLDALSÓ AKKU-AJTÓ ad hozzáférést a +X HOSSZÚ falon.
+* USB-C: 2 KÜLÖN SÜLLYESZTETT port a −X HOSSZÚ falon (TP4056 töltés + SuperMini), vízálló dugóval.
+* A két HOSSZÚ fal (±X) vastagabb (long_wall_th), mert ide süllyednek az ajtó/portok.
+* PG7 tömszelencék az ELÜLSŐ (−Y) rövid falon (DS18B20-kábel stb.).
 
 KOORDINÁTA-RENDSZER:
-  X = bal–jobb (inner_x), Y = elöl–hátul (inner_y), Z = függőleges (inner_z), Z felfelé.
+  X = RÖVID él (inner_x=60), Y = HOSSZÚ él (inner_y=80, ide fekszik a holder), Z = függőleges.
   A ház KÜLSŐ ALJA a z = 0 síkon; a doboz felfelé épül. XY-ban az origóra központosítva.
 
 A 3 nyomtatandó alkatrész:
-  1) housing       — falak + tömör tető plató (bordákkal + mérőcella-furatképpel),
-                     válaszfal, tömszelence-furatok, akku-ajtó nyílás + betét-bossok,
+  1) housing       — falak + tömör tető plató (bordákkal + BESÜLLYESZTETT cella-pocket + 3 furat),
+                     válaszfal, tömszelence-furatok, SÜLLYESZTETT akku-ajtó (+X) + USB-portok (−X),
                      alsó-zárás tömítőhorony + sarok-bossok.
   2) bottom_lid    — alsó fedéllap, körbefutó tömítőhoronyhoz illeszkedő sík felület,
-                     4 sarok átmenő csavarfurat, FELFELÉ álló PCB-tartóoszlopok.
-  3) battery_door  — akku-ajtó lap, 4 sarok átmenő csavarfurat.
+                     4 sarok átmenő csavarfurat, szorítóbordás PCB-fészkek.
+  3) battery_door  — süllyesztett akku-ajtó lap, 4 sarok csavarfurat + tömítőhorony az ajtóban.
 
 A slicer dolga (NEM itt állítjuk): kitöltés %, rétegmagasság, support.
 
@@ -100,6 +104,24 @@ rib_y_positions  = [-20.0, 20.0]   # [mm] Y-irányú bordák X-pozíciói
 # ---- Körbefutó tömítőhorony (szilikon tömítéshez) — alsó zárás ÉS akku-ajtó ----------
 gasket_groove_w  = 2.5    # [mm] tömítőhorony szélesség
 gasket_groove_d  = 2.0    # [mm] tömítőhorony mélység
+
+# ---- USB-C portok a −X HOSSZÚ falon (2 KÜLÖN, süllyesztett) ---------------------------
+# Töltés/firmware: a TP4056 és a SuperMini USB-C-je külön port. Mindkettő SÜLLYESZTETT:
+# a −X külső falba egy rebate-pocket (ide ül a vízálló DUGÓ/sapka, flush), a fenekén pedig
+# egy átmenő nyílás a csatlakozóhoz. A dugó: off-the-shelf szilikon bung VAGY kis nyomtatott
+# sapka, a recess-méretre — geometriát itt nem modellezünk hozzá (placeholder).
+# ⚠️ A POZÍCIÓK (y,z) és MÉRETEK PLACEHOLDER: a tényleges USB-C csatlakozó helye a panelon +
+#    a panel-fészek pozíciója határozza meg → a fizikai elrendezésnél pontosítandó.
+usb_open_w       = 14.0   # [mm] átmenő nyílás Y-ban (USB-C dugó/kábel hozzáférés; csatlakozó ~9 széles)
+usb_open_h       = 8.0    # [mm] átmenő nyílás Z-ben (csatlakozó ~3.2 + dugó-tér)
+usb_recess_w     = 20.0   # [mm] rebate-pocket Y-mérete (a dugó/sapka pereme)
+usb_recess_h     = 14.0   # [mm] rebate-pocket Z-mérete
+usb_recess_d     = 2.0    # [mm] rebate mélység a −X külső faltól (a dugó ide süllyed)
+# (név, y_közép, z_közép) a −X falon — a SuperMini és a TP4056 fészkek (y=±26) felé igazítva:
+usb_ports = [
+    ("TP4056_USB", -26.0, 8.0),   # ⚠️ PLACEHOLDER y,z — a TP4056 USB-C csatlakozójához
+    ("SuperMini_USB", 26.0, 8.0), # ⚠️ PLACEHOLDER y,z — a SuperMini USB-C csatlakozójához
+]
 
 # ---- PG7 kábeltömszelencék (elülső −Y fal) -------------------------------------------
 # Áthaladó kábelek: (1) mérőcella kábel (Ø0.8 × 4/3 ér), (2) DS18B20 kábel.
@@ -275,6 +297,20 @@ def build_housing():
             # Heat-set betétfurat a rebate-fenéktől befelé (−X):
             housing -= Pos(reb_floor_x, sy * by, bat_cz + sz * bz) * Rot(0, 90, 0) * \
                 Cylinder(insert_dia / 2, insert_depth, align=(C, C, MAX))
+
+    # --- USB-C portok a −X HOSSZÚ falon (2 KÜLÖN, süllyesztett dugóhoz) ---
+    # Portonként: (1) rebate-pocket a −X külső faltól befelé (+X) usb_recess_d mélyen (a dugó
+    # ide süllyed, flush); (2) átmenő nyílás a rebate-fenéktől a kavitásba a csatlakozóhoz.
+    usb_face_x = -outer_x / 2                 # −X külső falsík
+    for (_name, uy, uz) in usb_ports:
+        # (1) rebate-pocket (a −X faltól BEFELÉ, +X irány → align MIN):
+        housing -= Pos(usb_face_x, uy, uz) * Box(
+            usb_recess_d + eps, usb_recess_w, usb_recess_h, align=(MIN, C, C)
+        )
+        # (2) átmenő nyílás a teljes hosszú falon át a kavitásba:
+        housing -= Pos(usb_face_x, uy, uz) * Box(
+            long_wall_th + 2 * eps, usb_open_w, usb_open_h, align=(MIN, C, C)
+        )
 
     # --- FŐ (alsó) ZÁRÁS: körbefutó tömítőhorony az ALSÓ peremfelületen (z=0, felfelé) ---
     groove_out = Box(2 * groove_half_x + gasket_groove_w, 2 * groove_half_y + gasket_groove_w,
