@@ -74,15 +74,19 @@ inner_z          = 36.0   # [mm] belső magasság (Z) — MINIMALIZÁLVA. Kötő
                           #      A holder maga csak 17.7. → ha az oldalajtó elhagyható (akku alulról,
                           #      a lid felől cserélve), inner_z ~22-ig vihető. (Lásd HANDOFF.)
 
-# ---- Heat-set menetes betétek (sárgaréz, M5) ----
-# M5 sárgaréz heat-set betéthez kezdő furat ~6.4 mm (insert_dia). Az adatlap szerint hangold.
-insert_dia       = 6.4    # [mm] heat-set betét furatátmérő (M5 sárgaréz)
-insert_depth     = 9.0    # [mm] betétfurat mélység
-screw_clear_dia  = 5.5    # [mm] M5 átmenő (clearance) furat a fedélben/ajtóban
-boss_dia         = insert_dia + 2 * 2.6   # [mm] csavar-boss külső átmérő (elég falvastagság a betét köré)
+# ---- Sarok-rögzítés: M2.5 ÖNMETSZŐ MŰANYAG (nylon) csavar — heat-set betét NÉLKÜL ----
+# USER-DÖNTÉS: az M5 sárgaréz heat-set + fém csavar lecserélve FELE átmérőjű/hosszúságú MŰANYAG
+# csavarra (M5→M2.5). A nylon csavar KÖZVETLENÜL a műanyag bossba metsz (nincs sárgaréz betét) →
+# a bossba PILOT (előfúrt) furat megy. A bossok így feleakkorák: kevesebb anyag, kompaktabb belső
+# tér (a külső magasságot ez nem csökkenti — az inner_z változatlan; ha kell, külön vágjuk).
+screw_nom_dia    = 2.5    # [mm] M2.5 névleges (az eddigi M5 fele)
+screw_clear_dia  = 2.9    # [mm] M2.5 átmenő (clearance) furat a fedélben
+pilot_dia        = 2.1    # [mm] ⚠️ önmetsző PILOT furat a bossban — M2.5 nylonhoz ~2.0–2.1 (csavar/anyag-függő, hangold)
+pilot_depth      = 6.0    # [mm] pilot mélység a bossban (csavar-behatolás) — ~fele az eddigi 9-nek
+boss_dia         = pilot_dia + 2 * 1.85   # [mm] boss külső átmérő (~5.8; elég fal a pilot köré) — ~fele az eddigi 11.6-nak
 
 # ---- Sarok csavar-bossok (fő fedél + akku-ajtó közös rendszere) ----
-boss_h           = 14.0   # [mm] alsó-fedél sarok-bossok magassága (z=0-tól) = insert_depth(9) + tartalék
+boss_h           = 7.0    # [mm] alsó-fedél sarok-bossok magassága (z=0-tól) = pilot_depth(6) + ~1 fenék — FELE a 14-nek
 corner_inset     = 9.0    # [mm] sarok-boss középpont behúzása a BELSŐ faltól
 
 # ---- FELSŐ PLATÓ: NÉGYZETES fél-hidas mérőcella (SC902/YZC ~34×34), BESÜLLYESZTVE ------
@@ -334,9 +338,9 @@ def build_housing():
         glx = abs(x_wall - px) + boss_dia / 2
         gly = abs(y_wall - py) + boss_dia / 2
         housing += Pos(gxc, gyc, gasket_groove_d) * Box(glx, gly, boss_h - gasket_groove_d, align=(C, C, MIN))
-        # Maga a boss + betétfurat alulról (z=0-tól):
+        # Maga a boss + ÖNMETSZŐ PILOT furat alulról (z=0-tól) — nincs heat-set betét:
         housing += Pos(px, py, 0) * Cylinder(boss_dia / 2, boss_h, align=(C, C, MIN))
-        housing -= Pos(px, py, 0) * Cylinder(insert_dia / 2, insert_depth, align=(C, C, MIN))
+        housing -= Pos(px, py, 0) * Cylinder(pilot_dia / 2, pilot_depth, align=(C, C, MIN))
 
     return housing
 
