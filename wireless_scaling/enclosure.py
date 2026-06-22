@@ -143,6 +143,12 @@ collar_top_cham    = 1.2    # [mm] a BELSŐ boss-collarok tetejének kónusza (f
 col_fillet_r       = 4.0    # [mm] a Y-OSZLOP nem-kontakt profil-sarkainak lekerekítése (2 ág-tő + V-csúcs)
                             #      — user: "éles sarok = weak point". A teteje (karima-fúzió) + alja
                             #      (fedél-kontakt) ÉLES marad.
+# KARIMA-LIGHTENING a cella-fix bossok körül (user: "a cella-fix boss környékét gyaluld le, csak
+# zabálja a filamentet"): a karima a bossok ±Y SÁVJÁBAN (a cella-felfekvésen KÍVÜL, y>pocket-fél) nem
+# támaszt cellát → kivágjuk, csak egy collart hagyva a bossok körül (a pilot-anyaghoz).
+cell_flange_lighten        = True   # be/ki
+cell_flange_lighten_gap    = 0.5    # [mm] a kivágás a cella-felfekvés (pocket-fél) UTÁN ennyivel kezdődik
+cell_flange_lighten_collar = 1.5    # [mm] a megtartott boss-collar gyűrűvastagsága (a pilot körül)
 
 # ---- FELSŐ PLATÓ: NÉGYZETES fél-hidas mérőcella (SC902/YZC ~34×34), BESÜLLYESZTVE ------
 # Koncepció: a cella a tető SÜLLYESZTETT pocketjében ül; a kaptár KÖZVETLENÜL a cella dómjára
@@ -390,6 +396,29 @@ def build_housing():
         housing -= Pos(0, cy_s, housing_h) * Cylinder(
             cell_fix_dia / 2, cell_fix_depth + eps, align=(C, C, MAX)
         )
+
+    # 2b) KARIMA-LIGHTENING a cella-fix bossok ±Y SÁVJÁBAN (user: a cella-fix boss környéke "csak
+    #     zabálja a filamentet"). A karima itt (y > pocket-fél) MÁR NEM támaszt cellát → a karima-anyagot
+    #     kivágjuk z[karima-alja, inner_z]-ben, csak egy COLLART hagyva a bossok körül (a pilothoz +
+    #     a platóhoz kötve). A cella-felfekvés (pocket-perem), a dent, az oszlop és a plató ÉRINTETLEN.
+    if cell_flange_lighten:
+        kz0 = inner_z - cell_flange_drop                       # a karima alja (22)
+        band_in = cell_pocket_half_y + cell_flange_lighten_gap  # eddig MARAD (cella-felfekvés + tartalék)
+        if flange_xy / 2 - band_in > 0.5:
+            # KERET-kivágás: a karima teljes pereme a cella-felfekvésen KÍVÜL (±X és ±Y) → ott nem
+            # támaszt cellát. MEGTARTVA: a belső 2*band_in négyzet (cella-támasztó gyűrű + oszlop-út) +
+            # collar a 2 cella-fix boss körül (a pilothoz, a platóhoz kötve).
+            frame = Pos(0, 0, kz0 - eps) * Box(
+                flange_xy + 2 * eps, flange_xy + 2 * eps, cell_flange_drop + eps, align=(C, C, MIN)
+            ) - Pos(0, 0, kz0 - 2 * eps) * Box(
+                2 * band_in, 2 * band_in, cell_flange_drop + 3 * eps, align=(C, C, MIN)
+            )
+            for sy in (-1, 1):
+                frame = frame - Pos(0, sy * cell_screw_y, kz0 - 2 * eps) * Cylinder(
+                    cell_fix_boss_dia / 2 + cell_flange_lighten_collar, cell_flange_drop + 3 * eps,
+                    align=(C, C, MIN)
+                )
+            housing -= frame
 
     # 3) CELLA-TÁMASZTÓ OSZLOP: ÁLLÓ "Y" a HOSSZANTI (Y-Z) SÍKBAN, az X-középvonalon (x=0). A két ÁG
     #    FELÜL a cella-ágy (pocket) Y-szélein (y=±arm_out) indul a dent fenekétől (z=col_top), lefelé a
