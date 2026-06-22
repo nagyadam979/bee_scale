@@ -172,9 +172,13 @@ batt_z0          = boss_h + holder_gap   # [mm] az akku-rekesz (holder+aksi) ALJ
 # Ajtónyílás: a +X oldal "majdnem teljes egészében ajtó" 1 mm karimával (user). A nyílás a
 # HOLDER beraknához (74.5 ∥ Y) és a 18650 OLDALRA húzásához (Ø18.5) van méretezve.
 bat_open_y       = 76.0   # [mm] nyílás Y = holder hossz 74.5 + ~1.5 hézag (a holder is bedugható)
-bat_open_z       = 19.5   # [mm] nyílás Z = 18650 Ø18.5 + 1 hézag (oldalra húzás; a holder 17.7 is átfér)
-bat_open_z0      = batt_z0 - 0.5         # [mm] a nyílás ALJA z-ben (kicsit a rekesz alja alatt, =8.5)
+# A nyílás LEMEGY majdnem az aljáig (user: "ne maradjon fal", csak ~fél centi perem az alsó
+# tömítőhoronynak). Alja = floor_margin(5) + karima(1); teteje a 18650 tetejét fedi (~z=28) a
+# kivételhez. A sarok-bossok (z[0,7]) beljebb vannak X-ben (x≤28) → a nyílás (fal x≥30.5) nem éri.
 bat_door_overlap = 1.0    # [mm] karima (rebate-váll) a nyílás körül — user: 2→1
+bat_floor_margin = 5.0    # [mm] az AJTÓ alja a doboz aljától ("fél centi" perem az alsó horonynak)
+bat_open_z0      = bat_floor_margin + bat_door_overlap   # [mm] a nyílás ALJA z-ben (=6.0)
+bat_open_z       = (batt_z0 + 18.5 + 0.5) - bat_open_z0  # [mm] nyílás Z: a teteje a 18650 (Ø18.5) tetejét fedi → =22
 door_th          = 3.0    # [mm] akku-ajtó lapvastagság = a rebate mélysége (FLUSH a fallal)
 bat_recess_d     = door_th  # [mm] rebate (besüllyesztés) mélysége a +X külső faltól → az ajtó síkban van
 bat_boss_inset   = 5.0    # [mm] akku-ajtó sarok-boss behúzása a váll szélétől
