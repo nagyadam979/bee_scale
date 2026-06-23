@@ -11,6 +11,8 @@
 ```bash
 cd /Users/adamnagy/Documents/bee_scale/wireless_scaling && source .venv/bin/activate
 python validate.py    # 2 part (housing, bottom_lid): 1-1 összefüggő solid? + bbox
+python preview.py [X..] # ⭐ GYORS tömör METSZET+nézet PNG (export/preview.png), STL nélkül (~12s). MINDEN
+                      #   geom. változás után EZT nézd meg (Read) — ez az agent "szeme", nem vak iteráció!
 python layout.py      # ütközés-check + VIEWER PUSH (ház átlátszón + elem-makett), port 3939
 python enclosure.py   # STL+STEP export + viewer push
 ```
@@ -18,9 +20,13 @@ Minden méret az `enclosure.py` tetején, kommentált változó. Python 3.11 ven
 
 ## 1. MUNKAFOLYAMAT-TANULSÁGOK (FONTOS — ezek nem nyilvánvalók)
 
-1. **A viewer NEM frissül magától.** Szerkesztés után **futtass `python layout.py`-t** (vagy
-   `enclosure.py`-t) → az pushol az ocp-vscode-ba (3939). A user többször "nem látott változást", mert
-   csak `validate.py`/inline szkript futott (azok nem pusholnak). **Minden látványbeli változás után pushölj.**
+1. **NE dolgozz vakon — `python preview.py` az agent SZEME.** Minden geom. változás után futtasd és
+   **Read-eld az `export/preview.png`-t** (tömör keresztmetszet + nézet, build123d sík-metszetből → a
+   lépcsők/ívek/falvastagság PONTOSAN leolvashatók; a féltér-vetítés zsúfolt és FÉLREVEZET). Tanulság:
+   egy 1.5 mm fillet "láthatatlan" maradt, mert vak féltér-renderen néztem — a tömör metszet rögtön
+   megmutatta, hogy érdemtelen. Tetszőleges metsző-sík: `python preview.py 0 6 11 -7.9`.
+1b. **A viewer (ocp-vscode) NEM frissül magától.** A USER-nek szánt élő nézethez **futtass `layout.py`-t**
+   (vagy `enclosure.py`-t) → pushol a 3939-re. (`validate.py`/`preview.py` NEM pushol.)
 2. **A `layout.py` ütközés-check CSAK a maketteket** (`COMPONENTS`) veti össze egymással — a `housing`-ot
    (benne oszlop, bossok, fülek) **NEM**. Holder↔oszlop/boss ütközést kézzel ellenőrizz:
    `(e.build_housing() & maquette).volume` (0 = szabad). A behelyezési utat is: a makett footprintjét z=0-ig lehúzva.
