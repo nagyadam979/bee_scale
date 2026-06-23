@@ -177,6 +177,13 @@ cell_flange_margin = 4.0   # [mm] a karima ennyivel szélesebb a pocketnél, kö
 cell_flange_drop   = 3.0   # [mm] a karima ennyivel lóg a fenék alá a kavitásba (megvastagítás, user)
 cell_dent_margin   = 3.0   # [mm] a dent ennyivel kisebb a pocketnél, körbe ("3-3 mm-el kisebb téglalap")
 cell_dent_d        = 3.0   # [mm] a dent (közép-üreg) mélysége a pocket fenekétől lefelé (user)
+# TEHERÚTI ÍVEK (user: "jó lenne ha ívelt lenne — körív; az egyenes vonalak nem hatékonyak erő-
+# oszlatásra"). A cella-ágy alatti átmenetek FILLET-tel (folytonos görbület → egyenletes feszültség-
+# eloszlás, nincs töréspont). A felfekvő perem (pocket fal + a gyűrű FELSŐ SÍKJA) SÍK/SZÖGLETES marad
+# (cella-felfekvés), CSAK az ALATTA lévő él íves. A fillet-et az ÖNÁLLÓ kivágó/hozzáadó testen vágjuk a
+# kombinálás ELŐTT (robusztus — HANDOFF #3); round_edges hibatűrő (OCCT-bukás → kihagyás, export marad).
+cell_dent_fillet_r   = 1.5   # [mm] a DENT felső pereme (felfekvő gyűrű → üreg HOMORÚ átmenete) — ≤ gyűrű-szél (~3)
+cell_flange_fillet_r = 1.5   # [mm] a KARIMA alsó külső éle (lelógó talp-perem lágyítása) — ≤ drop/2 (1.5)
 # CELLA-TÁMASZTÓ OSZLOP — ÁLLÓ "Y" a HOSSZANTI (Y-Z) SÍKBAN, az X-középvonalon (x=0). Teher útja:
 # kaptár → cella → platform(dent) → oszlop → talp → doboz alja (lid/talaj). A két ÁG FELÜL a cella-
 # ágy (pocket, ±17.4) Y-szélein indul, lefelé a V-csúcsban EGYESÜL, onnan közös szár/talp a dobozaljáig.
@@ -374,13 +381,22 @@ def build_housing():
     #     alja inner_z-ről inner_z−drop-ra kerül (a 44.8×44.8 területen).
     pocket_xy = cell_size_xy + 2 * cell_clear          # a pocket oldala (34.8)
     flange_xy = pocket_xy + 2 * cell_flange_margin     # a karima oldala (44.8)
-    housing += Pos(0, 0, inner_z) * Box(flange_xy, flange_xy, cell_flange_drop, align=(C, C, MAX))
+    #     A karima ALSÓ KÜLSŐ pereme FILLET-elve (user: ívelt teherelosztás) → a lelógó talp folytonos
+    #     görbülettel olvad a kavitás-térbe, nincs éles alávágott él. A fillet az ÖNÁLLÓ testen, kombinálás
+    #     előtt; a felső sík (plató-fúzió, z=inner_z) érintetlen.
+    flange = Box(flange_xy, flange_xy, cell_flange_drop, align=(C, C, MAX))
+    flange = round_edges(flange, "fillet", flange.edges().group_by(Axis.Z)[0], cell_flange_fillet_r)
+    housing += Pos(0, 0, inner_z) * flange
     # 1c) DENT: a pocket fenekének KÖZEPÉBE egy üreg (a pocketnél cell_dent_margin-nel kisebb körbe),
     #     a pocket fenekétől lefelé cell_dent_d mélyen → IDE hajlik le a cella KÖZEPE; a SZÉLE a dent
     #     körüli peremen (pocket-fenék) marad megtámasztva. A dent alatt a karimában marad anyag.
+    #     A kivágó test FELSŐ pereme FILLET-elve → a kivonás után a felfekvő gyűrű HOMORÚ körívvel megy
+    #     az üregbe (teherúti ív, user). A gyűrű FELSŐ SÍKJA (z=pocket_floor) cella-felfekvésként ÉLES marad.
     dent_xy = pocket_xy - 2 * cell_dent_margin         # a dent oldala (28.8)
-    pocket_floor_z = housing_h - cell_recess_d         # a pocket feneke (32.5)
-    housing -= Pos(0, 0, pocket_floor_z) * Box(dent_xy, dent_xy, cell_dent_d + eps, align=(C, C, MAX))
+    pocket_floor_z = housing_h - cell_recess_d         # a pocket feneke (27.5)
+    dent_cutter = Box(dent_xy, dent_xy, cell_dent_d + eps, align=(C, C, MAX))
+    dent_cutter = round_edges(dent_cutter, "fillet", dent_cutter.edges().group_by(Axis.Z)[-1], cell_dent_fillet_r)
+    housing -= Pos(0, 0, pocket_floor_z) * dent_cutter
     # 2) 2 db M2.5 önmetsző rögzítőfurat a süllyesztésen KÍVÜL, a HOSSZÚ (Y) középvonalon (x=0),
     #    a recess pereme mellett cell_screw_clearance-re. Felülről BLIND (a boss tömör anyagba zár
     #    → vízálló). Ide egy áthidaló leszorító bracket csavarozható a cella tartásához.
