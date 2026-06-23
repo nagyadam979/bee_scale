@@ -40,10 +40,11 @@ build123d 0.11.0 (algebra API) + ocp_vscode élő viewer.
 
 from build123d import (
     Box, Cylinder, Pos, Rot, Align, Compound,
-    Polygon, extrude, Plane, Axis, fillet, chamfer,
+    Polygon, Circle, extrude, Plane, Axis, fillet, chamfer,
     export_stl, export_step,
 )
 from pathlib import Path
+import math
 
 # =========================================================================================
 #  M I N D E N   M É R E T   I T T   —   jól kommentált, hangolható paraméterek
@@ -151,6 +152,13 @@ col_fillet_r       = 4.0    # [mm] a Y-OSZLOP nem-kontakt profil-sarkainak leker
 cell_flange_lighten        = True   # be/ki
 cell_flange_lighten_gap    = 0.5    # [mm] a kivágás a cella-felfekvés (pocket-fél) UTÁN ennyivel kezdődik
 cell_flange_lighten_collar = 1.5    # [mm] a megtartott boss-collar gyűrűvastagsága (a pilot körül)
+# A boss-fül FORMÁJA (user: "kerek fej + EGYENES nyak", NEM homorú Pac-Man ív): a megtartott anyag
+# profilja = KÖR (a boss körül, sugár = boss_dia/2 + collar) + KÉT ÉRINTŐ-EGYENES, amik a körtől
+# lefelé a band_in négyzet éléig futnak (egyenes oldalú nyak). A nyak ALAPJÁNAK fél-szélessége a
+# band_in élnél:
+cell_flange_neck_halfw     = 4.0    # [mm] a nyak fél-szélessége a band_in élnél (±x). Innen érintő-
+                                    #      egyenesek futnak a körhöz → a homorú ív eltűnik. Hangolható:
+                                    #      nagyobb = szélesebb/függőlegesebb nyak, kisebb = keskenyebb.
 
 # ---- FELSŐ PLATÓ: NÉGYZETES fél-hidas mérőcella (SC902/YZC ~34×34), BESÜLLYESZTVE ------
 # Koncepció: a cella a tető SÜLLYESZTETT pocketjében ül; a kaptár KÖZVETLENÜL a cella dómjára
@@ -415,11 +423,41 @@ def build_housing():
             ) - Pos(0, 0, kz0 - 2 * eps) * Box(
                 2 * band_in, 2 * band_in, cell_flange_drop + 3 * eps, align=(C, C, MIN)
             )
+            # A megtartott boss-fül FORMÁJA: "KEREK FEJ + EGYENES NYAK" (user) — NEM sima Cylinder
+            # (az a band_in éllel HOMORÚ Pac-Man ívet adott). A profil a XY-síkban:
+            #   KÖR (sugár = boss_dia/2 + collar, a boss körül) ∪ NYAK-poligon, ahol a nyak két oldala
+            #   a körhöz húzott ÉRINTŐ-egyenes, a band_in éltől (±neck_halfw) a kör érintőpontjáig.
+            # A fej band_in-en TÚLI része köríves marad (nem kontakt). 2D-profil → extrude Z-ben (robusztus).
+            collar_r = cell_fix_boss_dia / 2 + cell_flange_lighten_collar
+            nb = cell_flange_neck_halfw
             for sy in (-1, 1):
-                frame = frame - Pos(0, sy * cell_screw_y, kz0 - 2 * eps) * Cylinder(
-                    cell_fix_boss_dia / 2 + cell_flange_lighten_collar, cell_flange_drop + 3 * eps,
-                    align=(C, C, MIN)
+                cy_b = sy * cell_screw_y          # a boss közép Y
+                band_edge = sy * band_in          # a band_in négyzet (felé eső) éle Y-ban
+                dy = cy_b - band_edge             # a kör közép távja a band éltől (előjeles)
+                # érintő-egyenesek a (±nb, band_edge) pontból a körhöz; az OUTER érintőpontot vesszük
+                # (ami a homorú visszahajló ívet egyenesre cseréli):
+                ang_pc  = math.atan2(dy, -nb)     # P(+nb,band_edge) → kör-közép irány
+                ang_off = math.asin(collar_r / math.hypot(nb, dy))
+                Ln = math.sqrt(nb * nb + dy * dy - collar_r * collar_r)
+                # jobb oldali érintőpont (x>0 oldalon, a fej felé):
+                cand = []
+                for s in (1, -1):
+                    a = ang_pc + s * ang_off
+                    tx = nb + Ln * math.cos(a)
+                    ty = band_edge + Ln * math.sin(a)
+                    cand.append((tx, ty))
+                rtan = max((c for c in cand if c[0] > nb * 0.5), key=lambda c: abs(c[1] - cy_b))
+                # tükrözött (bal) érintőpont:
+                ltan = (-rtan[0], rtan[1])
+                neck = Polygon(
+                    (-nb, band_edge), (nb, band_edge), rtan, ltan,
                 )
+                head = Pos(0, cy_b) * Circle(collar_r)
+                keep_2d = head + neck
+                keep = Pos(0, 0, kz0 - 2 * eps) * extrude(
+                    keep_2d, amount=cell_flange_drop + 3 * eps
+                )
+                frame = frame - keep
             housing -= frame
 
     # 3) CELLA-TÁMASZTÓ OSZLOP: ÁLLÓ "Y" a HOSSZANTI (Y-Z) SÍKBAN, az X-középvonalon (x=0). A két ÁG
