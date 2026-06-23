@@ -135,7 +135,9 @@ print_round_enable = True   # mester kapcsoló (False → minden él éles, gyor
 corner_fillet_r    = 3.0    # [mm] a 4 KÜLSŐ függőleges doboz-sarok lekerekítése
 top_chamfer        = 1.0    # [mm] a FELSŐ külső perem kónusza (a cella-ágyat nem érinti)
 ear_chamfer        = 0.8    # [mm] a +X külső fülek külső függőleges éleinek kónusza (szabad sarkok)
-lid_bottom_chamfer = 0.7    # [mm] a fedél ALSÓ (kifelé néző) peremének kónusza (a tető-sík éles marad)
+lid_bottom_chamfer = top_chamfer  # [mm] a fedél ALSÓ (lefelé néző) peremének kónusza — a housing FELSŐ
+                            #      peremének (top_chamfer=1.0) TÜKRE (user): a szerelt doboz fent-lent
+                            #      szimmetrikus. (Volt 0.7.) A felfekvő (z=0, házzal érintkező) felület ÉLES marad.
 # AGRESSZÍV KÓNUSZ a csavar-foglalatok körül — fokozatos besüllyedés a falba (user, "főleg a külsőknél"):
 ear_wall_cham_top  = 3.5    # [mm] a KÜLSŐ fül↔fal FELSŐ csatlakozása → rámpa FELFELÉ a falba (agresszív)
 ear_wall_cham_side = 2.0    # [mm] a KÜLSŐ fül↔fal OLDALSÓ csatlakozása → rámpa OLDALIRÁNYBAN a falba
@@ -589,10 +591,28 @@ def build_housing():
 #  2)  A L S Ó   F E D É L   ( bottom_lid )  —  sík záró lap (a PCB-fészkek a HOUSING-ban vannak)
 # =========================================================================================
 def build_bottom_lid():
-    # Lap: a teljes külső alaprajzot lefedi, fit_gap rés a kerület mentén; z ∈ [−lid_th, 0].
+    # Lap: a teljes külső alaprajzot lefedi; z ∈ [−lid_th, 0].
+    # FLUSH KÜLSŐ FOOTPRINT (user-döntés): a lid fő doboz-testének külső kontúrja a housing KÜLSŐ
+    # footprintjével EGYEZIK (outer_x × outer_y) — a korábbi körbefutó fit_gap behúzás feladva, hogy a
+    # lid külső fala EGY SÍKBA kerüljön a házéval és a sarok-lekerekítések EGYBEESSENEK (lásd lent a 4
+    # sarok corner_fillet_r-jét). A BELSŐ illeszkedést NEM ez adja: az a megemelt dugó (lid_plug),
+    # ami továbbra is lid_plug_gap csúszó réssel ül a kavitásban → a flush footprint az illesztést nem sérti.
     # A PCB-fészkek MÁR NEM itt vannak — a housing tartja a panelokat a tető alá lógatva.
-    # lid_th vékonyítva (modul-szintű paraméter); a statikát a user végzi.
-    lid = Box(outer_x - 2 * fit_gap, outer_y - 2 * fit_gap, lid_th, align=(C, C, MAX))
+    # A 4 KÜLSŐ függőleges sarok lekerekítése 2D-PROFIL FILLET-tel az extrude ELŐTT (HANDOFF-elv:
+    # robusztusabb, mint vékony lid_th=1.5 magas 3D-él filletje, ami az OCCT-nél elhasalt). A profil a
+    # housing corner_fillet_r-jét tükrözi (=3.0) → flush footprint + azonos r → a sarkok EGYBEESNEK.
+    if print_round_enable and corner_fillet_r > 0:
+        rect = Polygon(
+            ( outer_x / 2,  outer_y / 2), ( outer_x / 2, -outer_y / 2),
+            (-outer_x / 2, -outer_y / 2), (-outer_x / 2,  outer_y / 2),
+        )
+        try:
+            rect = fillet(rect.vertices(), radius=corner_fillet_r)
+        except Exception as ex:
+            print(f"[lid_corner_fillet] SKIP: {str(ex)[:60]}")
+        lid = extrude(Plane.XY * rect, amount=lid_th)   # z ∈ [−lid_th, 0] (a fillet utáni face-normál −Z)
+    else:
+        lid = Box(outer_x, outer_y, lid_th, align=(C, C, MAX))
 
     # 5 BELSŐ átmenő csavarfurat (M2.5) a ház bossaihoz, alulról (−X 2 sarok + −X/+Y/−Y oldal-közép):
     for (px, py) in corner_positions + side_positions:
@@ -602,7 +622,8 @@ def build_bottom_lid():
     lid -= Pos(0, 0, 0) * Cylinder(screw_clear_dia / 2, lid_th + 2 * eps, align=(C, C, MAX))
 
     # +X KÜLSŐ FÜLEK párja a fedélen: a lap +X éléről kinyúló nyúlvány a ház-fül alá + clearance furat.
-    lid_edge_x = outer_x / 2 - fit_gap             # a lap +X éle (33.7)
+    # FLUSH után a lap +X éle a ház külső falsíkjával (outer_x/2) egy síkban van (nincs fit_gap behúzás).
+    lid_edge_x = outer_x / 2                        # a lap +X éle (34) — flush a ház falsíkjával
     ear_face_x = outer_x / 2                        # a ház +X falsík (34) — eddig ér a ház-fül kezdete
     tab_outer  = ear_face_x + ear_len               # a fül külső vége (=ház-fül vége)
     for ey in ext_ear_positions:
@@ -639,8 +660,10 @@ def build_bottom_lid():
                                           lid_rise + 2 * eps, align=(C, C, MIN))
     lid += plug
 
-    # --- NYOMTATÁS-ERŐSÍTŐ ÉL-KEZELÉS: a fedél ALSÓ (kifelé néző) hosszú perem-élei → chamfer.
-    #     A TETŐ-sík (z=0, ház-érintkező) és a megemelt dugó ÉLES marad (kontakt/illesztés). ---
+    # --- NYOMTATÁS-ERŐSÍTŐ ÉL-KEZELÉS ---
+    # (A 4 külső függőleges sarok lekerekítése a fő box 2D-PROFIL fillet-jével MÁR megtörtént, fent.)
+    # A fedél ALSÓ (lefelé néző) hosszú perem-élei → chamfer (= lid_bottom_chamfer = top_chamfer tükör).
+    #    A TETŐ-sík (z=0, ház-érintkező) és a megemelt dugó ÉLES marad (kontakt/illesztés).
     lid = round_edges(lid, "chamfer", [
         ed for ed in lid.edges()
         if abs(ed.center().Z + lid_th) < 0.01 and ed.length > 20.0
