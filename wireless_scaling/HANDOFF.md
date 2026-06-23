@@ -50,6 +50,25 @@ interpretert). Ezután az `enclosure.py` futtatása ide pushol.
 
 ---
 
+## 1b. DELEGÁLÁS — token-takarékos geom. munka (KÖTELEZŐ az orchestrátornak)
+
+A geometriai iteráció (szerkesztés → `validate.py` → `preview.py` → **Read PNG** → újra) sok tokent
+éget, mert minden kör PNG-t + validate-dumpot + diffet hagy a beszélgetésben. **Tanulság: a köztes
+hurok az orchestrátor kontextusát terhelte.** Megoldás: **delegálj az `enclosure-builder` al-ágensnek**
+(`.claude/agents/enclosure-builder.md`, friss/izolált kontextus).
+
+- **Mi marad az orchestrátornál:** a *mit* — a tervezési döntés a felhasználóval (hogyan nézzen ki,
+  milyen radius/Z/vastagság). Ezt NEM delegáljuk.
+- **Mit kap az ágens:** egy MÁR ELDÖNTÖTT, körülhatárolt változás — **cél, hangolandó paraméterek,
+  korlátok, kész-kritérium**. (Pl. „R8 folytonos tölcsér a felfekvéstől az oszlopig, kontakt-élek
+  élesen, validálj + metszet".)
+- **Mit ad vissza:** tömör összefoglaló (paraméter régi→új, validate-eredmény, térfogat-diff) + a
+  **végső** `export/preview.png` útja. A sok köztes PNG/iteráció NÁLA marad → a fő beszélgetés tiszta.
+- **Ellenőrzés:** az orchestrátor a végén **egyszer** Read-eli a PNG-t és jóváhagyja — egy képread N
+  helyett. Ha az ágens nyitott döntésbe ütközik, visszakérdez, az orchestrátor a felhasználóval dönt.
+- **Triviális, egyértelmű paraméter-tweak is mehet az ágenshez** (a validate/preview hurok ne minket
+  terheljen). Csak akkor csináld közvetlenül, ha gyorsabb, mint a feladatot megfogalmazni.
+
 ## 2. TERVEZÉSI ELVEK / TANULSÁGOK (nem nyilvánvalók)
 
 1. **NE dolgozz vakon — `preview.py` az agent SZEME.** Minden geom. változás után Read-eld az
