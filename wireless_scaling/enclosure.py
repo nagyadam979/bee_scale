@@ -644,6 +644,15 @@ def build_bottom_lid():
     else:
         lid = Box(outer_x, outer_y, lid_th, align=(C, C, MAX))
 
+    # A fő lap ALSÓ (lefelé néző) HOSSZÚ perem-élei → chamfer (= lid_bottom_chamfer = top_chamfer tükör).
+    #    A TETŐ-sík (z=0, ház-érintkező) és a megemelt dugó ÉLES marad (kontakt/illesztés). Ezt MÉG a furatok
+    #    és a fülek ELŐTT, a TISZTA lapon vágjuk (HANDOFF #2: robusztusabb, mint a fuzionált testen — a +X
+    #    perem a fülek chamfer-junction-jeitől különben elhasalt). A furatok KÖR alsó pereme így is ÉLES marad.
+    lid = round_edges(lid, "chamfer", [
+        ed for ed in lid.edges()
+        if abs(ed.center().Z + lid_th) < 0.01 and ed.length > 20.0
+    ], lid_bottom_chamfer)
+
     # 5 BELSŐ átmenő csavarfurat (M2.5) a ház bossaihoz, alulról (−X 2 sarok + −X/+Y/−Y oldal-közép):
     for (px, py) in corner_positions + side_positions:
         lid -= Pos(px, py, 0) * Cylinder(screw_clear_dia / 2, lid_th + 2 * eps, align=(C, C, MAX))
@@ -656,11 +665,27 @@ def build_bottom_lid():
     lid_edge_x = outer_x / 2                        # a lap +X éle (34) — flush a ház falsíkjával
     ear_face_x = outer_x / 2                        # a ház +X falsík (34) — eddig ér a ház-fül kezdete
     tab_outer  = ear_face_x + ear_len               # a fül külső vége (=ház-fül vége)
+    tab_x0     = lid_edge_x - 1.0                    # a nyúlvány kezdete (kissé a lapon belül → egyesül)
+    tab_len    = tab_outer - tab_x0
     for ey in ext_ear_positions:
-        # nyúlvány a lap-éltől (kissé belülről, hogy egyesüljön) a fül külső végéig:
-        lid += Pos(lid_edge_x - 1.0, ey, 0) * Box(
-            tab_outer - (lid_edge_x - 1.0), ear_wid, lid_th, align=(MIN, C, MAX)
-        )
+        # nyúlvány a lap-éltől (kissé belülről, hogy egyesüljön) a fül külső végéig.
+        # TÜKRÖZÉS-ELV (a házfül sarok-kezelésének tükre): a chamfereket a TISZTA, ÖNÁLLÓ fül-boxon
+        # vágjuk MÉG a lapba fuzionálás ELŐTT — így robusztus (HANDOFF #2: a komplex fuzionált testen az
+        # OCCT chamfer a fül 1.0 peremén elhasalt). A fülnek a LAPPAL ÉRINTKEZŐ X0-éle + a FELSŐ (z=0,
+        # házzal érintkező) lap NEM kap chamfert (egyesülés/kontakt). Új paraméter NINCS: ear_chamfer (a
+        # függőleges külső sarkok, =housing :607-609) + lid_bottom_chamfer (a fül ALSÓ pereme):
+        tab = Pos(tab_x0, ey, 0) * Box(tab_len, ear_wid, lid_th, align=(MIN, C, MAX))
+        if print_round_enable:
+            # (a) KÜLSŐ (faltól távoli, x>ox+2) függőleges sarkok → ear_chamfer:
+            tab = round_edges(tab, "chamfer",
+                              [ed for ed in tab.edges().filter_by(Axis.Z)
+                               if ed.center().X > outer_x / 2 + 2.0], ear_chamfer)
+            # (b) a fül ALSÓ (z=−lid_th) perem-élei, KIVÉVE a lappal egyesülő x0-élt (center().X>x0):
+            tab = round_edges(tab, "chamfer",
+                              [ed for ed in tab.edges()
+                               if abs(ed.center().Z + lid_th) < 0.01 and ed.center().X > tab_x0 + 0.2],
+                              lid_bottom_chamfer)
+        lid += tab
         epx = ear_face_x + ear_pilot_inset
         lid -= Pos(epx, ey, 0) * Cylinder(screw_clear_dia / 2, lid_th + 2 * eps, align=(C, C, MAX))
 
@@ -691,14 +716,11 @@ def build_bottom_lid():
     lid += plug
 
     # --- NYOMTATÁS-ERŐSÍTŐ ÉL-KEZELÉS ---
-    # (A 4 külső függőleges sarok lekerekítése a fő box 2D-PROFIL fillet-jével MÁR megtörtént, fent.)
-    # A fedél ALSÓ (lefelé néző) hosszú perem-élei → chamfer (= lid_bottom_chamfer = top_chamfer tükör).
-    #    A TETŐ-sík (z=0, ház-érintkező) és a megemelt dugó ÉLES marad (kontakt/illesztés).
-    lid = round_edges(lid, "chamfer", [
-        ed for ed in lid.edges()
-        if abs(ed.center().Z + lid_th) < 0.01 and ed.length > 20.0
-    ], lid_bottom_chamfer)
-
+    # A teljes lid sarok-/perem-kezelése MÁR megtörtént robusztusan, a fuzionálás ELŐTT (HANDOFF #2):
+    #  * 4 külső függőleges sarok → 2D-PROFIL fillet (a fő box extrude előtt),
+    #  * fő lap ALSÓ hosszú perem-élei → lid_bottom_chamfer (a tiszta lapon, a furatok/fülek előtt),
+    #  * +X fül-nyúlványok: KÜLSŐ függőleges sarkok → ear_chamfer + a fül ALSÓ pereme → lid_bottom_chamfer
+    #    (a tiszta fül-boxokon, a lapba fuzionálás előtt). A TETŐ-sík (z=0) + dugó + furatbelső ÉLES marad.
     return lid
 
 
