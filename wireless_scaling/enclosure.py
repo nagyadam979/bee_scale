@@ -152,13 +152,14 @@ col_fillet_r       = 4.0    # [mm] a Y-OSZLOP nem-kontakt profil-sarkainak leker
 cell_flange_lighten        = True   # be/ki
 cell_flange_lighten_gap    = 0.5    # [mm] a kivágás a cella-felfekvés (pocket-fél) UTÁN ennyivel kezdődik
 cell_flange_lighten_collar = 1.5    # [mm] a megtartott boss-collar gyűrűvastagsága (a pilot körül)
-# A boss-fül FORMÁJA (user: "kerek fej + EGYENES nyak", NEM homorú Pac-Man ív): a megtartott anyag
-# profilja = KÖR (a boss körül, sugár = boss_dia/2 + collar) + KÉT ÉRINTŐ-EGYENES, amik a körtől
-# lefelé a band_in négyzet éléig futnak (egyenes oldalú nyak). A nyak ALAPJÁNAK fél-szélessége a
-# band_in élnél:
-cell_flange_neck_halfw     = 4.0    # [mm] a nyak fél-szélessége a band_in élnél (±x). Innen érintő-
-                                    #      egyenesek futnak a körhöz → a homorú ív eltűnik. Hangolható:
-                                    #      nagyobb = szélesebb/függőlegesebb nyak, kisebb = keskenyebb.
+# A boss-fül FORMÁJA (user: "kerek fej + a platform felé SZÉLESEDŐ egyenes nyak/gusset"): a megtartott
+# anyag profilja = KÖR (a boss körül, sugár = boss_dia/2 + collar) ∪ NYAK-TRAPÉZ. A trapéz FELSŐ két
+# sarka a kör OLDALSÓ pontjai (±collar_r, cy_b) — a nyak a kör legszélesebb pontján csatlakozik —,
+# ALSÓ két sarka a platform (band_in) élén SZÉLESEBBEN (±neck_base_halfw, band_edge). A két oldalél
+# tehát KIFELÉ dől a platform felé (NINCS homorú ív, NINCS hegyes csúcs). A trapéz töve > a fej:
+cell_flange_neck_base_halfw = 6.5   # [mm] a nyak/gusset TÖVÉNEK (band_in plató-él) fél-szélessége (±x).
+                                    #      MUSZÁJ > collar_r (~4.4) → a nyak a platform felé SZÉLESEDIK.
+                                    #      Hangolható: nagyobb = szélesebb támasz-talp, kisebb = keskenyebb.
 
 # ---- FELSŐ PLATÓ: NÉGYZETES fél-hidas mérőcella (SC902/YZC ~34×34), BESÜLLYESZTVE ------
 # Koncepció: a cella a tető SÜLLYESZTETT pocketjében ül; a kaptár KÖZVETLENÜL a cella dómjára
@@ -423,34 +424,25 @@ def build_housing():
             ) - Pos(0, 0, kz0 - 2 * eps) * Box(
                 2 * band_in, 2 * band_in, cell_flange_drop + 3 * eps, align=(C, C, MIN)
             )
-            # A megtartott boss-fül FORMÁJA: "KEREK FEJ + EGYENES NYAK" (user) — NEM sima Cylinder
-            # (az a band_in éllel HOMORÚ Pac-Man ívet adott). A profil a XY-síkban:
-            #   KÖR (sugár = boss_dia/2 + collar, a boss körül) ∪ NYAK-poligon, ahol a nyak két oldala
-            #   a körhöz húzott ÉRINTŐ-egyenes, a band_in éltől (±neck_halfw) a kör érintőpontjáig.
-            # A fej band_in-en TÚLI része köríves marad (nem kontakt). 2D-profil → extrude Z-ben (robusztus).
+            # A megtartott boss-fül FORMÁJA: "KEREK FEJ + a platform felé SZÉLESEDŐ EGYENES NYAK" (user)
+            # — NEM sima Cylinder (homorú Pac-Man), NEM befelé szűkülő hegyes csúcs (előző hibás kör).
+            # A profil a XY-síkban szigorúan SZIMMETRIKUS, sy-előjeles koordinátákból:
+            #   KÖR: center (0, cy_b), sugár collar_r (a kerek fej a furat körül, változatlan).
+            #   NYAK-TRAPÉZ: FELSŐ sarkok = a kör OLDALSÓ pontjai (±collar_r, cy_b); ALSÓ sarkok =
+            #   a platform (band_in) élén SZÉLESEBBEN (±nbase, band_edge), nbase > collar_r → a nyak
+            #   a platform felé KIFELÉ dől (szélesedő gusset). 2D-profil → extrude Z-ben (robusztus).
             collar_r = cell_fix_boss_dia / 2 + cell_flange_lighten_collar
-            nb = cell_flange_neck_halfw
+            nbase = cell_flange_neck_base_halfw
             for sy in (-1, 1):
                 cy_b = sy * cell_screw_y          # a boss közép Y
-                band_edge = sy * band_in          # a band_in négyzet (felé eső) éle Y-ban
-                dy = cy_b - band_edge             # a kör közép távja a band éltől (előjeles)
-                # érintő-egyenesek a (±nb, band_edge) pontból a körhöz; az OUTER érintőpontot vesszük
-                # (ami a homorú visszahajló ívet egyenesre cseréli):
-                ang_pc  = math.atan2(dy, -nb)     # P(+nb,band_edge) → kör-közép irány
-                ang_off = math.asin(collar_r / math.hypot(nb, dy))
-                Ln = math.sqrt(nb * nb + dy * dy - collar_r * collar_r)
-                # jobb oldali érintőpont (x>0 oldalon, a fej felé):
-                cand = []
-                for s in (1, -1):
-                    a = ang_pc + s * ang_off
-                    tx = nb + Ln * math.cos(a)
-                    ty = band_edge + Ln * math.sin(a)
-                    cand.append((tx, ty))
-                rtan = max((c for c in cand if c[0] > nb * 0.5), key=lambda c: abs(c[1] - cy_b))
-                # tükrözött (bal) érintőpont:
-                ltan = (-rtan[0], rtan[1])
+                band_edge = sy * band_in          # a band_in négyzet (boss felé eső) éle Y-ban
+                # A trapéz 4 sarka SAROK-SORRENDBEN (konvex, nem önmetsző mindkét sy-nél):
+                #   kör jobb oldala → tő jobb → tő bal → kör bal oldala.
                 neck = Polygon(
-                    (-nb, band_edge), (nb, band_edge), rtan, ltan,
+                    ( collar_r, cy_b),
+                    ( nbase,    band_edge),
+                    (-nbase,    band_edge),
+                    (-collar_r, cy_b),
                 )
                 head = Pos(0, cy_b) * Circle(collar_r)
                 keep_2d = head + neck
