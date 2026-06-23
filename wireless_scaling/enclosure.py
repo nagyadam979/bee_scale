@@ -479,12 +479,17 @@ def build_housing():
     #     Az USB-C portok (usb_ports, fent) MARADNAK. A pcb_nests/pcb_* paraméterek a fájlban
     #     maradtak referenciának (layout.py SEAT_Z + pakolás), de itt már semmit nem építenek. ---
 
-    # --- FŐ (alsó) ZÁRÁS: körbefutó tömítőhorony az ALSÓ peremfelületen (z=0, felfelé) ---
-    groove_out = Box(2 * groove_half_x + gasket_groove_w, 2 * groove_half_y + gasket_groove_w,
-                     gasket_groove_d, align=(C, C, MIN))
-    groove_in  = Box(2 * groove_half_x - gasket_groove_w, 2 * groove_half_y - gasket_groove_w,
-                     gasket_groove_d, align=(C, C, MIN))
-    housing -= (groove_out - groove_in)
+    # --- FŐ (alsó) ZÁRÁS: a körbefutó tömítőhorony ELTÁVOLÍTVA (user-döntés) ---
+    # KORÁBBAN itt egy gasket-horony (groove_out − groove_in) volt faragva az ALSÓ (z=0) felfekvő
+    # peremfelületbe → IP65 az alsó zárásnál. A user TUDATOS döntése: a horony megszűnik, a perem
+    # teljesen SÍK (lapos) lesz (az IP65 megszűnése az alsó zárásnál jóváhagyott, nem hiba).
+    # A gasket_groove_w/d paraméterek a fájlban MARADNAK (máshol/ajtónál hivatkozhatnak rájuk),
+    # csak ez a housing-on lévő ALSÓ horony-művelet van kiiktatva.
+    # groove_out = Box(2 * groove_half_x + gasket_groove_w, 2 * groove_half_y + gasket_groove_w,
+    #                  gasket_groove_d, align=(C, C, MIN))
+    # groove_in  = Box(2 * groove_half_x - gasket_groove_w, 2 * groove_half_y - gasket_groove_w,
+    #                  gasket_groove_d, align=(C, C, MIN))
+    # housing -= (groove_out - groove_in)
 
     # --- FŐ FEDÉL rögzítő-bossok: 5 BELSŐ (−X 2 sarok + −X/+Y/−Y oldal-közép) + 3 KÜLSŐ FÜL (+X) ---
     # A boss-okat a falhoz HÚZTUK (inset_x/inset_y, a furat majdnem érinti a falat) → a boss SZÉLE a
