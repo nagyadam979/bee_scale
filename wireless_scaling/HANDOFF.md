@@ -1,76 +1,107 @@
-# wireless_scaling — node ház: átadás a következő ágensnek
+# wireless_scaling — node ház: munkafolyamat + állapot
 
-> Parametrikus, ~IP65, ASA-nyomtatható ház a méhkaptár-mérleg node-hoz. build123d + ocp-vscode.
-> A **commit-történet (dev_01) a részletes napló** — mit/miért/mi-működött. Ez a doksi a munkafolyamat
-> + a friss állapot. Utolsó frissítés: 2026-06-23.
+> Parametrikus, ~IP65, ASA-nyomtatható ház a méhkaptár-mérleg node-hoz. **build123d + ocp-vscode.**
+> Ez a doksi az **EGYETLEN belépő**: környezet + munkafolyamat + a friss állapot. A **commit-történet
+> (dev_01) a részletes napló** — mit/miért/mi-működött/mi-nem.
+> Utolsó frissítés: 2026-06-23.
+>
+> **STÁTUSZ:** a geometria stabil és validált (2 part, 1-1 solid). **Jelenleg senki nem dolgozik a
+> modell geometriáján** — a következő geometriai munka KÜLÖN döntéssel indul (akkor dől el, ki csinálja).
+> Most a fókusz: a munkafolyamat és az eszközök karbantartása.
 
 ---
 
-## 0. KÖRNYEZET (kész, NE telepítsd)
+## 0. KÖRNYEZET
 
+**Napi parancsok** (a `.venv` ezen a gépen már kész — NE telepíts újra):
 ```bash
 cd /Users/adamnagy/Documents/bee_scale/wireless_scaling && source .venv/bin/activate
-python validate.py    # 2 part (housing, bottom_lid): 1-1 összefüggő solid? + bbox
-python preview.py [X..] # ⭐ GYORS tömör METSZET+nézet PNG (export/preview.png), STL nélkül (~12s). MINDEN
-                      #   geom. változás után EZT nézd meg (Read) — ez az agent "szeme", nem vak iteráció!
-python layout.py      # ütközés-check + VIEWER PUSH (ház átlátszón + elem-makett), port 3939
-python enclosure.py   # STL+STEP export + viewer push
+python validate.py      # 2 part (housing, bottom_lid): 1-1 összefüggő solid? + bbox épelméjű?
+python preview.py [X..] # ⭐ GYORS tömör METSZET+nézet PNG (export/preview.png), STL nélkül (~12s)
+python enclosure.py     # STL+STEP export az export/-ba + ocp-vscode VIEWER PUSH (port 3939)
 ```
-Minden méret az `enclosure.py` tetején, kommentált változó. Python 3.11 venv (3.14-hez nincs ocp wheel).
+Minden méret az `enclosure.py` tetején, kommentált változó.
 
-## 1. MUNKAFOLYAMAT-TANULSÁGOK (FONTOS — ezek nem nyilvánvalók)
+**Setup nulláról** (új gép):
+```bash
+python3.11 -m venv .venv && source .venv/bin/activate   # ⚠️ 3.11 — a 3.14-hez nincs ocp wheel
+pip install -r requirements.txt
+```
+Élő 3D nézethez VS Code-ban: telepítsd az **„OCP CAD Viewer"** extensiont (Bernhard Walter) →
+`Cmd+Shift+P` → **„OCP CAD Viewer: Open viewer"** (a **3939** porton; ha kéri, válaszd a `.venv`
+interpretert). Ezután az `enclosure.py` futtatása ide pushol.
 
-1. **NE dolgozz vakon — `python preview.py` az agent SZEME.** Minden geom. változás után futtasd és
-   **Read-eld az `export/preview.png`-t** (tömör keresztmetszet + nézet, build123d sík-metszetből → a
-   lépcsők/ívek/falvastagság PONTOSAN leolvashatók; a féltér-vetítés zsúfolt és FÉLREVEZET). Tanulság:
-   egy 1.5 mm fillet "láthatatlan" maradt, mert vak féltér-renderen néztem — a tömör metszet rögtön
-   megmutatta, hogy érdemtelen. Tetszőleges metsző-sík: `python preview.py 0 6 11 -7.9`.
-1b. **A viewer (ocp-vscode) NEM frissül magától.** A USER-nek szánt élő nézethez **futtass `layout.py`-t**
-   (vagy `enclosure.py`-t) → pushol a 3939-re. (`validate.py`/`preview.py` NEM pushol.)
-2. **A `layout.py` ütközés-check CSAK a maketteket** (`COMPONENTS`) veti össze egymással — a `housing`-ot
-   (benne oszlop, bossok, fülek) **NEM**. Holder↔oszlop/boss ütközést kézzel ellenőrizz:
-   `(e.build_housing() & maquette).volume` (0 = szabad). A behelyezési utat is: a makett footprintjét z=0-ig lehúzva.
-3. **OCCT fillet/chamfer összetett testen:** a "minden élre egyszerre" **elhasal** ("try a smaller length").
+---
+
+## 1. MUNKAFOLYAMAT (a kötelező hurok — geometriai munkánál)
+
+1. **SZERKESZTÉS** — kizárólag az `enclosure.py` tetején lévő, kommentált paramétereket hangold.
+   *(A geometriai munka most szünetel; ez a lépés a következő, dedikált feladatban él.)*
+2. **VALIDÁLÁS** — `python validate.py` → `housing` + `bottom_lid` **1-1 összefüggő solid** + bbox
+   épelméjű. Anyag-eltávolításnál térfogat-diffel számszerűsíts.
+3. **VIZUÁLIS ELLENŐRZÉS ⭐** — `python preview.py [X-síkok]` → **Read** `export/preview.png`.
+   Tömör keresztmetszet (build123d sík-metszet) → a lépcsők/ívek/falvastagság PONTOSAN leolvashatók.
+   Tetszőleges metsző-sík: `python preview.py 0 6 11 -7.9`. **EZT kell megnézni, MIELŐTT bármit
+   késznek mondunk** — különben vak iteráció (lásd 2/#1).
+4. **ÉLŐ NÉZET (user)** — `python enclosure.py` → push az ocp-vscode-ba (3939). (`validate.py` és
+   `preview.py` NEM pushol.)
+5. **EXPORT** — az `enclosure.py` egyúttal STL+STEP-et ír az `export/`-ba (nyomtatás + CAD).
+6. **COMMIT** — részletes üzenet: **mit / miért / mi-működött-mi-nem / nyitott**. Branch: `dev_01`.
+
+---
+
+## 2. TERVEZÉSI ELVEK / TANULSÁGOK (nem nyilvánvalók)
+
+1. **NE dolgozz vakon — `preview.py` az agent SZEME.** Minden geom. változás után Read-eld az
+   `export/preview.png`-t (tömör metszet, NEM féltér-vetítés — az zsúfolt és FÉLREVEZET). Tanulság:
+   egy 1.5 mm fillet „láthatatlan" maradt vak vetítésen — a tömör metszet rögtön megmutatta, hogy érdemtelen.
+2. **OCCT fillet/chamfer összetett testen:** a „minden élre egyszerre" **elhasal** ("try a smaller length").
    - Szűk, célzott él-csoportokat válassz (hosszú/külső élek; lyuk- és apró éleket KIZÁRD).
    - **`round_edges()` hibatűrő wrapper** (try/except) — egy csoport bukása ne döntse el az exportot.
-   - **2D-profil fillet az extrude ELŐTT sokkal robusztusabb**, mint 3D-élt vágni (így készült az Y-oszlop
-     profil-lekerekítése: `fillet(polygon.vertices(), r)` majd `extrude`).
-4. **Kontakt felületek ÉLESEK maradnak**, minden más kerekíthető (nyomtatás-szilárdság). Kontakt =
-   USB-nyílások, furatok belseje, cella-ágy (pocket/dent/karima-felfekvés), ház↔fedél felület + gasket-horony,
-   fül-alja (z=0). Mester kapcsoló: `print_round_enable`.
-5. **Validálj MINDEN változás után** (`validate.py`: 1-1 solid + bbox épelméjű). Anyag-eltávolításnál
-   térfogat-diffel számszerűsíts.
-6. **Bizonytalan tervezési/anyag-eltávolítási döntésnél KÉRDEZZ** (a user erős HW+SW háttér, magyarul,
-   tömören, ő dönt a hangolható értékekről — pl. V-csúcs Z, X-vastagság, radiusok). Egyértelmű feladatnál csinálj.
-7. **Commit-fegyelem:** minden lépés után részletes commit (mit/miért/mi-működött-mi-nem/nyitott). Branch: `dev_01`.
+   - **2D-profil fillet az extrude ELŐTT sokkal robusztusabb**, mint 3D-élt vágni (így készült az
+     Y-oszlop profil-lekerekítése: `fillet(polygon.vertices(), r)` majd `extrude`).
+3. **Kontakt felületek ÉLESEK maradnak**, minden más kerekíthető (nyomtatás-szilárdság). Kontakt =
+   USB-nyílások, furatok belseje, cella-ágy (pocket/dent/karima-felfekvés), ház↔fedél felület +
+   gasket-horony, fül-alja (z=0). Mester kapcsoló: `print_round_enable`.
+4. **Kézi ütközés-ellenőrzés** (alkatrész vs. ház, ha kell): `(e.build_housing() & maquette).volume`
+   (0 = szabad). A behelyezési utat is: a makett footprintjét z=0-ig lehúzva.
+5. **Bizonytalan tervezési/anyag-eltávolítási döntésnél KÉRDEZZ** (a user erős HW+SW háttér, magyarul,
+   tömören, ő dönt a hangolható értékekről — pl. radiusok, V-csúcs Z, X-vastagság). Egyértelműnél csináld.
+6. **Commit-fegyelem:** minden lépés után részletes commit (lásd 1/#6). Inkább több kicsi, mint egy nagy.
 
-## 2. KOORDINÁTÁK + FRISS BEFOGLALÓ
+---
 
-X = rövid él (`inner_x=60`), Y = hosszú él (`inner_y=78`, ide a 18650 holder ∥ Y), Z fel. Alj z=0, XY-origóra
-centrálva. **Külső bbox most: 72.5 × 86 × 28.5 mm** (a régi 68×86×33.5 már NEM áll: a +X fülek +4.5-öt nyújtanak,
-a doboz −5 mm-rel alacsonyabb). 2 nyomtatott part: `housing`, `bottom_lid` (akku-ajtó törölve).
+## 3. KOORDINÁTÁK + BEFOGLALÓ
 
-## 3. JELENLEGI FELÉPÍTÉS (mind validálva, 1-1 solid)
+X = rövid él (`inner_x=60`), Y = hosszú él (`inner_y=78`, ide a 18650 holder ∥ Y), Z fel. Alj z=0,
+XY-origóra centrálva. **Külső bbox: 72.5 × 86 × 28.5 mm** (a +X fülek +4.5-öt nyújtanak). 2 nyomtatott
+part: `housing`, `bottom_lid` (akku-ajtó törölve).
 
-- **Falak:** `wall=long_wall_th=4` (mindkét fal 4 mm → egyenletes), `top_th=3.5`, `lid_th=1.5`, `inner_z=25`.
-- **Tető-platform (cella):** besüllyesztett pocket (34.8) + **karima** (teherhordó talp, a cella-felfekvésen
-  KÍVÜL kifaragva, csak boss-collarok maradtak) + **dent** (közép-üreg, ide hajlik a cella) + 2× M2.5 önmetsző
-  cella-fix boss (x=0, y=±21.4, tail levágva).
-- **Y-OSZLOP** (teherút): álló "Y" a Y-Z síkban, x[−6,6] (nem ér a +X holderhez); profil-sarkok lekerekítve;
-  alján pilot + középső fedélcsavar.
-- **Fedél-csavarok:** 5 BELSŐ (−X 2 sarok + −X/+Y/−Y közép) félkör (D) collarral; **+X 3 KÜLSŐ FÜL** (lug,
-  a seal-vonalon kívül → IP65 ok, a holder helyét felszabadítja), agresszív fül↔fal kónusszal.
-- **bottom_lid:** sík lap + **megemelt belső dugó** (perem tömör + diagonális rács, a kavitásba illeszkedik;
-  kihagyások az oszlopnál + bossoknál).
+## 4. JELENLEGI FELÉPÍTÉS (mind validálva, 1-1 solid)
+
+- **Falak:** `wall = long_wall_th = 4` (egyenletes), `top_th=3.5`, `lid_th=1.5`, `inner_z=25`.
+- **Tető-platform (cella):** besüllyesztett pocket (34.8) + **karima** (teherhordó talp, a felfekvésen
+  kívül kifaragva, csak boss-collarok maradtak) + **dent** (közép-üreg, ide hajlik a cella) + 2× M2.5
+  önmetsző cella-fix boss (x=0, y=±21.4). A felfekvő gyűrű/dent/karima átmeneteibe fillet (teherúti ív).
+- **Y-OSZLOP** (teherút): álló „Y" a Y-Z síkban, x[−6,6] (nem ér a +X holderhez); profil-sarkok
+  lekerekítve; alján pilot + középső fedélcsavar.
+- **Fedél-csavarok:** 5 BELSŐ (−X 2 sarok + −X/+Y/−Y közép) félkör (D) collarral; **+X 3 KÜLSŐ FÜL**
+  (a seal-vonalon kívül → IP65 ok, a holder helyét felszabadítja), agresszív fül↔fal kónusszal.
+- **bottom_lid:** sík lap + **megemelt belső dugó** (perem tömör + diagonális rács; kihagyások az
+  oszlopnál + bossoknál).
 - **Lekerekítés/kónusz:** külső sarkok, felső perem, fülek, collarok, Y-oszlop, fedél-alj — kontaktok élesek.
 
-## 4. NYITOTT PONTOK
+## 5. NYITOTT PONTOK
 
 - **Kábel-bevezetés** (cella-kábel, DS18B20): a −Y PG7 furatok törölve → MÓD NYITOTT (tető/fal/perem?).
-- **batt_z0=3** és a 18650-magasság feltételezés → **éles darabon mérendő** (a holder végein ~1.75 mm/vég).
+- **Cella-ágy teherúti ívek:** az 1.5 mm fillet first-pass — a user szerint inkább **folytonos, nagy
+  sugarú „tölcsér"** kell a felfekvéstől az oszlopig (érdemi profil-átépítés), + a két függőleges
+  lightening-hasadék felülvizsgálata. *(A következő geometriai feladat fő tárgya.)*
+- **batt_z0=3** és a 18650-magasság feltételezés → **éles darabon mérendő** (~1.75 mm/vég a holdernél).
 - **Belső élek** még élesek (collar-tövek, nyitott-alj fal-élek) — kérésre célzottan kerekíthetők.
-- **18650 holder tartója:** a házban nincs fizikai tartó (a user oldja meg); a `layout.py` STRIP_CX csak referencia.
+- **18650 holder tartója:** a házban nincs fizikai tartó (a user oldja meg); a pozíció-referencia a
+  commit-történetben (a törölt `layout.py` STRIP_CX-e, git history).
 - Statikát a USER tervezi — merevítést kérés nélkül NE tegyél vissza.
 
-**ELŐSZÖR:** olvasd `enclosure.py` + `layout.py`, futtasd `validate.py` + `layout.py` (viewer!), MIELŐTT módosítasz.
-Alkatrész-méretek/források: lásd `README.md` / `new_base_components.md` + a commit-történet.
+**ELŐSZÖR** (geometriai munka előtt): olvasd az `enclosure.py`-t, futtasd `validate.py` + `preview.py`
+(Read a PNG-t!), MIELŐTT módosítasz. Alkatrész-méretek: `new_base_components.md` + `datasheets/` + commit-történet.
