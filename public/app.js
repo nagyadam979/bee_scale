@@ -73,6 +73,12 @@ const STALE_AFTER_SEC = SAMPLE_INTERVAL_SEC * 3; // 15 perc → "nincs friss ada
 // időpontnak. A két board nem szinkronban mintáz (külön millis-fázis), ezért a
 // legközelebbi-szomszéd párosítás robusztusabb a fix epoch-binelésnél.
 const PAIR_TOLERANCE_SEC = 180;
+// Zajszűrés: rúdankénti CENTRÁLT gördülő medián a rajzolás előtt. A HW-eredetű
+// 1-2 mintás kiugró tüskéket (±pár kg, HX711/mechanikai zaj) levágja, a valós
+// tömegtrendet és a finom dinamikát megőrzi. A DB-be NYERS adat megy; ez tisztán
+// megjelenítési szűrés (a nyers minta bármikor újraszűrhető más eljárással).
+// k=5 a forrásnál (w1, w2 külön), a párosítás ELŐTT — így a w1/w2 nézet is tiszta.
+const MEDIAN_K = 5; // páratlan; 0/1 = kikapcsolva
 
 // ---------------------------------------------------------------------------
 const app = initializeApp(firebaseConfig);
@@ -440,6 +446,27 @@ function detachLive() {
 // Minden w1 mintához megkeresi a legközelebbi w2 mintát; ha az időkülönbség
 // <= PAIR_TOLERANCE_SEC, összegzi. Kétmutatós merge a két rendezett tömbön.
 // ===========================================================================
+// Centrált gördülő medián egy ts-rendezett [{ts, w}] tömbön. A ts-eket változat-
+// lanul hagyja, csak a w-t cseréli a ±(k/2) ablak mediánjára. A széleknél az ablak
+// rövidül (clamp), nincs torzító edge-pad. k<=1 → változatlan (kikapcsolva).
+function medianSmooth(rows, k) {
+  const n = rows.length;
+  if (k <= 1 || n === 0) return rows;
+  const half = k >> 1;
+  const out = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const lo = Math.max(0, i - half);
+    const hi = Math.min(n, i + half + 1);
+    const win = [];
+    for (let j = lo; j < hi; j++) win.push(rows[j].w);
+    win.sort((a, b) => a - b);
+    const m = win.length;
+    const med = m & 1 ? win[m >> 1] : (win[m / 2 - 1] + win[m / 2]) / 2;
+    out[i] = { ts: rows[i].ts, w: med };
+  }
+  return out;
+}
+
 function pairTotal(rows1, rows2) {
   const out = [];
   if (!rows1.length || !rows2.length) return out;
@@ -472,8 +499,9 @@ function sortedRows(rod, minTs) {
 function redraw() {
   if (!chart) return;
   const minTs = windowMinTs();
-  const rows1 = sortedRows("w1", minTs);
-  const rows2 = sortedRows("w2", minTs);
+  // Rúdankénti centrált medián a párosítás ELŐTT (forrásnál fogja a tüskét).
+  const rows1 = medianSmooth(sortedRows("w1", minTs), MEDIAN_K);
+  const rows2 = medianSmooth(sortedRows("w2", minTs), MEDIAN_K);
   const total = pairTotal(rows1, rows2);
 
   chart.data.datasets[0].data = total.map((p) => ({ x: p.ts * 1000, y: p.w }));
