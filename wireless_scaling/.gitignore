@@ -1,0 +1,10 @@
+# --- Python / build123d CAD ---
+.venv/
+__pycache__/
+*.pyc
+
+# --- Generált CAD export (STL/STEP/PNG/FCStd) — az enclosure.py reprodukálja ---
+enclosure/export/
+
+# --- macOS ---
+.DS_Store

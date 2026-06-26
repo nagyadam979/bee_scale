@@ -66,7 +66,7 @@ def main():
     out_img = Image.new("RGB", (CELL * 2 + 10, CELL), (255, 255, 255))
     out_img.paste(pPos, (0, 0))
     out_img.paste(pNeg, (CELL + 10, 0))
-    out = "export/boss_neck_zsection.png"
+    out = E.Path(__file__).parent / "export" / "boss_neck_zsection.png"
     out_img.save(out)
     print("saved", out)
 

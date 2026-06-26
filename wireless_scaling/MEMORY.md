@@ -1,0 +1,61 @@
+# bee_scale · wireless_scaling — Modul memória
+
+> Tartós alapdokumentum a node-ház (2. fázis) almodulhoz. Ez orientálja a jövőbeli munkamenetet: cél, döntések, geometria-állapot, nyitott kérdések. Frissítsd, amikor egy döntés megszületik vagy egy geometriai fázis lezárul. A **részletes napló a commit-történet** (mit/miért/mi-működött/mi-nem).
+> Utolsó frissítés: 2026-06-26 (HANDOFF.md alapján létrehozva; a geometria-állapot a 2026-06-23-i állapotot tükrözi)
+
+> **Státusz:** a geometria **stabil és validált** — 2 nyomtatott part (`housing`, `bottom_lid`), 1-1 összefüggő solid. **Jelenleg senki nem dolgozik a modell geometriáján** — a következő geometriai munka KÜLÖN döntéssel indul. A modell forrása: `enclosure.py` (minden méret a fájl tetején, kommentált változó).
+
+---
+
+## 1. A modul egy mondatban
+
+A méhkaptár-mérleg **vezeték nélküli node** teljes fejlesztése — elektronika (firmware), kísérletek és a **3D nyomtatott ház**. Jelenleg a 3D ház (parametrikus, ~IP65, ASA, build123d; mérőcella + ESP32 + 18650 akku befogadása) a kész/aktív rész; a `firmware/` és `experiments/` még előttünk áll.
+
+## 2. Kontextus és skála
+
+- **Cél:** saját, hobbi méhészet — 1 node prototípus háza. Prioritás: nyomtathatóság (ASA), megbízhatóság, egyszerűség.
+- **Eszköz-stack:** **build123d + ocp-vscode** (élő 3D nézet), Python **3.11** (⚠️ a 3.14-hez nincs ocp wheel). A `.venv` ezen a gépen kész.
+- **Munkamódszer + napi parancsok:** lásd `CLAUDE.md` (a kötelező validate → preview → Read-PNG hurok és a token-takarékos `enclosure-builder` delegálás).
+
+## 3. Koordináták + befoglaló — megerősített tények
+
+- **Tengelyek:** X = rövid él (`inner_x=60`), Y = hosszú él (`inner_y=78`, ide a 18650 holder ∥ Y), Z fel. Alj z=0, XY-origóra centrálva.
+- **Külső bbox: 72.5 × 86 × 28.5 mm** (a +X fülek +4.5 mm-t nyújtanak).
+- **2 nyomtatott part:** `housing`, `bottom_lid` (a korábbi akku-ajtó törölve).
+
+## 4. Jelenlegi felépítés (mind validálva, 1-1 solid)
+
+- **Falak:** `wall = long_wall_th = 4` (egyenletes), `top_th = 3.5`, `lid_th = 1.5`, `inner_z = 25`.
+- **Tető-platform (cella-ágy):** besüllyesztett pocket (34.8) + **karima** (teherhordó talp, a felfekvésen kívül kifaragva, csak a boss-collarok maradtak) + **dent** (közép-üreg, ide hajlik a cella) + 2× **M2.5 önmetsző cella-fix boss** (x=0, y=±21.4). A felfekvő gyűrű/dent/karima átmeneteibe fillet (teherúti ív).
+- **Y-oszlop (teherút):** álló „Y" a Y–Z síkban, x∈[−6, 6] (nem ér a +X holderhez); profil-sarkok lekerekítve; alján pilot + középső fedélcsavar.
+- **Fedél-csavarok:** 5 **BELSŐ** (−X 2 sarok + −X/+Y/−Y közép) félkör (D) collarral; **+X 3 KÜLSŐ FÜL** (a seal-vonalon kívül → IP65 ok, a holder helyét felszabadítja), agresszív fül↔fal kónusszal.
+- **bottom_lid:** sík lap + **megemelt belső dugó** (perem tömör + diagonális rács; kihagyások az oszlopnál és a bossoknál).
+- **Lekerekítés/kónusz:** külső sarkok, felső perem, fülek, collarok, Y-oszlop, fedél-alj — a **kontakt felületek élesek**.
+
+## 5. Megszületett döntések / tervezési elvek
+
+- **2 part** (`housing` + `bottom_lid`), akku-ajtó nélkül.
+- **Kontakt felületek ÉLESEK maradnak**, minden más kerekíthető (nyomtatás-szilárdság). Kontakt = USB-nyílások, furatok belseje, cella-ágy (pocket/dent/karima-felfekvés), ház↔fedél felület + gasket-horony, fül-alja (z=0). Mester kapcsoló: `print_round_enable`.
+- **Fillet/chamfer technika** (OCCT korlát): a „minden élre egyszerre" elhasal → szűk, célzott él-csoportok; lyuk- és apró éleket kizárni; **2D-profil fillet az extrude ELŐTT robusztusabb**, mint 3D-élt vágni. (Részletes technika: `CLAUDE.md` / commit-történet.)
+- **Statikát/merevítést a USER tervezi** — kérés nélkül NE tegyél vissza merevítést.
+
+## 6. Nyitott kérdések (jövőbeli döntéspontok)
+
+1. **Kábel-bevezetés** (cella-kábel, DS18B20): a −Y PG7 furatok törölve → **mód NYITOTT** (tető / fal / perem?).
+2. **Cella-ágy teherúti ívek:** az 1.5 mm fillet csak first-pass — a user szerint **folytonos, nagy sugarú „tölcsér"** kell a felfekvéstől az oszlopig (érdemi profil-átépítés), + a 2 függőleges lightening-hasadék felülvizsgálata. *(A következő geometriai feladat fő tárgya.)*
+3. **`batt_z0 = 3`** és a 18650-magasság feltételezés → **éles darabon mérendő** (~1.75 mm/vég a holdernél).
+4. **Belső élek** még élesek (collar-tövek, nyitott-alj fal-élek) — kérésre célzottan kerekíthetők.
+5. **18650 holder tartója:** a házban nincs fizikai tartó (a user oldja meg); a pozíció-referencia a commit-történetben (a törölt `layout.py` `STRIP_CX`-e).
+
+---
+
+## 7. Mappastruktúra és modul-fájlok
+
+Részletes mappa-leírás + munkamódszer: `CLAUDE.md`.
+
+- **`enclosure/`** — 3D modellezés: `enclosure.py` (fő build123d modell, méretek a tetején) + `validate.py`/`preview.py`/`_zsection.py` (validáló + vizuális ellenőrző eszközök) + `datasheets/cell_SC902/` (mérőcella-adatlapok) + `export/` (generált STL/STEP/PNG) + `requirements.txt`.
+- **`experiments/`** — node-kísérletek (jelenleg üres — ide jönnek a HW-próbák, mérések).
+- **`firmware/`** — a node-firmware (jelenleg üres — ide a kiérlelt kód).
+- **`docs/`** — `new_base_components.md` (alkatrész-méretek) + `alkatreszek.csv` (BOM: alkatrész / funkció / ár / node–master darab).
+- **`agents/enclosure-builder.md`** — a geom. iterációt izolált kontextusban futtató al-ágens.
+- A teljes `bee_scale` projekt-kontextusa (mérési lánc, backend, dashboard): a `prototype/` modul (1. fázis).

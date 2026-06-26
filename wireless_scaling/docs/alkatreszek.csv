@@ -1,0 +1,11 @@
+ alkatrész név,funkció, ár (HUF Ntt), node, master
+esp32 C3 Supermin,MCU, 850,3,0
+ESP32-S3-Zero,MCU,2350,0,1
+AT24C256-I2C,EEPROM 256kB,349,?,1
+HBS-SCL-50,mégleg cella,366,3,1
+"953R 0,1%",prec. ellenállás,66,6,2
+HX711-M,ADC mérleg jelerősítő ,211,3,1
+ EVE-INR-18650-35V,akkumulátor (3500mAh),1063,3,2
+1x18650 W,akkumulátor foglalat,193,3,2
+TP4056-1A-PROT-USBC,töltő egység-védelemmel,139,3,1
+TPS63000-M,buck-boost konverter,739,3,1

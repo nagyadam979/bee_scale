@@ -51,4 +51,4 @@ experiments/filtering/filter_explorer.html
 wireless_scaling/.venv/
 __pycache__/
 *.pyc
-wireless_scaling/export/
+wireless_scaling/enclosure/export/
