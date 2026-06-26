@@ -71,6 +71,13 @@ Okos méhkaptár-mérleg: folyamatosan méri egy kaptár súlyát, és az adatot
 
 ---
 
+## 8. Projekt memóriafájlok (külső hivatkozások)
+
+- [Teszt WiFi](project_wifi_test.md) — AMS-TP-2.4GHz, ideiglenes kísérleti hálózat
+- [Board azonosítók](project_boards.md) — "21" (w1, DS18B20) és "12" (w2, AHT20) ESP32-C3 boardok; HW-csere után mindkettő DOUT=2/SCK=1
+
+---
+
 ### Glosszárium
 - **Fél-híd (half-bridge):** 2 ellenállásos nyúlásmérő ág; két fél-híd ad ki egy teljes Wheatstone-hidat.
 - **HX711:** load-cell célú 24 bites ADC + erősítő.

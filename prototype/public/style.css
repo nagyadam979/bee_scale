@@ -87,14 +87,23 @@ button.ghost {
   flex-wrap: wrap;
 }
 .brand { font-weight: 700; font-size: 1.1rem; }
+.topbar-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 1.6rem;
+  margin-left: auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
 .latest {
   display: flex;
   flex-direction: column;
-  margin-left: auto;
   text-align: right;
 }
 .latest-value { font-size: 1.5rem; font-weight: 700; color: var(--accent); line-height: 1.1; }
 .latest-time { font-size: 0.8rem; color: var(--muted); }
+/* Env-chip: kisebb, kék kiemelés — megkülönbözteti a súly-értéktől. */
+.env-chip .latest-value { font-size: 1.15rem; color: var(--accent-2); }
 .topbar-right { display: flex; align-items: center; gap: 0.7rem; }
 .user-email { font-size: 0.8rem; color: var(--muted); }
 
@@ -133,6 +142,14 @@ button.ghost {
   padding: 1rem;
   height: 60vh;
   min-height: 320px;
+}
+/* Az env-chart alacsonyabb panel, a súly-chart alatt. */
+.env-wrap { height: 38vh; min-height: 240px; }
+.section-title {
+  margin: 0.4rem 1.2rem 0.6rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--muted);
 }
 .empty-state {
   position: absolute;

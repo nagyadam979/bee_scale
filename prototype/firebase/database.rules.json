@@ -1,0 +1,75 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "hives": {
+      "$hive": {
+        ".read": "auth != null",
+
+        "readings": {
+          ".write": "auth != null && auth.token.email === 'esp32@beescale.local'",
+          ".indexOn": ["ts"],
+
+          "$pushId": {
+            ".validate": "newData.hasChildren(['ts','w_total','w1','w2'])",
+            "ts":      { ".validate": "newData.isNumber() && newData.val() > 1700000000" },
+            "w_total": { ".validate": "newData.isNumber()" },
+            "w1":      { ".validate": "newData.isNumber()" },
+            "w2":      { ".validate": "newData.isNumber()" },
+            "$other":  { ".validate": false }
+          }
+        },
+
+        "rods": {
+          "$rod": {
+            "readings": {
+              ".read": "auth != null",
+              ".write": "auth != null && auth.token.email === 'esp32@beescale.local'",
+              ".indexOn": ["ts"],
+
+              "$pushId": {
+                ".validate": "newData.hasChildren(['ts','w'])",
+                "ts":     { ".validate": "newData.isNumber() && newData.val() > 1700000000" },
+                "w":      { ".validate": "newData.isNumber()" },
+                "$other": { ".validate": false }
+              }
+            }
+          }
+        },
+
+        "env": {
+          "readings": {
+            ".read": "auth != null",
+            ".write": "auth != null && auth.token.email === 'esp32@beescale.local'",
+            ".indexOn": ["ts"],
+
+            "$pushId": {
+              ".validate": "newData.hasChildren(['ts','t','h'])",
+              "ts":     { ".validate": "newData.isNumber() && newData.val() > 1700000000" },
+              "t":      { ".validate": "newData.isNumber()" },
+              "h":      { ".validate": "newData.isNumber()" },
+              "p":      { ".validate": "newData.isNumber()" },
+              "$other": { ".validate": false }
+            }
+          }
+        },
+
+        "temp": {
+          "readings": {
+            ".read": "auth != null",
+            ".write": "auth != null && auth.token.email === 'esp32@beescale.local'",
+            ".indexOn": ["ts"],
+
+            "$pushId": {
+              ".validate": "newData.hasChildren(['ts','t'])",
+              "ts":     { ".validate": "newData.isNumber() && newData.val() > 1700000000" },
+              "t":      { ".validate": "newData.isNumber()" },
+              "$other": { ".validate": false }
+            }
+          }
+        }
+      }
+    }
+  }
+}
