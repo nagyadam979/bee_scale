@@ -38,5 +38,11 @@ firebase-debug.log
 .firebaserc.local
 firebase/.firebase_info.txt
 
+# --- experiments/filtering: generált kimenetek (a *.py scriptekből reprodukálhatók) ---
+experiments/filtering/bee_weights_filtered.csv
+experiments/filtering/filter_compare.png
+experiments/filtering/filter_zoom.png
+experiments/filtering/filter_explorer.html
+
 # --- Claude Code runtime állapot (tranziens, gépfüggő) ---
 .claude/
