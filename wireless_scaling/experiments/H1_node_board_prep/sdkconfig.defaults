@@ -5,6 +5,18 @@
 # hozza. A rádió (WiFi/BT) nincs használva a kódban; ezek a flagek a flash/RAM-méretet
 # és a boot-zajt csökkentik, a deep-sleep áramra közvetlen hatásuk minimális.
 
+# --- Konzol a natív USB-Serial-JTAG-on ---
+# Az ESP32-C3 SuperMini-nek NINCS külön USB-UART bridge chipje (szemben a DevKitM-1-gyel):
+# a USB-C közvetlenül a C3 beépített USB-Serial-JTAG-jára megy. Ezért a boot/wakeup logot
+# (és a monitort) a USB-Serial-JTAG console-ra irányítjuk, különben az USB-n nincs log.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# --- Flash méret ---
+# A board-def (esp32-c3-devkitm-1) 4 MB-ot vár; az IDF default 2 MB -> méret-eltérés
+# warning. A legtöbb ESP32-C3 SuperMini 4 MB. HA a konkrét darabod más (1/2 MB),
+# állítsd át (CONFIG_ESPTOOLPY_FLASHSIZE_2MB stb.).
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
 # --- Soros log: kompakt, hogy a boot gyors legyen és kevés UART-aktivitás legyen ---
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 

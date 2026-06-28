@@ -49,7 +49,7 @@
 #include "esp_sleep.h"
 #include "esp_log.h"
 #include "driver/gpio.h"
-#include "esp_rom/esp_rom_sys.h"   /* esp_rom_delay_us() — explicit include kell */
+#include "esp_rom_sys.h"   /* esp_rom_delay_us() — explicit include kell (esp_rom komponens) */
 
 /* ===================== HANGOLHATÓ PARAMÉTEREK ===================== */
 
