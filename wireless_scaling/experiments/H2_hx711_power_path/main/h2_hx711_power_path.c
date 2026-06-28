@@ -75,8 +75,14 @@
  *       fogyasztás) figyelve a powered-up ablakokban látszik, mennyit visz a HX711 modul
  *       AKTÍVAN (a powered-up vs. power-down áram különbsége ~ a HX711 üzemi fogyasztása,
  *       tipikusan ~1.5 mA). A node-áramot itt a szokásos táp-ágban (5V vagy 3V3) méred.
+ *   H2_MEASURE_MODE == 2  -> DATA-MONITOR mód: az ESP ÉBREN, a HX711-et powered-up állapotban
+ *       tartja, és HX711_MONITOR_PERIOD_MS-onként kiolvassa a NYERS 24-bit ADC értéket
+ *       (bit-bang: vár a DOUT LOW-ra = adat kész, majd 25 SCK-impulzus; A csatorna, gain 128),
+ *       és a soros logra írja. CÉL: a tényleges mérleg-adat (terhelésre változó nyers érték)
+ *       monitorozása. A log a USB-Serial-JTAG-on: `pio device monitor`-ral nézhető. NINCS
+ *       kalibráció -> az érték nyers ADC (előjeles), nem kg; terhelésre kell változnia.
  */
-#define H2_MEASURE_MODE         1
+#define H2_MEASURE_MODE         2
 
 /*
  * AKTÍV-CIKLUS mód (H2_MEASURE_MODE == 1) ablakai. Az ESP ébren ezeket ismétli:
@@ -91,6 +97,15 @@
 #define HX711_POWERDOWN_MS      10000   /* HX711 power-down ablak (ms) — szimmetrikus, hogy a
                                          * DMM-en a leesés is jól látszódjon (10 ms-nál a ~0.1%
                                          * duty miatt a power-down láthatatlan volt) */
+
+/*
+ * DATA-MONITOR mód (H2_MEASURE_MODE == 2) olvasási periódusa (ms). Milyen gyakran olvassa ki
+ * és írja a logra a nyers HX711 ADC értéket. 500 ms (~2 Hz) kényelmesen olvasható; a HX711
+ * maga ~10 SPS (RATE láb földön) vagy ~80 SPS. A HX711_MONITOR_AVG mintát átlagol egy
+ * leolvasáshoz (zaj-csillapítás); 1 = nincs átlagolás.
+ */
+#define HX711_MONITOR_PERIOD_MS 500
+#define HX711_MONITOR_AVG       4
 
 /*
  * Wakeup-periódus.
@@ -323,6 +338,91 @@ static void hx711_active_cycle(void)
 }
 #endif /* H2_MEASURE_MODE == 1 */
 
+#if H2_MEASURE_MODE == 2
+/*
+ * Egy nyers 24-bit HX711 olvasás (bit-bang). A HX711 a konverzió végén a DOUT-ot LOW-ra húzza
+ * (adat kész); ekkor 25 SCK-impulzussal kiléptetjük a 24 bitet (MSB elöl), a 25. impulzus a
+ * következő konverzió bemenetét állítja: A csatorna, gain 128. Az érték 24-bit 2's complement,
+ * előjeles 32-bitre kiterjesztve. Egy SCK HIGH csak ~1 µs (<< 60 µs), így a chip nem megy
+ * power-downba az olvasás alatt. (Forrás: HX711 datasheet; bogde/SparkFun HX711 olvasó-minta.)
+ */
+static int32_t hx711_read_raw(void)
+{
+    /* Várjuk, hogy DOUT LOW legyen (adat kész). Timeout, hogy ne ragadjon be modul nélkül. */
+    int guard = 0;
+    while (gpio_get_level(HX711_DOUT_GPIO) == 1) {
+        esp_rom_delay_us(100);
+        if (++guard > 5000) {   /* ~0.5 s */
+            ESP_LOGW(TAG, "HX711 DOUT timeout (nem kesz / nincs modul / rossz bekotes?)");
+            return 0;
+        }
+    }
+
+    uint32_t value = 0;
+    for (int i = 0; i < 24; i++) {
+        gpio_set_level(HX711_PD_SCK_GPIO, 1);
+        esp_rom_delay_us(1);
+        value = (value << 1) | (uint32_t)gpio_get_level(HX711_DOUT_GPIO);
+        gpio_set_level(HX711_PD_SCK_GPIO, 0);
+        esp_rom_delay_us(1);
+    }
+
+    /* 25. impulzus: gain = 128 (A csatorna) a következő mérésre. */
+    gpio_set_level(HX711_PD_SCK_GPIO, 1);
+    esp_rom_delay_us(1);
+    gpio_set_level(HX711_PD_SCK_GPIO, 0);
+    esp_rom_delay_us(1);
+
+    /* 24-bit 2's complement -> előjel-kiterjesztés 32-bitre. */
+    if (value & 0x800000U) {
+        value |= 0xFF000000U;
+    }
+    return (int32_t)value;
+}
+
+/*
+ * DATA-MONITOR loop: a HX711-et powered-up állapotban tartja (PD_SCK LOW), és periodikusan
+ * kiolvassa + logolja a nyers ADC értéket (HX711_MONITOR_AVG mintát átlagol). Nem tér vissza.
+ */
+static void hx711_monitor_loop(void)
+{
+    gpio_config_t pdsck_cfg = {
+        .pin_bit_mask = (1ULL << HX711_PD_SCK_GPIO),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&pdsck_cfg));
+
+    gpio_config_t dout_cfg = {
+        .pin_bit_mask = (1ULL << HX711_DOUT_GPIO),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&dout_cfg));
+
+    /* PD_SCK LOW -> HX711 power-up; az első konverzióra (~ a RATE-től függő idő) várunk. */
+    gpio_set_level(HX711_PD_SCK_GPIO, 0);
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    ESP_LOGI(TAG, "HX711 DATA-MONITOR: nyers 24-bit ADC, %d ms-onkent (avg %d), A/gain128. Terheld a cellat -> az ertek valtozik.",
+             HX711_MONITOR_PERIOD_MS, HX711_MONITOR_AVG);
+
+    while (1) {
+        int64_t acc = 0;
+        for (int i = 0; i < HX711_MONITOR_AVG; i++) {
+            acc += hx711_read_raw();
+        }
+        int32_t raw = (int32_t)(acc / HX711_MONITOR_AVG);
+        ESP_LOGI(TAG, "HX711 raw=%ld", (long)raw);
+        vTaskDelay(pdMS_TO_TICKS(HX711_MONITOR_PERIOD_MS));
+    }
+}
+#endif /* H2_MEASURE_MODE == 2 */
+
 void app_main(void)
 {
     /* Miért ébredtünk? (időmért ciklusnál hasznos a logban.) */
@@ -337,6 +437,9 @@ void app_main(void)
     /* AKTÍV-CIKLUS mód: az ESP ÉBREN marad, a HX711-et power-up/power-down ciklusban
      * kapcsolja a végtelenségig; a függvény NEM tér vissza (a lenti deep-sleep út kimarad). */
     hx711_active_cycle();
+#elif H2_MEASURE_MODE == 2
+    /* DATA-MONITOR mód: az ESP ÉBREN, a HX711 nyers ADC értékét olvassa+logolja; nem tér vissza. */
+    hx711_monitor_loop();
 #else
 
     /*

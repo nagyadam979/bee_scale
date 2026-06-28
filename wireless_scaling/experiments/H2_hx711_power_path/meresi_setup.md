@@ -164,6 +164,22 @@ Az (A)/(B) a HX711 *nyugalmi* (power-down) oldalát méri. Ha a HX711 **aktív (
 
 ---
 
+## 4c. Data-monitor mód (`H2_MEASURE_MODE = 2`) — bekötés-ellenőrzés / nyers ADC
+
+Szanity-eszköz a HX711 + load cell bekötésének ellenőrzésére és a nyers mérleg-adat
+monitorozására (NEM fogyasztás-mérés):
+
+- Az **ESP ÉBREN**, a HX711 powered-up; a firmware `HX711_MONITOR_PERIOD_MS`-onként (alap 500 ms)
+  kiolvassa a **nyers 24-bit ADC** értéket (bit-bang: vár a DOUT LOW-ra, 25 SCK-impulzus, A
+  csatorna gain 128, `HX711_MONITOR_AVG` minta átlaga), és a soros logra írja: `HX711 raw=...`.
+- **Nézés:** a saját termináldban `pio device monitor -p <PORT> -b 115200`. **Terheld a cellát** →
+  a `raw` értéknek érdemben változnia kell. NINCS kalibráció → az érték nyers ADC, nem kg.
+- **Hibajelek:** `HX711 DOUT timeout` → DOUT(GPIO6)/SCK(GPIO5) vagy a HX711 tápja; konstans
+  telített érték (±teljes skála) → cella híd / E+/E−/A+/A− bekötés (pl. félhíd→teljes híd
+  kiegészítés a 953R 0,1% ellenállásokkal). A HX711-olvasó kód az Sz1 / kalibráció alapja.
+
+---
+
 ## 5. Hibakeresés (sorrendben — a modulcsere a VÉGE, nem az eleje)
 
 1. **Áram 100+ µA ÉS a cellán nem 0 V → szinte biztos, hogy a `PD_SCK` nem marad magasan
