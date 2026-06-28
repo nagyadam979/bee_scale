@@ -5,6 +5,9 @@
 build/
 sdkconfig
 sdkconfig.old
+# PlatformIO/IDF generált board-specifikus sdkconfig (a forrás: sdkconfig.defaults)
+sdkconfig.*
+!sdkconfig.defaults
 managed_components/
 dependencies.lock
 *.bin
