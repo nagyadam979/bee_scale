@@ -35,7 +35,7 @@
  * HX711 BEKÖTÉS (lásd meresi_setup.md):
  *   - PD_SCK : a HX711 órajel-bemenete. >60 µs MAGAS = power-down (a load cell excitation
  *              lekapcsol, modul nyugalmi áram ~1 µA jó modulnál). Itt MAGASRA húzzuk, és
- *              deep sleep alatt is magasan TARTJUK (RTC GPIO hold), hogy a HX711 ténylegesen
+ *              deep sleep alatt is magasan TARTJUK (GPIO hold), hogy a HX711 ténylegesen
  *              aludjon a teljes node-áram mérése közben. (Az excitation 0V igazolása H2.)
  *   - DOUT   : a HX711 adat-kimenete. Itt nem olvassuk; bemenetnek hagyjuk, hogy ne
  *              hajtsuk ütközésbe a modul kimenetét.
@@ -49,7 +49,7 @@
 #include "esp_sleep.h"
 #include "esp_log.h"
 #include "driver/gpio.h"
-#include "driver/rtc_io.h"
+#include "esp_rom/esp_rom_sys.h"   /* esp_rom_delay_us() — explicit include kell */
 
 /* ===================== HANGOLHATÓ PARAMÉTEREK ===================== */
 
@@ -67,8 +67,10 @@
 /*
  * HX711 GPIO-k. Általános IO, NEM strapping, nincs USB/UART/SPI-flash ütközés.
  *   PD_SCK = GPIO5, DOUT = GPIO6 — szabadon átírható a tényleges bekötésedhez.
- *   FONTOS: a PD_SCK-nek RTC-képes GPIO-nak kell lennie, hogy deep sleep alatt is
- *   tartani tudjuk MAGASAN (a C3-on GPIO0..GPIO5 RTC-képes). GPIO5 megfelel.
+ *   A deep sleep alatti HIGH-tartást a C3-on a gpio_hold_en() + gpio_deep_sleep_hold_en()
+ *   biztosítja — a C3-nak NINCS RTCIO perifériája (SOC_RTCIO_PIN_COUNT=0), így rtc_gpio_*
+ *   nem elérhető. GPIO5 azért is jó választás, mert GPIO0..5 a VDD3P3_RTC tartományba esik
+ *   (ez számít, ha később GPIO-wakeupot is akarnánk deep sleepből).
  */
 #define HX711_PD_SCK_GPIO       GPIO_NUM_5   /* HX711 PD_SCK (power-down clock) */
 #define HX711_DOUT_GPIO         GPIO_NUM_6   /* HX711 DOUT  (adat, itt nem olvassuk) */
@@ -91,7 +93,7 @@ static const char *TAG = "H1";
 /*
  * A HX711-et power-downba teszi: PD_SCK GPIO-t MAGASra húzza.
  * A HX711 adatlapja szerint PD_SCK > 60 µs magas -> a chip power-downba megy,
- * a load cell excitation lekapcsol. Deep sleep alatt RTC GPIO hold tartja a szintet.
+ * a load cell excitation lekapcsol. Deep sleep alatt GPIO hold tartja a szintet.
  */
 static void hx711_power_down(void)
 {
@@ -148,27 +150,25 @@ static void user_led_off(void)
 }
 
 /*
- * Deep sleep alatt megőrzendő GPIO-szintek rögzítése (RTC GPIO hold), hogy a
- * HX711 PD_SCK MAGAS maradjon és a LED kikapcsolva — különben deep sleepben a
- * digitális IO elengedne, és a HX711 felébredhetne / a node-áram megugorhatna.
+ * Deep sleep alatt megőrzendő GPIO-szintek rögzítése (GPIO hold), hogy a HX711
+ * PD_SCK MAGAS maradjon és a LED kikapcsolva — különben deep sleepben a digitális IO
+ * elengedne, és a HX711 felébredhetne / a node-áram megugorhatna.
+ *
+ * Az ESP32-C3-nak NINCS RTCIO perifériája (SOC_RTCIO_PIN_COUNT=0), így a klasszikus
+ * rtc_gpio_hold_en() nem elérhető C3 targetre. A digitális GPIO-szint deep sleep alatti
+ * befagyasztása a sima gpio_hold_en() (lábanként) + a globális gpio_deep_sleep_hold_en()
+ * párossal történik. (Forrás: ESP-IDF GPIO / Sleep Modes dok., ESP32-C3.)
  */
 static void hold_critical_gpios_for_sleep(void)
 {
-    /* PD_SCK magasan tartása alvás alatt (RTC GPIO-képes lábon működik). */
-    if (rtc_gpio_is_valid_gpio(HX711_PD_SCK_GPIO)) {
-        rtc_gpio_hold_en(HX711_PD_SCK_GPIO);
-        ESP_LOGI(TAG, "RTC hold: PD_SCK(GPIO%d) HIGH megtartva alvás alatt",
-                 HX711_PD_SCK_GPIO);
-    } else {
-        /* Nem-RTC láb esetén digitális hold (a C3-on a deep sleep ezt korlátozottan
-         * tartja; ezért választottunk RTC-képes lábat PD_SCK-nak). */
-        gpio_hold_en(HX711_PD_SCK_GPIO);
-        ESP_LOGW(TAG, "PD_SCK(GPIO%d) NEM RTC-láb -> csak gpio_hold; ellenőrizd a mérésen",
-                 HX711_PD_SCK_GPIO);
-    }
+    gpio_hold_en(HX711_PD_SCK_GPIO);   /* PD_SCK aktuális (HIGH) szintje befagyasztva */
+    gpio_hold_en(USER_LED_GPIO);       /* LED off szintje befagyasztva */
 
-    /* Az alvás alatt a holdok megmaradjanak: globális hold-engedély deep sleepre. */
+    /* A holdok deep sleep alatt is éljenek (globális engedély). */
     gpio_deep_sleep_hold_en();
+
+    ESP_LOGI(TAG, "GPIO hold: PD_SCK(GPIO%d) HIGH es LED(GPIO%d) megtartva alvas alatt",
+             HX711_PD_SCK_GPIO, USER_LED_GPIO);
 }
 
 void app_main(void)
