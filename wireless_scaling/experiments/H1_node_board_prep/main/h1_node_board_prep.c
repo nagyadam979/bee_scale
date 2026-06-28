@@ -1,0 +1,218 @@
+/*
+ * H1 — Node board előkészítés (deep-sleep áram)
+ * bee_scale / wireless_scaling · 2. fázis · experiments/H1_node_board_prep
+ *
+ * CÉL
+ *   A node (ESP32-C3 SuperMini) nyers nyugalmi (deep-sleep) áramának kimérése és
+ *   minimalizálása. Ez a teljes node-energiamérleg ALAPSZÁMA. A firmware MINIMÁLIS és a
+ *   MÉRÉST szolgálja: nincs rádió (sem WiFi, sem ESP-NOW), nincs szenzor-olvasás —
+ *   csak a HX711 power-downba küldése, az alvásbarát GPIO-konfig, majd esp_deep_sleep.
+ *
+ *   A pass/fail küszöb (lásd README pass/fail tábla, a HX711-gyel együtt, H2-vel közös):
+ *     - JÓ          : < 50 µA   (teljes node deep sleep, LED nélkül, HX711 power-downban)
+ *     - ELFOGADHATÓ : < 100–200 µA
+ *     - PROBLÉMÁS   : > 500 µA  -> board / HX711 / tápút hibakeresés
+ *
+ * BOARD / PINOUT — webről ellenőrizve (NEM emlékezetből), 2026-06-28:
+ *   ESP32-C3 SuperMini:
+ *     - Kivezetett GPIO-k: GPIO0..GPIO10, GPIO20, GPIO21.
+ *     - ADC-képes lábak: GPIO0..GPIO4 (A0..A4).
+ *     - Default I2C: SDA=GPIO8, SCL=GPIO9 (itt nem használjuk).
+ *     - Default SPI: SCK=GPIO4, MISO=GPIO5, MOSI=GPIO6, SS=GPIO7 (itt nem használjuk).
+ *     - Strapping lábak (kerülendők általános IO-nak): GPIO2, GPIO8, GPIO9.
+ *     - USB-JTAG/soros: GPIO18 (D-), GPIO19 (D+) — a C3-on a beépített USB-Serial-JTAG.
+ *     - UART0: TX=GPIO21, RX=GPIO20.
+ *     - KÉK user LED  : GPIO8 (a legtöbb darabon; egyes gyártóknál GPIO2/7/9 lehet,
+ *                       és tipikusan AKTÍV-ALACSONY/invertált — de a deep-sleep mérésnél
+ *                       a LED-et eleve KIKAPCSOLVA tartjuk, így a polaritás itt indifferens).
+ *     - VÖRÖS power LED: NEM GPIO-vezérelt, a board tápra kapcsolásakor MINDIG világít ->
+ *                       ez a "rejtett fogyasztó", amit a H1 mérési terv szerint LE KELL
+ *                       SZEDNI és külön mérni a hatását (lásd meresi_setup.md / CSV).
+ *     - Tipikus gyári deep-sleep áram: ~43 µA (gyártói adat, ellenőrzendő a mérésen).
+ *   Forrás: espboards.dev/esp32/esp32-c3-super-mini/, mozelectronics.com,
+ *           lastminuteengineers.com ESP32-C3 Super Mini pinout (2026-06-28).
+ *
+ * HX711 BEKÖTÉS (lásd meresi_setup.md):
+ *   - PD_SCK : a HX711 órajel-bemenete. >60 µs MAGAS = power-down (a load cell excitation
+ *              lekapcsol, modul nyugalmi áram ~1 µA jó modulnál). Itt MAGASRA húzzuk, és
+ *              deep sleep alatt is magasan TARTJUK (RTC GPIO hold), hogy a HX711 ténylegesen
+ *              aludjon a teljes node-áram mérése közben. (Az excitation 0V igazolása H2.)
+ *   - DOUT   : a HX711 adat-kimenete. Itt nem olvassuk; bemenetnek hagyjuk, hogy ne
+ *              hajtsuk ütközésbe a modul kimenetét.
+ *
+ * HANGOLHATÓ PARAMÉTEREK — a fájl tetején, kommentálva (CLAUDE.md elv).
+ */
+
+#include <stdio.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_sleep.h"
+#include "esp_log.h"
+#include "driver/gpio.h"
+#include "driver/rtc_io.h"
+
+/* ===================== HANGOLHATÓ PARAMÉTEREK ===================== */
+
+/*
+ * Wakeup-periódus.
+ *   DEEP_SLEEP_WAKEUP_SEC == 0  -> NINCS timer-wakeup: tartós (örök) deep sleep.
+ *       Ez az ALAPÉRTELMEZÉS a tiszta nyugalmi áram méréséhez — a board addig alszik,
+ *       amíg manuálisan nem resetelsz. Így a multiméter stabil deep-sleep áramot mutat.
+ *   DEEP_SLEEP_WAKEUP_SEC  > 0  -> timer-wakeup ennyi másodperc után (ciklikus mérés /
+ *       későbbi periodikus üzem szimulálása). A wakeup után a firmware újraindul a
+ *       app_main()-ből (deep sleep = teljes reboot a C3-on).
+ */
+#define DEEP_SLEEP_WAKEUP_SEC   0
+
+/*
+ * HX711 GPIO-k. Általános IO, NEM strapping, nincs USB/UART/SPI-flash ütközés.
+ *   PD_SCK = GPIO5, DOUT = GPIO6 — szabadon átírható a tényleges bekötésedhez.
+ *   FONTOS: a PD_SCK-nek RTC-képes GPIO-nak kell lennie, hogy deep sleep alatt is
+ *   tartani tudjuk MAGASAN (a C3-on GPIO0..GPIO5 RTC-képes). GPIO5 megfelel.
+ */
+#define HX711_PD_SCK_GPIO       GPIO_NUM_5   /* HX711 PD_SCK (power-down clock) */
+#define HX711_DOUT_GPIO         GPIO_NUM_6   /* HX711 DOUT  (adat, itt nem olvassuk) */
+
+/*
+ * Beépített kék user LED. A deep-sleep mérésnél KIKAPCSOLVA tartjuk.
+ *   A legtöbb ESP32-C3 SuperMini-n GPIO8 (és tipikusan aktív-alacsony). A vörös power
+ *   LED nem GPIO-vezérelt -> azt HW-ben kell leszedni (lásd meresi_setup.md).
+ */
+#define USER_LED_GPIO           GPIO_NUM_8
+
+/* Mennyi ideig világítson a "még élek" jelzés ébredéskor, mielőtt aludni megy (ms).
+ * 0 = egyáltalán ne villantson (legtisztább mérés). Csak debug-vizuálishoz hasznos. */
+#define BOOT_BLINK_MS           0
+
+/* ================================================================= */
+
+static const char *TAG = "H1";
+
+/*
+ * A HX711-et power-downba teszi: PD_SCK GPIO-t MAGASra húzza.
+ * A HX711 adatlapja szerint PD_SCK > 60 µs magas -> a chip power-downba megy,
+ * a load cell excitation lekapcsol. Deep sleep alatt RTC GPIO hold tartja a szintet.
+ */
+static void hx711_power_down(void)
+{
+    gpio_config_t pdsck_cfg = {
+        .pin_bit_mask = (1ULL << HX711_PD_SCK_GPIO),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&pdsck_cfg));
+    ESP_ERROR_CHECK(gpio_set_level(HX711_PD_SCK_GPIO, 1));   /* HIGH = power-down */
+
+    /* DOUT bemenetnek, felhúzás nélkül — nem hajtjuk a modul kimenetét. */
+    gpio_config_t dout_cfg = {
+        .pin_bit_mask = (1ULL << HX711_DOUT_GPIO),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&dout_cfg));
+
+    /* Tartsuk legalább 60 µs-ig magasan, hogy a HX711 biztosan power-downba menjen. */
+    esp_rom_delay_us(100);
+
+    ESP_LOGI(TAG, "HX711 power-down: PD_SCK(GPIO%d)=HIGH, DOUT(GPIO%d)=input",
+             HX711_PD_SCK_GPIO, HX711_DOUT_GPIO);
+}
+
+/*
+ * A kék user LED-et biztosan kikapcsolja (a deep-sleep mérés alatt sötét).
+ * A polaritás darabfüggő lehet; itt OUTPUT-ra állítjuk és kioltjuk mindkét feltevés
+ * szerint biztonságosan: a leggyakoribb aktív-alacsony esetben HIGH = LED off.
+ */
+static void user_led_off(void)
+{
+    gpio_config_t led_cfg = {
+        .pin_bit_mask = (1ULL << USER_LED_GPIO),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&led_cfg));
+    gpio_set_level(USER_LED_GPIO, 1);   /* aktív-alacsony LED esetén: off */
+
+#if BOOT_BLINK_MS > 0
+    /* Opcionális "még élek" villantás (csak ha BOOT_BLINK_MS > 0). */
+    gpio_set_level(USER_LED_GPIO, 0);   /* on */
+    vTaskDelay(pdMS_TO_TICKS(BOOT_BLINK_MS));
+    gpio_set_level(USER_LED_GPIO, 1);   /* off */
+#endif
+}
+
+/*
+ * Deep sleep alatt megőrzendő GPIO-szintek rögzítése (RTC GPIO hold), hogy a
+ * HX711 PD_SCK MAGAS maradjon és a LED kikapcsolva — különben deep sleepben a
+ * digitális IO elengedne, és a HX711 felébredhetne / a node-áram megugorhatna.
+ */
+static void hold_critical_gpios_for_sleep(void)
+{
+    /* PD_SCK magasan tartása alvás alatt (RTC GPIO-képes lábon működik). */
+    if (rtc_gpio_is_valid_gpio(HX711_PD_SCK_GPIO)) {
+        rtc_gpio_hold_en(HX711_PD_SCK_GPIO);
+        ESP_LOGI(TAG, "RTC hold: PD_SCK(GPIO%d) HIGH megtartva alvás alatt",
+                 HX711_PD_SCK_GPIO);
+    } else {
+        /* Nem-RTC láb esetén digitális hold (a C3-on a deep sleep ezt korlátozottan
+         * tartja; ezért választottunk RTC-képes lábat PD_SCK-nak). */
+        gpio_hold_en(HX711_PD_SCK_GPIO);
+        ESP_LOGW(TAG, "PD_SCK(GPIO%d) NEM RTC-láb -> csak gpio_hold; ellenőrizd a mérésen",
+                 HX711_PD_SCK_GPIO);
+    }
+
+    /* Az alvás alatt a holdok megmaradjanak: globális hold-engedély deep sleepre. */
+    gpio_deep_sleep_hold_en();
+}
+
+void app_main(void)
+{
+    /* Miért ébredtünk? (időmért ciklusnál hasznos a logban.) */
+    esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+    ESP_LOGI(TAG, "=== H1 node deep-sleep mero firmware ===");
+    ESP_LOGI(TAG, "Wakeup cause: %d (0 = power-on/reset)", (int)cause);
+
+    /* 1) LED ki — semmi fény a mérés alatt. */
+    user_led_off();
+
+    /* 2) HX711 power-down — PD_SCK magas, DOUT bemenet. */
+    hx711_power_down();
+
+    /*
+     * 3) Alvásbarát GPIO-konfig: minden NEM használt, kivezetett GPIO maradjon
+     *    a reset utáni nagy-impedanciás (input, pull nélkül) állapotban. A reset
+     *    default a C3-on már input + a belső pull-ok jellemzően tiltottak, így a
+     *    legkisebb szivárgás érdekében NEM kapcsolunk be felhúzásokat. A két
+     *    HX711-lábat fent már explicit beállítottuk. Tudatosan nem piszkáljuk a
+     *    GPIO18/19 (USB) és GPIO20/21 (UART) lábakat, hogy a soros/USB elérés
+     *    megmaradjon a fejlesztéshez; ezek hatása a mérésen ellenőrizendő.
+     */
+
+    /* 4) Kritikus szintek rögzítése alvásra (PD_SCK HIGH hold). */
+    hold_critical_gpios_for_sleep();
+
+    /* 5) Wakeup-forrás konfig. */
+#if DEEP_SLEEP_WAKEUP_SEC > 0
+    ESP_LOGI(TAG, "Timer wakeup: %d s mulva ebredes", DEEP_SLEEP_WAKEUP_SEC);
+    ESP_ERROR_CHECK(esp_sleep_enable_timer_wakeup(
+        (uint64_t)DEEP_SLEEP_WAKEUP_SEC * 1000000ULL));
+#else
+    ESP_LOGI(TAG, "Nincs timer-wakeup -> TARTOS deep sleep (reset kell az ebreszteshez)");
+    /* Minden alapertelmezett wakeup-forras tiltva a legtisztabb meresert. */
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+#endif
+
+    ESP_LOGI(TAG, "Deep sleepbe lepunk. Mostantol a multimeter a nyugalmi aramot mutatja.");
+    /* A log kiürítése, mielőtt elalszunk (különben a soros buffer félbevág). */
+    fflush(stdout);
+    esp_rom_delay_us(20000);   /* ~20 ms a soros kiírás befejezésére */
+
+    /* 6) Deep sleep — innen nincs visszatérés; wakeup esetén app_main() újraindul. */
+    esp_deep_sleep_start();
+}
