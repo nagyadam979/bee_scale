@@ -113,6 +113,13 @@ static QueueHandle_t   s_rx_queue = NULL;
 static volatile uint32_t s_dropped_count = 0;   /* queue tele a recv-cb-ben (volatile)      */
 static sz2_node_stat_t s_nodes[SZ2_MAX_NODES];
 
+/* DIAGNOSZTIKAI szamlalok — hol halnak meg a csomagok (a nema continue-utak lathatova tetele). */
+static volatile uint32_t s_diag_recv_cb   = 0;  /* hanyszor futott a recv_cb (= esp_now atadta)*/
+static volatile uint32_t s_diag_len_bad   = 0;  /* rossz hosszusagu csomag                     */
+static volatile uint32_t s_diag_ver_bad   = 0;  /* rossz protocol_version                       */
+static volatile uint32_t s_diag_crc_bad   = 0;  /* CRC-hiba                                     */
+static volatile uint32_t s_diag_ok        = 0;  /* len+ver+crc OK, feldolgozva                  */
+
 /*
  * RECV-CALLBACK. WiFi-task kontextusban fut (NEM ISR) -> sima xQueueSend(...,0).
  * CSAK kimásol + queue-ba dob. Az info->src_addr és info->rx_ctrl->rssi CSAK itt érvényes
@@ -123,6 +130,7 @@ static void recv_cb(const esp_now_recv_info_t *info, const uint8_t *data, int le
 {
     sz2_rx_item_t item;
 
+    s_diag_recv_cb++;   /* DIAG: az esp_now atadott egy csomagot a callbacknek */
     item.len = (uint16_t)len;
     /* Csak akkor másoljuk a payloadot, ha a hossz pontosan stimmel (különben hibás csomag). */
     if (len == (int)sizeof(sz2_payload_t)) {
@@ -215,6 +223,13 @@ static void print_report(sz2_node_stat_t *n)
              (long long)elapsed_ms,
              (long long)(elapsed_ms > 0 ? (int64_t)n->received_unique * 1000 / elapsed_ms : 0),
              (int)n->rssi_min, rssi_avg, (int)n->rssi_max);
+    /* Diagnosztikai bontas (a nema eldobasi utak lathatova tetele): a recv_cb hanyszor futott
+     * (= az esp_now ennyi csomagot adott at), es a feldolgozasban hol estek ki. Egy egeszseges
+     * one-shot futasban: recv_cb == ok == expected, a tobbi 0. (A szamlalok GLOBALISAK, friss
+     * master-boot-tol szamolnak; ezert a tesztet friss masterrel kell inditani.) */
+    ESP_LOGI(TAG, "DIAG: recv_cb=%u ok=%u len_bad=%u ver_bad=%u crc_bad=%u",
+             (unsigned)s_diag_recv_cb, (unsigned)s_diag_ok, (unsigned)s_diag_len_bad,
+             (unsigned)s_diag_ver_bad, (unsigned)s_diag_crc_bad);
     ESP_LOGI(TAG, "PASS_FAIL=%s", pass ? "PASS" : "FAIL");
     ESP_LOGI(TAG, "=== SZ2 RIPORT VEGE ===");
 }
@@ -247,6 +262,7 @@ static void consumer_task(void *arg)
 
         /* Rossz hossz -> hibás csomag, eldobjuk (nem számítjuk node-statba). */
         if (item.len != (uint16_t)sizeof(sz2_payload_t)) {
+            s_diag_len_bad++;
             ESP_LOGW(TAG, "rossz hosszusagu csomag: %u byte (vart %u)",
                      (unsigned)item.len, (unsigned)sizeof(sz2_payload_t));
             continue;
@@ -256,6 +272,7 @@ static void consumer_task(void *arg)
 
         /* Verzió-szűrés. */
         if (p->protocol_version != SZ2_PROTO_VERSION) {
+            s_diag_ver_bad++;
             ESP_LOGW(TAG, "ismeretlen protocol_version=%d (vart %d) — eldobva",
                      p->protocol_version, SZ2_PROTO_VERSION);
             continue;
@@ -272,8 +289,15 @@ static void consumer_task(void *arg)
         uint16_t want_crc = sz2_payload_crc(p);
         if (want_crc != p->crc) {
             n->crc_error++;
+            s_diag_crc_bad++;
+            /* DIAG: az elso par CRC-hibanal irjuk ki a szamolt vs vett CRC-t + a payload elejet. */
+            if (s_diag_crc_bad <= 3) {
+                ESP_LOGW(TAG, "DIAG CRC-HIBA: szamolt=0x%04X vett=0x%04X | node_id=%u seq=%u len=%u",
+                         want_crc, p->crc, p->node_id, (unsigned)p->seq, (unsigned)item.len);
+            }
             continue;   /* rossz CRC -> NEM számít az adat-statisztikába */
         }
+        s_diag_ok++;
 
         /* Provisioning: MAC-tanulás / MAC-váltás log. */
         if (memcmp(n->mac, item.src_mac, 6) != 0) {
@@ -379,6 +403,11 @@ static void wifi_espnow_init(void)
     ESP_ERROR_CHECK(esp_wifi_start());
     /* KRITIKUS a masteren: power-save ki, különben modem-sleep miatt folyamatos vételnél vesztés. */
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
+    /* Interop-hardening: explicit 11b/g/n protokoll, a LR (long-range) bit KIZÁRVA — az LR
+     * moduláció nem interoperábilis a sima 11b/g/n-nel -> teljes vétel-némasághoz vezetne
+     * C3 <-> classic ESP32 között. EGYEZZEN a node beállításával. */
+    ESP_ERROR_CHECK(esp_wifi_set_protocol(WIFI_IF_STA,
+        WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N));
     ESP_ERROR_CHECK(esp_wifi_set_channel(SZ2_CHANNEL, WIFI_SECOND_CHAN_NONE));
 
     ESP_ERROR_CHECK(esp_now_init());
@@ -392,8 +421,89 @@ static void wifi_espnow_init(void)
     peer.ifidx   = WIFI_IF_STA;
     peer.encrypt = false;
     ESP_ERROR_CHECK(esp_now_add_peer(&peer));
+
+    /* Fix, legrobusztusabb ESP-NOW ráta (11b, 1 Mbps long-preamble) — EGYEZZEN a node-éval,
+     * hogy a két chip azonos PHY-módon/rátán kommunikáljon. esp_now_add_peer UTÁN. */
+    esp_now_rate_config_t rc = {
+        .phymode = WIFI_PHY_MODE_11B,
+        .rate    = WIFI_PHY_RATE_1M_L,
+        .ersu    = false,
+        .dcm     = false,
+    };
+    ESP_ERROR_CHECK(esp_now_set_peer_rate_config(peer.peer_addr, &rc));
+
+    /* A TENYLEGES veteli csatorna visszaolvasasa (egyszeri, boot-kor) — csatorna-mismatch kizarasa. */
+    uint8_t ch_prim = 0; wifi_second_chan_t ch_sec = WIFI_SECOND_CHAN_NONE;
+    esp_wifi_get_channel(&ch_prim, &ch_sec);
+    ESP_LOGI(TAG, "tenyleges RX csatorna prim=%u (vart SZ2_CHANNEL=%d)", ch_prim, SZ2_CHANNEL);
 }
 
+#ifdef SZ2_SNIFFER
+/* =================== DIAGNOSZTIKAI PROMISCUOUS SNIFFER ===================
+ * Build: PLATFORMIO_BUILD_FLAGS=-DSZ2_SNIFFER pio run -t upload
+ * Cel: eldonteni, hogy a node ESP-NOW frame-jei FIZIKAILAG megerkeznek-e a master
+ * antennajara az 1-es csatornan. Ha igen -> a baj az ESP-NOW RX-retegben/peer-kezelesben;
+ * ha nem -> radio/csatorna a node oldalon. Minden vett 802.11 frame src MAC-jat (addr2) +
+ * RSSI-t szamoljuk; az ESPNOW vendor action frame (type=MGMT, cat=127, OUI 18:fe:34) kulon. */
+static volatile uint32_t s_sniff_total = 0;
+static volatile uint32_t s_sniff_action = 0;
+static volatile uint32_t s_sniff_espnow = 0;
+static uint8_t s_last_src[6];
+static int8_t  s_last_rssi;
+
+static void sniffer_cb(void *buf, wifi_promiscuous_pkt_type_t type)
+{
+    const wifi_promiscuous_pkt_t *p = (const wifi_promiscuous_pkt_t *)buf;
+    const uint8_t *d = p->payload;
+    s_sniff_total++;
+    uint8_t ftype = (d[0] >> 2) & 0x3;   /* 0=mgmt */
+    uint8_t fsub  = (d[0] >> 4) & 0xF;   /* 0xD=action */
+    memcpy(s_last_src, d + 10, 6);       /* addr2 = transmitter */
+    s_last_rssi = p->rx_ctrl.rssi;
+    if (ftype == 0 && fsub == 0xD) {
+        s_sniff_action++;
+        /* action frame body: addr-ek utan (24 byte MAC hdr) cat(1). cat==127 (0x7F)=vendor. */
+        if (p->rx_ctrl.sig_len > 24 && d[24] == 0x7F) {
+            /* OUI a kovetkezo 3 byte: Espressif = 18:fe:34 */
+            if (p->rx_ctrl.sig_len > 27 && d[25] == 0x18 && d[26] == 0xfe && d[27] == 0x34) {
+                s_sniff_espnow++;
+            }
+        }
+    }
+}
+
+void app_main(void)
+{
+    ESP_LOGW(TAG, "=== Sz2 MASTER — DIAG PROMISCUOUS SNIFFER (csatorna=%d) ===", SZ2_CHANNEL);
+    esp_err_t e = nvs_flash_init();
+    if (e == ESP_ERR_NVS_NO_FREE_PAGES || e == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase()); ESP_ERROR_CHECK(nvs_flash_init());
+    } else { ESP_ERROR_CHECK(e); }
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_start());
+    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
+    ESP_ERROR_CHECK(esp_wifi_set_protocol(WIFI_IF_STA,
+        WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N));
+    ESP_ERROR_CHECK(esp_wifi_set_channel(SZ2_CHANNEL, WIFI_SECOND_CHAN_NONE));
+    ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true));
+    ESP_ERROR_CHECK(esp_wifi_set_promiscuous_rx_cb(sniffer_cb));
+    uint8_t cp = 0; wifi_second_chan_t cs = WIFI_SECOND_CHAN_NONE;
+    esp_wifi_get_channel(&cp, &cs);
+    ESP_LOGW(TAG, "SNIFFER aktiv, csatorna prim=%u. Szamlalok 1Hz-en...", cp);
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        ESP_LOGW(TAG, "SNIFF total=%u action=%u ESPNOW=%u | utolso src=%02X:%02X:%02X:%02X:%02X:%02X rssi=%d",
+                 (unsigned)s_sniff_total, (unsigned)s_sniff_action, (unsigned)s_sniff_espnow,
+                 s_last_src[0], s_last_src[1], s_last_src[2], s_last_src[3], s_last_src[4], s_last_src[5],
+                 (int)s_last_rssi);
+    }
+}
+#else
 void app_main(void)
 {
     ESP_LOGI(TAG, "=== Sz2 MASTER (RX) — ESP-NOW low-level recv ===");
@@ -419,3 +529,4 @@ void app_main(void)
 
     ESP_LOGI(TAG, "Master kesz, varja a csomagokat...");
 }
+#endif /* SZ2_SNIFFER */

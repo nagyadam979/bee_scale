@@ -75,6 +75,17 @@ NEM használt. Mindkét cél little-endian, azonos int-szélesség → bit-azono
   retry ugyanarra a seq-re (nem dob, nem pörög).
 - **Master power-save OFF:** `wifi_espnow_init()` → `esp_wifi_set_ps(WIFI_PS_NONE)` (kritikus a
   folyamatos vételhez).
+- **C3 ↔ classic ESP32 PHY-interop (a néma-bug fixe):** mindkét `wifi_espnow_init()` explicit
+  `esp_wifi_set_protocol(11b/g/n, LR nélkül)` + `esp_now_set_peer_rate_config(11b, 1M_L)` — enélkül
+  a frame fizikailag megérkezik, de a két chip eltérő default PHY-módja miatt az ESP-NOW nem
+  dolgozza fel (0 vétel). Részletek + diagnosztika (DIAG-számlálók, `-DSZ2_SNIFFER` promiscuous mód):
+  `meresi_setup.md` 7. szakasz.
+
+## Eredmény (padon mérve, 2026-06-28) — ✅ PASS
+
+received **1000/1000**, missing **0**, duplicate **0**, out_of_order **0**, dropped_queue **0**,
+crc_error **0**, ~878 csomag/s, RSSI −36 dBm, nincs lefagyás (`recv_cb=1000 ok=1000`). Részletes
+adatok + a néma-bug gyökéroka/fixe: `meresi_setup.md` 7. szakasz, `mereseredmenyek.csv`.
 
 ## Teszt menete (összefoglaló)
 

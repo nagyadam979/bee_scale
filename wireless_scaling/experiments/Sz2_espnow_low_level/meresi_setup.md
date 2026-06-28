@@ -149,3 +149,65 @@ A node logját a felhasználó a SAJÁT termináljában nézheti:
 > Ha `SZ2_TOTAL_PACKETS`-t a node-on átírod, a master `SZ2_EXPECT_TOTAL`-t is igazítsd
 > (a seq-bitmap felső korlátja); a master a payload `total_packets`-éből is tanulja a várt
 > db-ot, de a bitmap-méret fordítási konstans.
+
+---
+
+## 7. Mérési eredmény (2026-06-28, padon) — PASS
+
+ESP32-C3 SuperMini (node, `/dev/cu.usbmodem101`) + ESP-WROOM-32 (master, CP2102,
+`/dev/cu.usbserial-0001`), ~30 cm, csatorna 1. Szennyezésmentes one-shot (friss master, a node
+egyszer küld 1000-et):
+
+| Metrika | Érték |
+|---|---|
+| received / expected | **1000 / 1000** |
+| missing | **0** |
+| duplicate | **0** |
+| out_of_order | **0** |
+| dropped_queue | **0** |
+| crc_error | **0** |
+| recv_cb / ok (DIAG) | 1000 / 1000 |
+| elapsed / sebesség | 1138 ms / ~878 csomag/s |
+| RSSI | min −39 / avg −36 / max −35 dBm |
+| lefagyás | nincs |
+| **PASS_FAIL** | **PASS** |
+
+A node-log (a felhasználó termináljából): `elkuldve=1000, no_mem_retry=0, send_cb_timeout/egyeb=0,
+tx_status_fail=0` — a TX-fegyelem hibátlan (egy in-flight küldés, NO_MEM nem fordult elő).
+
+### A néma-bug és a fix (FONTOS tanulság)
+
+**Tünet:** a master egészségesen elindult, de **0 csomagot vett**, miközben a node hibátlanul
+küldött (a node-log szerint). A promiscuous sniffer (lásd lent) igazolta, hogy a node ESP-NOW
+frame-jei **fizikailag megérkeztek** a masterhez (~880/s, −35 dBm), de a normál ESP-NOW RX-réteg
+nem adta át őket a `recv_cb`-nek.
+
+**Gyökérok:** **PHY-ráta / protokoll-mód mismatch a C3 (RISC-V) és a classic ESP32 (Xtensa) között.**
+A két chip eltérő default PHY-módja miatt a vett frame-eket az ESP-NOW nem dolgozta fel (a frame
+fizikailag jött, de nem a „közös nyelven").
+
+**Fix (mindkét firmware `wifi_espnow_init`-jében, EGYEZŐEN):**
+- `esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B|11G|11N)` — a LR (long-range) bit explicit
+  kizárása (az LR-moduláció nem interoperábilis a sima 11b/g/n-nel → néma vétel).
+- `esp_now_set_peer_rate_config(broadcast, {phymode=WIFI_PHY_MODE_11B, rate=WIFI_PHY_RATE_1M_L})`
+  az `esp_now_add_peer` után — fix, legrobusztusabb közös ráta.
+
+### Diagnosztikai eszközök (a final firmware-ben benne maradtak)
+
+- **DIAG-számlálók a riportban:** `recv_cb` (hányszor adott át az esp_now), `ok` (feldolgozva),
+  `len_bad / ver_bad / crc_bad` — a néma eldobási utak láthatóvá tétele. Egészséges one-shotban
+  `recv_cb == ok == 1000`, a többi 0. (A számlálók GLOBÁLISAK → a tesztet **friss masterrel** indítsd.)
+- **Promiscuous sniffer (opcionális build):** a master `SZ2_SNIFFER` flaggel promiscuous módban
+  számolja az 1-es csatornán beérkező összes 802.11 frame-et, és külön az ESP-NOW vendor-action
+  frame-eket (OUI 18:fe:34) + a src MAC-et és RSSI-t. Ezzel dönthető el, hogy a frame **fizikailag
+  megérkezik-e** (radio/csatorna kontra ESP-NOW RX-réteg). Build:
+  `PLATFORMIO_BUILD_FLAGS=-DSZ2_SNIFFER pio run -t upload --upload-port <MASTER_PORT>`.
+
+### Eszköz-/környezeti korlát (rögzítve a jövőre)
+
+- A **C3 node USB-Serial-JTAG logja a fejlesztőgépen háttérből NEM olvasható megbízhatóan**
+  (reseteléskor a USB újra-enumerál; pyserial `dtr=False`-szal download módba is viheti). A node
+  logot a felhasználó a **saját termináljában** nézi (`pio device monitor`). A master (CP2102,
+  külső bridge) logja viszont háttérből is olvasható — a teszt kiértékelése ezen alapul.
+- A `pio device monitor` headless (átirányított stdout) elhasal (`termios … Operation not
+  supported`); a master automatizált olvasásához **pyserial** kell (a master CP2102-jén tiszta).

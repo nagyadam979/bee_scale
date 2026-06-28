@@ -137,6 +137,12 @@ static void wifi_espnow_init(void)
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_start());
+    /* Interop-hardening: explicit 11b/g/n protokoll, a LR (long-range) bit KIZÁRVA. Az
+     * Espressif-proprietary LR-moduláció NEM interoperábilis a sima 11b/g/n-nel -> ha az
+     * egyik chipen aktív lenne, a másik számára a frame fizikailag dekódolhatatlan = teljes
+     * vétel-némaság hibaüzenet nélkül (C3 <-> classic ESP32). Ezért explicit kizárjuk. */
+    ESP_ERROR_CHECK(esp_wifi_set_protocol(WIFI_IF_STA,
+        WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N));
     /* A csatornát a wifi START UTÁN kell beállítani (előtte felülíródna). */
     ESP_ERROR_CHECK(esp_wifi_set_channel(SZ2_CHANNEL, WIFI_SECOND_CHAN_NONE));
 
@@ -150,6 +156,16 @@ static void wifi_espnow_init(void)
     peer.ifidx   = WIFI_IF_STA;
     peer.encrypt = false;
     ESP_ERROR_CHECK(esp_now_add_peer(&peer));
+
+    /* Fix, legrobusztusabb ESP-NOW ráta (11b, 1 Mbps long-preamble) -> a C3 és a classic
+     * ESP32 garantáltan AZONOS rátán/modulációban beszél (PHY-mismatch ellen). add_peer UTÁN. */
+    esp_now_rate_config_t rc = {
+        .phymode = WIFI_PHY_MODE_11B,
+        .rate    = WIFI_PHY_RATE_1M_L,
+        .ersu    = false,
+        .dcm     = false,
+    };
+    ESP_ERROR_CHECK(esp_now_set_peer_rate_config(BROADCAST_MAC, &rc));
 }
 
 /*
