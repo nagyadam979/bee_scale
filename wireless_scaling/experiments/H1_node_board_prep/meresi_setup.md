@@ -111,8 +111,8 @@ trade-off — lásd README nyitott kérdés). A teljes-node pass a **H2**-vel k�
 
 1. **Még rajta a vörös power LED?** Ez önmagában nagyságrendet ronthat — szedd le, mérj újra.
 2. **HX711 valóban power-downban?** Ellenőrizd, hogy `PD_SCK` (GPIO5) tényleg MAGAS deep
-   sleep alatt (mérd meg DMM-mel a lábon). Ha nem, az RTC-hold nem fog — nézd meg a logot
-   (`RTC hold: PD_SCK ... megtartva`). Olcsó HX711-modulokon saját LED / szivárgó tápút lehet
+   sleep alatt (mérd meg DMM-mel a lábon). Ha nem, a GPIO-hold nem fog — nézd meg a logot
+   (`GPIO hold: PD_SCK(GPIO5) HIGH ... megtartva`). Olcsó HX711-modulokon saját LED / szivárgó tápút lehet
    (~120 µA) — ez a H2 tárgya, de itt is jelentkezik.
 3. **A board tényleg deep sleepben van?** A boot-log kiírta a `Deep sleepbe lepunk...`-ot?
    Ha folyamatosan újraindul, valami wakeup-forrás aktív vagy brown-out van (gyenge táp).
@@ -121,3 +121,29 @@ trade-off — lásd README nyitott kérdés). A teljes-node pass a **H2**-vel k�
    használt lábakat definiálja; ha sok minden lóg a boardon, az is szivároghat.
 6. **Maga az LDO nyugalmi árama** (LDO fent esetben) — hasonlítsd az „LDO megkerülve"
    sorhoz; ha az LDO a fő fogyasztó, az megkerülés melletti érv.
+7. **USB-Serial-JTAG pad** — a C3-on deep sleepben is bekapcsolva marad (~500–800 µA!), ha a
+   console a USB-JTAG-on van. A firmware ezt deep sleep előtt lekapcsolja
+   (`sleep_console_usj_pad_backup_and_disable()`). Ha mégis ~700 µA-t mérsz, ellenőrizd, hogy
+   a friss firmware van-e flashelve (lásd lent a naplót).
+
+---
+
+## 6. Mérési napló — 2026-06-28
+
+ESP32-C3 SuperMini, **3.3V a 3V3 lábra** adva (az on-board AMS1117 chip rajta), **HX711 modul nélkül**.
+
+| Lépés | Állapot | Áram | Megjegyzés |
+|---|---|---|---|
+| Eredeti fw, power-LED-del | USB-JTAG pad ébren | ~1 mA | a USB-JTAG nem volt lekapcsolva |
+| + power-LED ellenállás leszedve | USB-JTAG pad ébren | 731 µA | a LED ~270 µA-t vitt |
+| + USB-JTAG pad off (**fw fix**) | deep sleep, pad lekapcsolva | **~185 µA** | a USB-JTAG ~550 µA volt! |
+
+**Tanulságok:**
+- **A USB-Serial-JTAG pad volt a fő fogyasztó (~550 µA).** A firmware deep sleep előtt
+  lekapcsolja; a boot-log USB-n megmarad. (Commit `5a34a60`.)
+- **Maradék ~185 µA ≈ AMS1117 LDO (~100 µA) + GPIO/RTC.** Az LDO leszedése (a <50 µA „jó"-hoz)
+  **fejlesztés alatt felejtős**: az LDO állítja elő a 3.3V-ot az USB 5V-ból, leszedve **nincs
+  USB-flash**. Prodban dedikált boardokon áldozható be; addig a **~185 µA „elfogadható"** szint marad.
+- **Flashelés tartós deep sleepnél:** a board alvásban nem enumerál USB-n → nincs port.
+  Download mód kell: **BOOT gomb nyomva + USB ki/be (vagy reset)**, majd BOOT elengedése.
+  (Ciklikus méréshez `DEEP_SLEEP_WAKEUP_SEC` > 0 megkerüli, mert periodikusan ébred.)
