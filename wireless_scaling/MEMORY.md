@@ -1,7 +1,7 @@
 # bee_scale · wireless_scaling — Modul memória
 
 > Tartós alapdokumentum a node-ház (2. fázis) almodulhoz. Ez orientálja a jövőbeli munkamenetet: cél, döntések, geometria-állapot, nyitott kérdések. Frissítsd, amikor egy döntés megszületik vagy egy geometriai fázis lezárul. A **részletes napló a commit-történet** (mit/miért/mi-működött/mi-nem).
-> Utolsó frissítés: 2026-06-26 (HANDOFF.md alapján létrehozva; a geometria-állapot a 2026-06-23-i állapotot tükrözi)
+> Utolsó frissítés: 2026-06-26 (rendszerarchitektúra-szekció felvéve — lásd 7.; geometria-állapot a 2026-06-23-i állapotot tükrözi)
 
 > **Státusz:** a geometria **stabil és validált** — 2 nyomtatott part (`housing`, `bottom_lid`), 1-1 összefüggő solid. **Jelenleg senki nem dolgozik a modell geometriáján** — a következő geometriai munka KÜLÖN döntéssel indul. A modell forrása: `enclosure.py` (minden méret a fájl tetején, kommentált változó).
 
@@ -9,7 +9,7 @@
 
 ## 1. A modul egy mondatban
 
-A méhkaptár-mérleg **vezeték nélküli node** teljes fejlesztése — elektronika (firmware), kísérletek és a **3D nyomtatott ház**. Jelenleg a 3D ház (parametrikus, ~IP65, ASA, build123d; mérőcella + ESP32 + 18650 akku befogadása) a kész/aktív rész; a `firmware/` és `experiments/` még előttünk áll.
+A méhkaptár-mérleg **vezeték nélküli node** teljes fejlesztése — elektronika (firmware), kísérletek és a **3D nyomtatott ház**. Jelenleg a 3D ház (parametrikus, ~IP65, ASA, build123d; mérőcella + ESP32 + 18650 akku befogadása) a kész/aktív rész; a **rendszerarchitektúra papíron eldöntve** (lásd 7. szakasz), de a `firmware/` és `experiments/` kód még előttünk áll.
 
 ## 2. Kontextus és skála
 
@@ -49,7 +49,26 @@ A méhkaptár-mérleg **vezeték nélküli node** teljes fejlesztése — elektr
 
 ---
 
-## 7. Mappastruktúra és modul-fájlok
+## 7. Rendszerarchitektúra (firmware / elektronika) — papíron eldöntve
+
+> Részletes doksi + BOM-megjegyzések: `docs/new_base_components.md`. BOM-tábla: `docs/alkatreszek.csv`. **Kód még nincs** — ez a megegyezett terv, nem implementáció.
+
+- **Topológia:** master–slave csillag (több slave node/kaptár → 1 master). Kommunikáció **ESP-NOW** (slave→master), a master WiFi STA + ESP-NOW **azonos csatornán** (különben csomagvesztés; ez kész/tesztelt).
+- **Master vételi pipeline:** producer (ESP-NOW callback → `xQueueSendFromISR`, semmi más) / consumer (másik mag: időbélyegez, pufferel, felhőz). **Időbélyeg a masteré** (`rx_millis`+NTP); a slave-idő deep sleep alatt megbízhatatlan.
+- **Adatformátum:** fixed-size `payload_t` (`packed`): `unit_id, seq, weight, temp, vbat`. A `seq` adja a hiány/duplikátum-detektálást.
+- **Perzisztencia:** **SD ELHAGYVA.** Tömeg-puffer a master **PSRAM**-jában (~40 nap), reset-túlélést **AT24C256 EEPROM checkpoint** (32 KB = 256 kbit, slot-wear-leveling, node-onkénti utolsó `seq`+ts) + `seq`-gapdetektálás ad.
+- **Felhőzés:** MQTT QoS 1 / HTTPS, batch-elve, sikeres feltöltés után EEPROM checkpoint.
+- **Uplink:** **ZTE MF79U** 4G LTE WiFi stick (Yettel, B20/B8 vidéki sávok; opcionális TS-9 külső antenna). A master a stick **WiFi hotspotjára** csatlakozik STA-ként (nincs USB host gond). Load switch/MOSFET kapcsolja a stick 5V tápját (master GPIO).
+- **Master táp — 2 üzemmód (HW a szigorúbbra, SW flag dönt):** A) folyamatos táp (uplink mindig be); B) akku/napelem (napi 1 feltöltési ablak; a ~40 napos puffer fedezi).
+- **Boardok:** node = ESP32-C3 SuperMini (egymagos, deep sleep), master = **ESP32-S3-Zero** (2 MB PSRAM, kétmagos).
+
+**Nyitott architektúra-kérdések:**
+1. **MF79U firmware** tápra-felregisztrálása: tápot adva jön-e net beavatkozás nélkül? (Ha nem → HTTP POST a `192.168.x.1` admin végpontra, vagy „mindig bekapcsolva" üzem.) — éles darabon mérendő.
+2. **Master ESP nyugalmi fogyasztása** dominálja a táp-mérleget akkus esetben (mennyit alszik vs. ESP-NOW-ra figyel) — végigszámolandó.
+3. **HX711 táp:** tiszta, LDO-ról szűrt 3.3V kell (nem a süllyedő cellasín), különben a `weight` az akku töltöttségével driftel.
+4. **ESP-NOW kézbesítés:** app-ack (több ébrenlét) vs. tűzz-és-felejts + `seq`-gap (kevesebb fogyasztás) — kutatási idősornál a gap kezelhető. Eldöntendő.
+
+## 8. Mappastruktúra és modul-fájlok
 
 Részletes mappa-leírás + munkamódszer: `CLAUDE.md`.
 
