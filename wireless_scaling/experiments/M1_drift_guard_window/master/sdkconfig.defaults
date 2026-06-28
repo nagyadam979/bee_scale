@@ -1,0 +1,23 @@
+# M1 MASTER (drift-logger) — classic ESP-WROOM-32 · sdkconfig.defaults
+#
+# Cél: ESP-NOW beacon-vétel + a SAJÁT óra szerinti időbélyegzés és gép-grep-elhető log. A
+# WiFi/ESP-NOW-t a framework alapból tartalmazza. A WROOM-32-n NINCS USB-Serial-JTAG és NINCS
+# PSRAM — ezért az alap UART0 konzolt használjuk (a board USB-UART bridge-én), és NEM állítunk PSRAM-ot.
+
+# --- Konzol az alap UART0-n ---
+# A klasszikus WROOM-32-n nincs beépített USB-Serial-JTAG (szemben a C3-mal): a USB egy külső
+# bridge chipre (CP2102/CH340) megy, ami a UART0-ra (GPIO1 TX / GPIO3 RX) csatlakozik. Az IDF
+# default a classic ESP32-n eleve UART0 konzol -> NEM állítjuk át USB-JTAG-ra (az nem létezik
+# ezen a boardon). Így a log háttérből is olvasható.
+
+# --- Flash méret ---
+# A legtöbb WROOM-32 modul 4 MB flash. HA a darabod más (8/16 MB), állítsd át.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+# --- Soros log szint: INFO (M1RX / M1HB sorok). ---
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+
+# --- Boot gyorsítás: kevesebb bootloader-zaj. ---
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
+
+# NINCS PSRAM-config: a WROOM-32-n nincs PSRAM, a vételi queue a belső RAM-ban van.
