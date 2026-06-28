@@ -87,7 +87,28 @@ def main(argv):
         while True:  # KULSO ujracsatlakozasi hurok (a vegtelensegig)
             ser = None
             try:
-                ser = serial.Serial(args.port, args.baud, timeout=READ_TIMEOUT_S)
+                # No-auto-reset on open: a CP2102/CH340 a DTR/RTS vonalakon RESETELI a master
+                # ESP-t portnyitaskor (-> esp_timer 0-ra ugrik + ~1 s vetel-kieses + ROM-boot
+                # bináris zaj a logban). A portot NYITATLANUL hozzuk letre, a DTR/RTS-t False-ra
+                # (deasszertalt: EN magas, IO0 magas = normal futas, NINCS reset/download-mod),
+                # csak utana open(). Igy a master folyamatosan fut az ejszaka (monoton esp_timer).
+                ser = serial.Serial()
+                ser.port = args.port
+                ser.baudrate = args.baud
+                ser.timeout = READ_TIMEOUT_S
+                ser.dsrdtr = False
+                ser.rtscts = False
+                try:
+                    ser.dtr = False
+                    ser.rts = False
+                except (OSError, ValueError):
+                    pass  # nem minden platform engedi open elott; az open utani beallitas a lenti
+                ser.open()
+                try:
+                    ser.dtr = False
+                    ser.rts = False
+                except (OSError, ValueError):
+                    pass
                 msg = "# CONNECTED {} {}\n".format(now_iso(), args.port)
                 write_and_flush(fh, msg, do_fsync=True)
                 sys.stdout.write(msg)
