@@ -64,6 +64,33 @@
 /* ===================== HANGOLHATÓ PARAMÉTEREK ===================== */
 
 /*
+ * MÉRÉSI ÜZEMMÓD — a firmware fő kapcsolója.
+ *   H2_MEASURE_MODE == 0  -> DEEP-SLEEP mód (alap): a HX711-et power-downba teszi
+ *       (+ opc. excitation-probe), majd a node TARTÓS deep sleepbe megy. Ez méri az
+ *       (A) HX711 nyugalmi áramot és a (B) excitation-lekapcsolást (cella ~0 V alvásban).
+ *   H2_MEASURE_MODE == 1  -> AKTÍV-CIKLUS mód: az ESP ÉBREN marad (NINCS deep sleep, NINCS
+ *       USB-JTAG pad off -> a soros log végig él), és a HX711-et ciklikusan POWER-UP
+ *       (HX711_POWERUP_MS ideig aktív, excitation BE) és POWER-DOWN (HX711_POWERDOWN_MS
+ *       ideig) állapotba kapcsolja, a végtelenségig. CÉL: a teljes node-áramot (overall
+ *       fogyasztás) figyelve a powered-up ablakokban látszik, mennyit visz a HX711 modul
+ *       AKTÍVAN (a powered-up vs. power-down áram különbsége ~ a HX711 üzemi fogyasztása,
+ *       tipikusan ~1.5 mA). A node-áramot itt a szokásos táp-ágban (5V vagy 3V3) méred.
+ */
+#define H2_MEASURE_MODE         1
+
+/*
+ * AKTÍV-CIKLUS mód (H2_MEASURE_MODE == 1) ablakai. Az ESP ébren ezeket ismétli:
+ *   HX711_POWERUP_MS   : meddig legyen a HX711 POWER-UP (PD_SCK LOW, aktív) — leolvasható
+ *                        ablak a DMM-en (alapból 10 s).
+ *   HX711_POWERDOWN_MS : meddig legyen POWER-DOWN (PD_SCK HIGH) az egyes power-up ablakok
+ *                        közt (alapból 10 ms — ez a DMM-en NEM leolvasható, csak gyors
+ *                        átkapcsolás; ha a power-down áramot is le akarod olvasni, növeld
+ *                        ezt is több másodpercre).
+ */
+#define HX711_POWERUP_MS        10000   /* HX711 powered-up ablak (ms) */
+#define HX711_POWERDOWN_MS      10      /* HX711 power-down ablak (ms) */
+
+/*
  * Wakeup-periódus.
  *   DEEP_SLEEP_WAKEUP_SEC == 0  -> NINCS timer-wakeup: tartós (örök) deep sleep.
  *       Ez az ALAPÉRTELMEZÉS a tiszta nyugalmi áram / excitation-méréshez — a board addig
@@ -118,6 +145,7 @@
 
 static const char *TAG = "H2";
 
+#if H2_MEASURE_MODE == 0
 /*
  * A HX711-et power-downba teszi: PD_SCK GPIO-t MAGASra húzza.
  * A HX711 adatlapja szerint PD_SCK > 60 µs magas -> a chip power-downba megy, a chipen belüli
@@ -152,6 +180,7 @@ static void hx711_power_down(void)
     ESP_LOGI(TAG, "HX711 power-down: PD_SCK(GPIO%d)=HIGH, DOUT(GPIO%d)=input (excitation lekapcsol -> cella ~0 V)",
              HX711_PD_SCK_GPIO, HX711_DOUT_GPIO);
 }
+#endif /* H2_MEASURE_MODE == 0 */
 
 /*
  * A kék user LED-et biztosan kikapcsolja (a deep-sleep mérés alatt sötét).
@@ -178,6 +207,7 @@ static void user_led_off(void)
 #endif
 }
 
+#if H2_MEASURE_MODE == 0
 /*
  * Deep sleep alatt megőrzendő GPIO-szintek rögzítése (GPIO hold), hogy a HX711
  * PD_SCK MAGAS maradjon és a LED kikapcsolva — különben deep sleepben a digitális IO
@@ -237,6 +267,59 @@ static void excitation_probe(void)
     vTaskDelay(pdMS_TO_TICKS(EXCITATION_PROBE_MS));
 }
 #endif /* EXCITATION_PROBE_MS > 0 */
+#endif /* H2_MEASURE_MODE == 0 */
+
+#if H2_MEASURE_MODE == 1
+/*
+ * AKTÍV-CIKLUS: az ESP ÉBREN, a HX711-et a végtelenségig power-up / power-down ciklusban
+ * kapcsolja. A teljes node-áramot (overall fogyasztás) figyelve a HX711_POWERUP_MS hosszú
+ * powered-up ablakokban látszik a HX711 AKTÍV fogyasztása (a power-down ablakhoz képesti
+ * többlet ~ a HX711 üzemi árama, tipikusan ~1.5 mA).
+ *   - POWER-UP   : PD_SCK = LOW, órajel-impulzus NÉLKÜL -> a chip normál módban, az excitation
+ *                  BE; NEM olvasunk adatot (nem pulzálunk SCK-t), csak az aktív tápállapot kell.
+ *   - POWER-DOWN : PD_SCK = HIGH (> 60 µs) -> a chip power-downba megy, excitation lekapcsol.
+ * NINCS deep sleep és NINCS USB-JTAG pad off -> a soros log végig elérhető (monitorozható).
+ * A DOUT (GPIO6) végig input. Ez a függvény nem tér vissza.
+ */
+static void hx711_active_cycle(void)
+{
+    /* PD_SCK output, DOUT input — egyszer beállítva, a loop csak a szintet váltja. */
+    gpio_config_t pdsck_cfg = {
+        .pin_bit_mask = (1ULL << HX711_PD_SCK_GPIO),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&pdsck_cfg));
+
+    gpio_config_t dout_cfg = {
+        .pin_bit_mask = (1ULL << HX711_DOUT_GPIO),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&dout_cfg));
+
+    ESP_LOGI(TAG, "AKTIV-CIKLUS: HX711 power-up %d ms / power-down %d ms, az ESP EBREN marad. Merd az overall node-aramot.",
+             HX711_POWERUP_MS, HX711_POWERDOWN_MS);
+
+    while (1) {
+        /* POWER-UP: PD_SCK LOW -> HX711 aktiv, excitation BE. */
+        gpio_set_level(HX711_PD_SCK_GPIO, 0);
+        ESP_LOGI(TAG, "HX711 POWER-UP (PD_SCK(GPIO%d)=LOW) -> %d ms aktiv; ez a node-aram tetejen latszik.",
+                 HX711_PD_SCK_GPIO, HX711_POWERUP_MS);
+        vTaskDelay(pdMS_TO_TICKS(HX711_POWERUP_MS));
+
+        /* POWER-DOWN: PD_SCK HIGH > 60 µs -> HX711 power-down, excitation lekapcsol. */
+        gpio_set_level(HX711_PD_SCK_GPIO, 1);
+        ESP_LOGI(TAG, "HX711 POWER-DOWN (PD_SCK(GPIO%d)=HIGH) -> %d ms.",
+                 HX711_PD_SCK_GPIO, HX711_POWERDOWN_MS);
+        vTaskDelay(pdMS_TO_TICKS(HX711_POWERDOWN_MS));
+    }
+}
+#endif /* H2_MEASURE_MODE == 1 */
 
 void app_main(void)
 {
@@ -247,6 +330,12 @@ void app_main(void)
 
     /* 1) LED ki — semmi fény a mérés alatt. */
     user_led_off();
+
+#if H2_MEASURE_MODE == 1
+    /* AKTÍV-CIKLUS mód: az ESP ÉBREN marad, a HX711-et power-up/power-down ciklusban
+     * kapcsolja a végtelenségig; a függvény NEM tér vissza (a lenti deep-sleep út kimarad). */
+    hx711_active_cycle();
+#else
 
     /*
      * 1b) Opcionális excitation-probe: ha EXCITATION_PROBE_MS > 0, a power-down ELŐTT
@@ -306,4 +395,5 @@ void app_main(void)
 
     /* 7) Deep sleep — innen nincs visszatérés; wakeup esetén app_main() újraindul. */
     esp_deep_sleep_start();
+#endif /* H2_MEASURE_MODE */
 }

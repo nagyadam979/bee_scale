@@ -140,6 +140,30 @@ kivezetésére).
 
 ---
 
+## 4b. Kiegészítő mérés: HX711 AKTÍV (üzemi) fogyasztás — aktív-ciklus mód
+
+Az (A)/(B) a HX711 *nyugalmi* (power-down) oldalát méri. Ha a HX711 **aktív (powered-up)**
+üzemi fogyasztására vagy kíváncsi (mennyit visz a modul mérés közben), a firmware
+`H2_MEASURE_MODE = 1` (aktív-ciklus) módja erre való:
+
+- Az **ESP ÉBREN marad** (NINCS deep sleep, NINCS USB-JTAG pad off → a soros log végig él,
+  `pio device monitor`-ral nézhető), és a HX711-et a végtelenségig ciklusolja:
+  **`HX711_POWERUP_MS`** (alap 10 000 ms) powered-up (PD_SCK LOW, excitation BE) →
+  **`HX711_POWERDOWN_MS`** (alap 10 ms) power-down (PD_SCK HIGH).
+- **Mérés:** a **teljes node-áramot** (overall fogyasztás) figyeld a szokásos táp-ágban
+  (5V vagy 3V3). A powered-up ablakok idejére az áram megugrik; a **powered-up vs.
+  power-down szint különbsége ≈ a HX711 aktív üzemi árama** (tipikusan ~1–1.5 mA).
+- A 10 ms power-down ablak DMM-en **nem** olvasható le (csak gyors átkapcsolás). Ha a
+  power-down szintet is stabilan le akarod olvasni, növeld a `HX711_POWERDOWN_MS`-t
+  másodperces értékre, és fordíts/flashelj újra.
+- Flashelés: ha a board épp a deep-sleep módban (MODE 0) alszik, előbb download mód
+  (BOOT + USB ki/be). MODE 1-ben a board nem alszik → utána végig enumerál.
+
+> A `H2_MEASURE_MODE = 0` adja vissza az alap deep-sleep/excitation mérést (A + B).
+> A két mód KÜLÖN flasheléssel váltható (a paraméter a firmware tetején).
+
+---
+
 ## 5. Hibakeresés (sorrendben — a modulcsere a VÉGE, nem az eleje)
 
 1. **Áram 100+ µA ÉS a cellán nem 0 V → szinte biztos, hogy a `PD_SCK` nem marad magasan
