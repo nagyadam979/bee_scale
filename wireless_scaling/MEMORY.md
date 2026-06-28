@@ -1,7 +1,7 @@
 # bee_scale · wireless_scaling — Modul memória
 
 > Tartós alapdokumentum a node-ház (2. fázis) almodulhoz. Ez orientálja a jövőbeli munkamenetet: cél, döntések, geometria-állapot, nyitott kérdések. Frissítsd, amikor egy döntés megszületik vagy egy geometriai fázis lezárul. A **részletes napló a commit-történet** (mit/miért/mi-működött/mi-nem).
-> Utolsó frissítés: 2026-06-26 (rendszerarchitektúra-szekció felvéve — lásd 7.; geometria-állapot a 2026-06-23-i állapotot tükrözi)
+> Utolsó frissítés: 2026-06-28 (H1 chunk lefutott — node deep-sleep alapszám felvéve, lásd 8.; rendszerarchitektúra a 7.; geometria a 2026-06-23-i állapot)
 
 > **Státusz:** a geometria **stabil és validált** — 2 nyomtatott part (`housing`, `bottom_lid`), 1-1 összefüggő solid. **Jelenleg senki nem dolgozik a modell geometriáján** — a következő geometriai munka KÜLÖN döntéssel indul. A modell forrása: `enclosure.py` (minden méret a fájl tetején, kommentált változó).
 
@@ -68,12 +68,22 @@ A méhkaptár-mérleg **vezeték nélküli node** teljes fejlesztése — elektr
 3. **HX711 táp:** tiszta, LDO-ról szűrt 3.3V kell (nem a süllyedő cellasín), különben a `weight` az akku töltöttségével driftel.
 4. **ESP-NOW kézbesítés:** app-ack (több ébrenlét) vs. tűzz-és-felejts + `seq`-gap (kevesebb fogyasztás) — kutatási idősornál a gap kezelhető. Eldöntendő.
 
-## 8. Mappastruktúra és modul-fájlok
+## 8. Kísérleti eredmények / mérések (`experiments/`)
+
+> A validációs feladatbontás (setup-szintek + chunkok H1–H3 / Sz0–Sz5 / M1) és minden chunk implementációs specifikációja: `experiments/README.md` + chunkonkénti `README.md`. Részletes napló: commit-történet. **Firmware-stack: ESP-IDF**, **PlatformIO**-val fordítva/flashelve (`framework=espidf`, `board=esp32-c3-devkitm-1`, natív `main/` layout `src_dir=main`-nel; `idf.py`-vel is fordul). A `pio` a `~/.platformio/penv/bin/`-ben.
+
+**H1 — node deep-sleep áram (ESP32-C3 SuperMini) — a node-energiamérleg ALAPSZÁMA:**
+- **Elért ~185 µA** (3.3V a 3V3 lábra, power-LED leszedve, HX711 modul nélkül). Státusz: *elfogadható* (<200 µA), de NEM *jó* (<50 µA).
+- **A fő fogyasztó a USB-Serial-JTAG pad volt (~550 µA)** → a firmware deep sleep előtt lekapcsolja (`sleep_console_usj_pad_backup_and_disable()`); a boot-log USB-n megmarad. (731 µA → 185 µA.)
+- **Maradék ~185 µA ≈ AMS1117 on-board LDO (~100 µA) + GPIO/RTC.** A *jó* (<50 µA) szint az LDO leszedését igényli, ami **fejlesztés alatt felejtős** (az LDO adja a 3.3V-ot az USB 5V-ból → leszedve nincs USB-flash). **Döntés: prodra halasztva** (~3 dedikált board beáldozva).
+- **HX711 pin-terv (H1 firmware):** SCK=GPIO5, DT(DOUT)=GPIO6. A deep-sleep GPIO-hold a C3-on `gpio_hold_en` (nincs RTCIO). Flashelés tartós deep sleepnél: **BOOT+reset** (a board alvásban nem enumerál USB-n).
+
+## 9. Mappastruktúra és modul-fájlok
 
 Részletes mappa-leírás + munkamódszer: `CLAUDE.md`.
 
 - **`enclosure/`** — 3D modellezés: `enclosure.py` (fő build123d modell, méretek a tetején) + `validate.py`/`preview.py`/`_zsection.py` (validáló + vizuális ellenőrző eszközök) + `datasheets/cell_SC902/` (mérőcella-adatlapok) + `export/` (generált STL/STEP/PNG) + `requirements.txt`.
-- **`experiments/`** — node-kísérletek (jelenleg üres — ide jönnek a HW-próbák, mérések).
+- **`experiments/`** — node-kísérletek: a validációs chunk-struktúra (H1–H3 / Sz0–Sz5 / M1, lásd `experiments/README.md`). **H1 kész** (deep-sleep áram), a többi chunk README-spec.
 - **`firmware/`** — a node-firmware (jelenleg üres — ide a kiérlelt kód).
 - **`docs/`** — `new_base_components.md` (alkatrész-méretek) + `alkatreszek.csv` (BOM: alkatrész / funkció / ár / node–master darab).
 - **`agents/enclosure-builder.md`** — a geom. iterációt izolált kontextusban futtató al-ágens.
