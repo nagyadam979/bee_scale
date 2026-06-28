@@ -50,6 +50,8 @@
 #include "esp_log.h"
 #include "driver/gpio.h"
 #include "esp_rom_sys.h"   /* esp_rom_delay_us() — explicit include kell (esp_rom komponens) */
+#include "soc/soc_caps.h"           /* SOC_USB_SERIAL_JTAG_SUPPORTED */
+#include "esp_private/sleep_console.h" /* sleep_console_usj_pad_backup_and_disable() */
 
 /* ===================== HANGOLHATÓ PARAMÉTEREK ===================== */
 
@@ -209,10 +211,23 @@ void app_main(void)
 #endif
 
     ESP_LOGI(TAG, "Deep sleepbe lepunk. Mostantol a multimeter a nyugalmi aramot mutatja.");
-    /* A log kiürítése, mielőtt elalszunk (különben a soros buffer félbevág). */
+    ESP_LOGI(TAG, "(USB-Serial-JTAG pad mindjart lekapcsol -> innentol nincs USB-log.)");
+    /* A log kiürítése, MIELŐTT a USB-pad lekapcsol (különben az utolsó sorok elvesznek). */
     fflush(stdout);
     esp_rom_delay_us(20000);   /* ~20 ms a soros kiírás befejezésére */
 
-    /* 6) Deep sleep — innen nincs visszatérés; wakeup esetén app_main() újraindul. */
+    /*
+     * 6) USB-Serial-JTAG pad LEKAPCSOLÁSA deep sleephez.
+     *    KRITIKUS a fogyasztásra: a C3-on a USJ pad/USB-PHY deep sleepben is bekapcsolva
+     *    marad (~500–800 µA!), és az IDF ezt CSAK light sleepnél kapcsolja le automatikusan,
+     *    deep sleepnél NEM. Mivel a console-t a natív USB-Serial-JTAG-ra állítottuk (boot-log
+     *    USB-n), ez tartotta ébren a padot -> ez a mért ~731 µA fő oka. Itt explicit lekapcsoljuk.
+     *    (Reset-ből ébredünk deep sleep után, ezért a pad-restore nem szükséges.)
+     */
+#if SOC_USB_SERIAL_JTAG_SUPPORTED
+    sleep_console_usj_pad_backup_and_disable();
+#endif
+
+    /* 7) Deep sleep — innen nincs visszatérés; wakeup esetén app_main() újraindul. */
     esp_deep_sleep_start();
 }
