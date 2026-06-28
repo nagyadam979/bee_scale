@@ -192,19 +192,29 @@ Az (A)/(B) a HX711 *nyugalmi* (power-down) oldalát méri. Ha a HX711 **aktív (
 > Ide a tényleges mérés napján írd be a setupot és az eredményt (modul, PD_SCK ellenőrzés,
 > (A) áram, (B) excitation ébren/alvásban, pass/fail). A számokat a `mereseredmenyek.csv`-be is.
 
-### YYYY-MM-DD — (kitöltendő)
+### 2026-06-28 — aktív-ciklus mérés (MODE 1)
 
-ESP32-C3 SuperMini, **3.3V a 3V3 lábra**, HX711-M modul + load cell (HBS-SCL-50) bekötve.
+ESP32-C3 SuperMini, HX711-M (olcsó breakout) + load cell (HBS-SCL-50) bekötve. Mérés a node
+**overall áramában**, a HX711 tápjának le-/felvételével (differenciál). Először 10 s / 10 ms
+ciklus (a power-down nem látszott — a 0,1% duty miatt a DMM átlagolta), majd **szimmetrikus
+10 s / 10 s** ciklus → a leesés tisztán látszik.
 
 | Lépés | Mérés | Érték | Megjegyzés |
 |---|---|---|---|
-| PD_SCK (GPIO5) alvásban | DMM V a lábon | _(HIGH? ~3.3 V?)_ | a log kiírta a GPIO-hold sort? |
-| (A) HX711 nyugalmi áram | DMM µA, VCC ág sorban | _(µA)_ | < ~5 µA = jó |
-| (B) excitation ÉBREN | DMM V, E+/E− | _(V)_ | > 0 V várt (3.3 V-on ~2–3 V) |
-| (B) excitation ALVÁSBAN | DMM V, E+/E− | _(V)_ | ~0 V = lekapcsol = PASS |
-| **Összesítés** | pass/fail | _(pass csak ha mind3)_ | áram < ~5 µA + excitation ~0 V + nincs LED |
+| HX711+cella AKTÍV (PD_SCK LOW, powered-up) | overall áram / HX711-táp diff | **~5 mA** | a HX711 + load cell híd üzemi árama |
+| HX711 POWER-DOWN (PD_SCK HIGH) | overall áram | **~0-ra esik** | a lekapcsolás IGAZOLVA aktív ESP mellett is |
+| HX711 nyugalmi (deep-sleep, MODE 0, korábbi (A)) | overall node-áram | nincs észlelhető növekedés | a power-down áram elhanyagolható (< pár µA) |
+| (B) excitation E+/E− [V] | — | (V-ben külön nem mérve) | közvetve igazolt: power-down ~0 mA → a híd nem kap gerjesztést |
+| **Összesítés** | pass/fail | **PASS** | power-down ~0, nyugalmi elhanyagolható, nincs LED/szivárgás |
 
-**Tanulságok:** _(kitöltendő — mi működött, mi nem; pl. kellett-e PD_SCK felhúzó, modulcsere)_
+**Tanulságok:**
+- A HX711 power-down (PD_SCK=HIGH) rendesen **~0-ra viszi** a modul+cella áramát — aktív ESP
+  mellett is. A „nem kapcsol le" kezdeti észlelés a **10 ms / 10 s duty cycle műterméke** volt
+  (a DMM a 0,1%-os power-down ablakot átlagolta); szimmetrikus 10 s / 10 s ciklusban már tiszta.
+- A HX711+cella **aktív árama ~5 mA** — ennyit kell a node-nak adnia a tényleges méréskor;
+  deep sleepben gyakorlatilag 0. A modulon nincs LED / szivárgó tápút (egybevág a kutatással).
+- Az excitation feszültséget V-ben külön nem mértük; a power-down ~0 mA híd-áram közvetve
+  igazolja, hogy a gerjesztés lekapcsol. (Ha explicit V-kontroll kell: MODE 0 + EXCITATION_PROBE_MS.)
 
 ---
 

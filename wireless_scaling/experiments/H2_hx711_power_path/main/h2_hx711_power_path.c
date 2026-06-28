@@ -88,7 +88,9 @@
  *                        ezt is több másodpercre).
  */
 #define HX711_POWERUP_MS        10000   /* HX711 powered-up ablak (ms) */
-#define HX711_POWERDOWN_MS      10      /* HX711 power-down ablak (ms) */
+#define HX711_POWERDOWN_MS      10000   /* HX711 power-down ablak (ms) — szimmetrikus, hogy a
+                                         * DMM-en a leesés is jól látszódjon (10 ms-nál a ~0.1%
+                                         * duty miatt a power-down láthatatlan volt) */
 
 /*
  * Wakeup-periódus.
