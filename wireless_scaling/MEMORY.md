@@ -1,7 +1,7 @@
 # bee_scale · wireless_scaling — Modul memória
 
 > Tartós alapdokumentum a node-ház (2. fázis) almodulhoz. Ez orientálja a jövőbeli munkamenetet: cél, döntések, geometria-állapot, nyitott kérdések. Frissítsd, amikor egy döntés megszületik vagy egy geometriai fázis lezárul. A **részletes napló a commit-történet** (mit/miért/mi-működött/mi-nem).
-> Utolsó frissítés: 2026-06-28 (H1 chunk lefutott — node deep-sleep alapszám felvéve, lásd 8.; rendszerarchitektúra a 7.; geometria a 2026-06-23-i állapot)
+> Utolsó frissítés: 2026-06-28 (H1 + H2 chunk lefutott — node deep-sleep alapszám + HX711 power-path, lásd 8.; rendszerarchitektúra a 7.; geometria a 2026-06-23-i állapot)
 
 > **Státusz:** a geometria **stabil és validált** — 2 nyomtatott part (`housing`, `bottom_lid`), 1-1 összefüggő solid. **Jelenleg senki nem dolgozik a modell geometriáján** — a következő geometriai munka KÜLÖN döntéssel indul. A modell forrása: `enclosure.py` (minden méret a fájl tetején, kommentált változó).
 
@@ -78,12 +78,18 @@ A méhkaptár-mérleg **vezeték nélküli node** teljes fejlesztése — elektr
 - **Maradék ~185 µA ≈ AMS1117 on-board LDO (~100 µA) + GPIO/RTC.** A *jó* (<50 µA) szint az LDO leszedését igényli, ami **fejlesztés alatt felejtős** (az LDO adja a 3.3V-ot az USB 5V-ból → leszedve nincs USB-flash). **Döntés: prodra halasztva** (~3 dedikált board beáldozva).
 - **HX711 pin-terv (H1 firmware):** SCK=GPIO5, DT(DOUT)=GPIO6. A deep-sleep GPIO-hold a C3-on `gpio_hold_en` (nincs RTCIO). Flashelés tartós deep sleepnél: **BOOT+reset** (a board alvásban nem enumerál USB-n).
 
+**H2 — HX711 power-path (excitation-lekapcsolás) — KÉSZ, PASS (2026-06-28):**
+- **HX711 power-down (PD_SCK=HIGH) ténylegesen lekapcsol:** a modul+cella árama **~0-ra esik**, és a deep-sleep (nyugalmi) áram az overall node-fogyasztásban **nem okoz észlelhető növekedést → elhanyagolható** (< pár µA). A modulon nincs LED / szivárgó tápút (egybevág a webes kutatással: olcsó zöld/piros HX711 breakout-on nincs LED, nincs külön LDO; az E+ gerjesztést a chip belső AVDD-regulátora adja, ami power-downban leáll).
+- **HX711+cella AKTÍV (powered-up) árama ~5 mA** (HX711 ~1.5 mA + load cell híd ~3.3 mA @ 3.3V) — ennyit kell a node-nak adnia a tényleges mérés idejére; deep sleepben ~0.
+- A firmware **két üzemmódot** tud (`H2_MEASURE_MODE`): 0 = deep-sleep/excitation mérés (+ `EXCITATION_PROBE_MS` az „ébren" excitation V-kontrollhoz), 1 = **aktív-ciklus** (ESP ébren, HX711 ciklikus power-up/down az üzemi fogyasztás kiméréséhez). **A forrás default-ja jelenleg MODE 1** (10 s/10 s). A pin-terv és a USB-JTAG-fix/GPIO-hold a H1-ből.
+- **Tanulság (zsákutca):** a 10 s/10 ms ciklusnál a power-down „nem látszott lekapcsolni" — a 0,1% duty miatt a DMM átlagolta; **szimmetrikus 10 s/10 s** ciklusban tiszta a leesés. Az excitation explicit V-mérése nem futott, a ~0 mA híd-áram közvetve igazolja.
+
 ## 9. Mappastruktúra és modul-fájlok
 
 Részletes mappa-leírás + munkamódszer: `CLAUDE.md`.
 
 - **`enclosure/`** — 3D modellezés: `enclosure.py` (fő build123d modell, méretek a tetején) + `validate.py`/`preview.py`/`_zsection.py` (validáló + vizuális ellenőrző eszközök) + `datasheets/cell_SC902/` (mérőcella-adatlapok) + `export/` (generált STL/STEP/PNG) + `requirements.txt`.
-- **`experiments/`** — node-kísérletek: a validációs chunk-struktúra (H1–H3 / Sz0–Sz5 / M1, lásd `experiments/README.md`). **H1 kész** (deep-sleep áram), a többi chunk README-spec.
+- **`experiments/`** — node-kísérletek: a validációs chunk-struktúra (H1–H3 / Sz0–Sz5 / M1, lásd `experiments/README.md`). **H1 kész** (deep-sleep áram), **H2 kész** (HX711 power-path), a többi chunk README-spec.
 - **`firmware/`** — a node-firmware (jelenleg üres — ide a kiérlelt kód).
 - **`docs/`** — `new_base_components.md` (alkatrész-méretek) + `alkatreszek.csv` (BOM: alkatrész / funkció / ár / node–master darab).
 - **`agents/enclosure-builder.md`** — a geom. iterációt izolált kontextusban futtató al-ágens.
