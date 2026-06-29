@@ -82,7 +82,7 @@
  *   ZS-042 modul EGY I2C buszon (modul 3,3V-ról):
  *     DS3231  @0x68  (±2 ppm hőkompenzált referencia + saját hőszenzor ±0,25°C)
  *     AT24C32 @0x57  (4 KB = 32 kbit, perzisztens — túléli a tápelvételt)
- *     I2C pinek: SDA = GPIO3, SCL = GPIO10  (NEM 5/6=HX711, NEM 18/19=USB, NEM 20/21=UART,
+ *     I2C pinek: SDA = GPIO4, SCL = GPIO3  (NEM 5/6=HX711, NEM 18/19=USB, NEM 20/21=UART,
  *                NEM 2/8/9=strapping). 400 kHz.
  *
  *   Táp: power bank a SuperMini USB-C-jén -> on-board LDO -> 3,3V.
@@ -181,8 +181,8 @@
 
 /* --- I2C busz / eszközcímek --- */
 #define M1B_I2C_PORT            (-1)            /* -1 = auto port-választás (IDF 5.5) */
-#define M1B_I2C_SDA_GPIO        GPIO_NUM_3
-#define M1B_I2C_SCL_GPIO        GPIO_NUM_10
+#define M1B_I2C_SDA_GPIO        GPIO_NUM_4   /* ZS-042 SDA — éles bekötés (felhasználó igazolta) */
+#define M1B_I2C_SCL_GPIO        GPIO_NUM_3   /* ZS-042 SCL — éles bekötés (felhasználó igazolta) */
 #define M1B_I2C_FREQ_HZ         400000
 #define M1B_I2C_TIMEOUT_MS      100
 #define DS3231_ADDR             0x68
