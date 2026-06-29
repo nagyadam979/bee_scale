@@ -1,0 +1,21 @@
+# M1b NODE (standalone hő-drift) — ESP32-C3 SuperMini · sdkconfig.defaults
+#
+# Cél: deep-sleep ciklusban DS3231 + AT24C32 (I2C) + HX711 (bit-bang) mérés, EEPROM-log.
+# NINCS rádió. Itt csak a konzolt, flash-méretet és a log-szintet rögzítjük; a target-
+# specifikus default-okat (esp32c3) a build hozza.
+
+# --- Konzol a natív USB-Serial-JTAG-on ---
+# Az ESP32-C3 SuperMini-nek NINCS külön USB-UART bridge chipje: a USB-C közvetlenül a C3
+# beépített USB-Serial-JTAG-jára megy. A dump-mód EZEN a konzolon írja ki a logot.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# --- Flash méret ---
+# A board-def (esp32-c3-devkitm-1) 4 MB-ot vár; az IDF default 2 MB -> méret-eltérés warning.
+# A legtöbb ESP32-C3 SuperMini 4 MB. HA a darabod más (1/2 MB), állítsd át.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+# --- Soros log szint: INFO (ébredésenkénti rövid mérés-sor + a dump). ---
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+
+# --- Boot gyorsítás: kevesebb bootloader-zaj (deep-sleep ciklusban gyakori reboot). ---
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
