@@ -1,7 +1,7 @@
 # bee_scale · wireless_scaling — Modul memória
 
 > Tartós alapdokumentum a node-ház (2. fázis) almodulhoz. Ez orientálja a jövőbeli munkamenetet: cél, döntések, geometria-állapot, nyitott kérdések. Frissítsd, amikor egy döntés megszületik vagy egy geometriai fázis lezárul. A **részletes napló a commit-történet** (mit/miért/mi-működött/mi-nem).
-> Utolsó frissítés: 2026-06-28 (H1 + H2 chunk lefutott — node deep-sleep alapszám + HX711 power-path, lásd 8.; rendszerarchitektúra a 7.; geometria a 2026-06-23-i állapot)
+> Utolsó frissítés: 2026-06-29 (M1 chunk lefutott — node deep-sleep óra-drift mérve, lásd 8.; korábban H1 + H2 + Sz2; rendszerarchitektúra a 7.; geometria a 2026-06-23-i állapot)
 
 > **Státusz:** a geometria **stabil és validált** — 2 nyomtatott part (`housing`, `bottom_lid`), 1-1 összefüggő solid. **Jelenleg senki nem dolgozik a modell geometriáján** — a következő geometriai munka KÜLÖN döntéssel indul. A modell forrása: `enclosure.py` (minden méret a fájl tetején, kommentált változó).
 
@@ -84,12 +84,19 @@ A méhkaptár-mérleg **vezeték nélküli node** teljes fejlesztése — elektr
 - A firmware **két üzemmódot** tud (`H2_MEASURE_MODE`): 0 = deep-sleep/excitation mérés (+ `EXCITATION_PROBE_MS` az „ébren" excitation V-kontrollhoz), 1 = **aktív-ciklus** (ESP ébren, HX711 ciklikus power-up/down az üzemi fogyasztás kiméréséhez). **A forrás default-ja jelenleg MODE 1** (10 s/10 s). A pin-terv és a USB-JTAG-fix/GPIO-hold a H1-ből.
 - **Tanulság (zsákutca):** a 10 s/10 ms ciklusnál a power-down „nem látszott lekapcsolni" — a 0,1% duty miatt a DMM átlagolta; **szimmetrikus 10 s/10 s** ciklusban tiszta a leesés. Az excitation explicit V-mérése nem futott, a ~0 mA híd-áram közvetve igazolja.
 
+**M1 — node deep-sleep óra-drift (ESP32-C3 belső RC slow-clock) — KÉSZ, mérve (2026-06-29):**
+- **Nyers drift (master-referencia, ~6 órás szobahős futás): +0,60% (+6005 ppm, +21,6 s/óra), R²=1,000000.** A master `esp_timer` kereszt-ellenőrzés +0,603% — egyezik. **Tiszta RC alvás-drift** (a ~93 ms/ciklus awake/boot overhead = ~3085 ppm leválasztva): **+0,29% (+2920 ppm).** A kutatás jósolta 0,5–5% sáv alsó vége — szobahőn ez várható.
+- **Hőfüggés NEM jellemezhető** ebből a futásból (a C3 belső die-hő csak 23,8–28,8 °C közt mozgott, R²=0,019; beltéri stabil hő). Tág hő-ingás (kaptár/kültér, nappal-éjjel) kell hozzá. A C3 SuperMini-n nincs külső 32k kristály → a drift kompenzálatlan, és **deep sleep alatt nincs RC-újrakalibráció** (a hő-drift menet közben kompenzálatlan; lásd a kutatás ~1000 ppm/°C becslését).
+- **Guard-window (Sz4-nek):** `guard_s(N) = |drift|·N·T + margin` (margin = 3× residual-szórás ≈ 0,34 s). N=10 → ~2 s, N=60 → ~11 s, **N=1440 (12 h @ 30 s) → ~260 s.**
+- **Setup:** tűzz-és-felejts beacon — **NINCS Sz3 ACK/slot** (a README azt írta elő, de a master-időbélyeg úgyis a referencia → kivágva). Node deep-sleepből 30 s-onként 1 ESP-NOW broadcast (RTC_DATA_ATTR-megőrzött **abszolút** cycle# + boot_id), ébredésenként 3× redundancia. **A Sz2 PHY-fix** (`set_protocol` LR-nélkül + `esp_now_set_peer_rate_config` 11b/1M_L mindkét oldalon + master PS_NONE) **és a H1 deep-sleep minta** (USB-JTAG-pad lekapcsolás, `gpio_hold`) **újrahasználva.** Offline Python host- ÉS master-referencián illeszt (`m1_drift_analyze.py` + `m1_to_json.py` → CSV + JSON; `log.txt` a nyers log).
+- **ANOMÁLIA — 87,9% csomagvesztés (88/726 cycle):** erős RSSI (átlag −30 dBm) mellett sok többperces blackout (max ~34 perc; 0 logger-reconnect → RF/ESP-NOW-RX szintű, nem USB). **A driftet NEM rontja** (abszolút cycle# → a regresszió a meglévő pontokra illeszt, R²=1,0). Ez a **worst-case** setup (C3↔classic-ESP32, ideiglenes pad, másik szoba). **Az adatvesztés-kivizsgálás a VÉGLEGES hardverrel (ESP32-S3-Zero master) külön, Sz2/Sz3 alatt — NEM az M1 scope-ja.**
+
 ## 9. Mappastruktúra és modul-fájlok
 
 Részletes mappa-leírás + munkamódszer: `CLAUDE.md`.
 
 - **`enclosure/`** — 3D modellezés: `enclosure.py` (fő build123d modell, méretek a tetején) + `validate.py`/`preview.py`/`_zsection.py` (validáló + vizuális ellenőrző eszközök) + `datasheets/cell_SC902/` (mérőcella-adatlapok) + `export/` (generált STL/STEP/PNG) + `requirements.txt`.
-- **`experiments/`** — node-kísérletek: a validációs chunk-struktúra (H1–H3 / Sz0–Sz5 / M1, lásd `experiments/README.md`). **H1 kész** (deep-sleep áram), **H2 kész** (HX711 power-path), a többi chunk README-spec.
+- **`experiments/`** — node-kísérletek: a validációs chunk-struktúra (H1–H3 / Sz0–Sz5 / M1, lásd `experiments/README.md`). **H1 kész** (deep-sleep áram), **H2 kész** (HX711 power-path), **Sz2 kész** (ESP-NOW alacsony szint, 1000/1000 padon), **M1 kész** (node óra-drift mérve), a többi chunk README-spec.
 - **`firmware/`** — a node-firmware (jelenleg üres — ide a kiérlelt kód).
 - **`docs/`** — `new_base_components.md` (alkatrész-méretek) + `alkatreszek.csv` (BOM: alkatrész / funkció / ár / node–master darab).
 - **`agents/enclosure-builder.md`** — a geom. iterációt izolált kontextusban futtató al-ágens.
