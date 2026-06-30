@@ -58,13 +58,17 @@
  *       period_s   = a névleges ébredési periódus T (M1B_WAKE_PERIOD_SEC)
  *       start_unix = az ELSŐ rekord ds_unix-e (mérés-kezdet epoch-másodperc)
  *   Rekordonként (PONTOSAN egy sor):
- *     M1B idx=%u cycle=%u ds_unix=%lld ds_c=%.2f die_c=%.2f hx=%ld
- *       idx     = EEPROM-rekordindex (0-tól)
- *       cycle   = C3 RTC deep-sleep ébredés-számláló az adott rekordhoz
- *       ds_unix = DS3231 epoch-másodperc (%lld = int64_t)
- *       ds_c    = DS3231 hőszenzor °C (%.2f; hiba -> nan)
- *       die_c   = C3 belső die-hő °C (%.2f; hiba -> nan)
- *       hx      = HX711 nyers előjeles 24-bit, int32-re kiterjesztve (%ld)
+ *     M1B idx=%u cycle=%u ds_unix=%lld ds_c=%.2f die_c=%.2f hx=%ld awake_ms=%u
+ *       idx      = EEPROM-rekordindex (0-tól)
+ *       cycle    = C3 RTC deep-sleep ébredés-számláló az adott rekordhoz
+ *       ds_unix  = DS3231 epoch-másodperc (%lld = int64_t)
+ *       ds_c     = DS3231 hőszenzor °C (%.2f; hiba -> nan)
+ *       die_c    = C3 belső die-hő °C (%.2f; hiba -> nan)
+ *       hx       = HX711 nyers előjeles 24-bit, int32-re kiterjesztve (%ld)
+ *       awake_ms = az ÉBREN töltött mérés-idő (boot -> a rekord-szerializálásig, esp_timer ms).
+ *                  KRITIKUS a drift-pontossághoz: a ds_unix-különbség minden ciklusban
+ *                  = awake + period×(1+drift); a Python ezt LEVONJA, hogy a tiszta ALVÁS-
+ *                  drift maradjon (különben a ~1,4 s awake 60 s periódusnál ~2,3% műdriftet ad).
  *   A printf-formátumok PONTOSAK. nan-t a "%.2f" newlib-en "nan"-ként ír — OK.
  *
  * ============================================================================
@@ -108,14 +112,15 @@
  *   Memória-térkép:
  *     0x0000: HEADER (8 B):  magic u32 (LE)  + write_index u16 (LE) + 2 B tartalék
  *     0x0010: az 1. rekord (REC_BASE = 16; szépen igazítva, nem lóg a header lapjára)
- *   Rekord (M1B_REC_SIZE = 14 B), little-endian:
+ *   Rekord (M1B_REC_SIZE = 16 B), little-endian:
  *     off 0 : cycle    u16
  *     off 2 : ds_unix  u32   (epoch-másodperc; 2106-ig elég)
  *     off 6 : ds_c_q   i16   (0,25°C-egység: °C * 4)
  *     off 8 : die_c_q  i16   (0,25°C-egység: °C * 4)  — NAN esetén M1B_TEMP_Q_NAN szentinel
  *     off 10: hx       i32   (HX711 nyers előjeles 24-bit, 32-re kiterjesztve)
- *   Kapacitás: (4096 - REC_BASE) / 14 = (4096-16)/14 = 291 rekord.
- *     -> ~291 rekord; T=60 s mellett ~4,85 óra; T=300 s mellett ~24 óra. (Lásd M1B_MAX_RECORDS.)
+ *     off 14: awake_ms u16   (ÉBREN-idő ms; a drift awake-korrekciójához — lásd a kontraktust)
+ *   Kapacitás: (4096 - REC_BASE) / 16 = (4096-16)/16 = 255 rekord.
+ *     -> ~255 rekord; T=60 s mellett ~4,25 óra; T=300 s mellett ~21 óra. (Lásd M1B_MAX_RECORDS.)
  *   A %.2f dumpnál a q-értékből q/4.0 a float; a szentinel -> NAN.
  *
  * ============================================================================
@@ -207,8 +212,8 @@
 #define M1B_EE_MAGIC            0xB0EE5A1Eu      /* fejléc érvényesség-jel */
 #define M1B_HDR_ADDR            0x0000
 #define M1B_REC_BASE            16               /* az 1. rekord címe (a header után, lap-igazítva) */
-#define M1B_REC_SIZE            14
-#define M1B_MAX_RECORDS         ((AT24C32_TOTAL_BYTES - M1B_REC_BASE) / M1B_REC_SIZE)  /* = 291 */
+#define M1B_REC_SIZE            16               /* cycle2 + ds_unix4 + ds_c2 + die_c2 + hx4 + awake2 */
+#define M1B_MAX_RECORDS         ((AT24C32_TOTAL_BYTES - M1B_REC_BASE) / M1B_REC_SIZE)  /* = 255 */
 
 /* die_c/ds_c kvantálás: 0,25°C-egység (q = round(°C * 4)). NAN szentinel: i16 min. */
 #define M1B_TEMP_Q_NAN          ((int16_t)0x8000)
@@ -234,6 +239,7 @@ typedef struct {
     float    ds_c;        /* DS3231 hő °C (NAN = hiba) */
     float    die_c;       /* C3 die-hő °C (NAN = hiba) */
     int32_t  hx;          /* HX711 nyers */
+    uint16_t awake_ms;    /* ÉBREN-idő (boot -> rekord-szerializálás) ms; drift awake-korrekcióhoz */
 } m1b_sample_t;
 
 /* ===================== I2C alap ===================== */
@@ -466,15 +472,16 @@ static float q_to_temp(int16_t q)
     return (float)q / 4.0f;
 }
 
-/* Rekord szerializálás (14 B, LE) + EEPROM-ba az idx helyére. */
+/* Rekord szerializálás (16 B, LE) + EEPROM-ba az idx helyére. */
 static esp_err_t ee_write_record(uint16_t idx, const m1b_sample_t *s)
 {
     uint8_t r[M1B_REC_SIZE];
-    uint16_t cyc = (uint16_t)s->cycle;                         /* u16 (291 < 65535: bőven elég) */
+    uint16_t cyc = (uint16_t)s->cycle;                         /* u16 (255 < 65535: bőven elég) */
     uint32_t du  = (s->ds_unix < 0) ? 0u : (uint32_t)s->ds_unix;
     int16_t  dsq = temp_to_q(s->ds_c);
     int16_t  diq = temp_to_q(s->die_c);
     uint32_t hx  = (uint32_t)s->hx;
+    uint16_t aw  = s->awake_ms;
 
     r[0]  = (uint8_t)(cyc & 0xFF);
     r[1]  = (uint8_t)((cyc >> 8) & 0xFF);
@@ -490,6 +497,8 @@ static esp_err_t ee_write_record(uint16_t idx, const m1b_sample_t *s)
     r[11] = (uint8_t)((hx >> 8) & 0xFF);
     r[12] = (uint8_t)((hx >> 16) & 0xFF);
     r[13] = (uint8_t)((hx >> 24) & 0xFF);
+    r[14] = (uint8_t)(aw & 0xFF);
+    r[15] = (uint8_t)((aw >> 8) & 0xFF);
 
     uint16_t addr = (uint16_t)(M1B_REC_BASE + (uint32_t)idx * M1B_REC_SIZE);
     return ee_write(addr, r, sizeof(r));
@@ -509,12 +518,14 @@ static esp_err_t ee_read_record(uint16_t idx, m1b_sample_t *s)
     int16_t  dsq = (int16_t)((uint16_t)r[6] | ((uint16_t)r[7] << 8));
     int16_t  diq = (int16_t)((uint16_t)r[8] | ((uint16_t)r[9] << 8));
     uint32_t hx  = (uint32_t)r[10] | ((uint32_t)r[11] << 8) | ((uint32_t)r[12] << 16) | ((uint32_t)r[13] << 24);
+    uint16_t aw  = (uint16_t)r[14] | ((uint16_t)r[15] << 8);
 
-    s->cycle   = cyc;
-    s->ds_unix = (int64_t)du;
-    s->ds_c    = q_to_temp(dsq);
-    s->die_c   = q_to_temp(diq);
-    s->hx      = (int32_t)hx;
+    s->cycle    = cyc;
+    s->ds_unix  = (int64_t)du;
+    s->ds_c     = q_to_temp(dsq);
+    s->die_c    = q_to_temp(diq);
+    s->hx       = (int32_t)hx;
+    s->awake_ms = aw;
     return ESP_OK;
 }
 
@@ -664,9 +675,9 @@ static void dump_log(void)
             ESP_LOGW(TAG, "DUMP: rekord %u olvasas hiba", (unsigned)i);
             continue;
         }
-        printf("M1B idx=%u cycle=%u ds_unix=%lld ds_c=%.2f die_c=%.2f hx=%ld\n",
+        printf("M1B idx=%u cycle=%u ds_unix=%lld ds_c=%.2f die_c=%.2f hx=%ld awake_ms=%u\n",
                (unsigned)i, (unsigned)s.cycle, (long long)s.ds_unix,
-               (double)s.ds_c, (double)s.die_c, (long)s.hx);
+               (double)s.ds_c, (double)s.die_c, (long)s.hx, (unsigned)s.awake_ms);
     }
     fflush(stdout);
 }
@@ -684,8 +695,16 @@ static void measure_and_log(uint32_t cycle)
     /* 3) HX711. */
     int32_t hx      = hx711_measure();
 
+    /* 3b) ÉBREN-idő: a boot óta esp_timer (µs->ms) MOST, a rekord-szerializálás előtt. Ez fedi a
+     *     mérés dominánsát (HX711 settle+olvasás, DS3231, die-hő); a rekord-írás utáni ~20 ms +
+     *     a boot (reset->app_main, ~100 ms, esp_timer-rel nem mérhető) kimarad -> kis maradék
+     *     offset, de a domináns awake-et a Python ebből pontosan levonja. u16-ra telítve. */
+    uint32_t aw_ms  = (uint32_t)(esp_timer_get_time() / 1000);
+    uint16_t awake_ms = (aw_ms > 65535u) ? 65535u : (uint16_t)aw_ms;
+
     m1b_sample_t s = {
         .cycle = cycle, .ds_unix = ds_unix, .ds_c = ds_c, .die_c = die_c, .hx = hx,
+        .awake_ms = awake_ms,
     };
 
     /* 4) EEPROM-ba: a write_index helyre, majd write_index++. */

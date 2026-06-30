@@ -25,7 +25,11 @@ BEFAGYASZTOTT KONTRAKTUS (a firmware PONTOSAN ezt dumpolja):
   Pontosan EGY fejlec-sor:
     M1B-HDR records=%u period_s=%u start_unix=%lld
   Majd rekordonkent egy sor:
-    M1B idx=%u cycle=%u ds_unix=%lld ds_c=%.2f die_c=%.2f hx=%ld
+    M1B idx=%u cycle=%u ds_unix=%lld ds_c=%.2f die_c=%.2f hx=%ld awake_ms=%u
+  Az awake_ms az EBREN toltott meres-ido (ms); a ds_unix-kulonbseg minden ciklusban
+  = awake + period*(1+drift), ezert az ora-driftbol LEVONJUK az atlagos awake-et
+  (avg_awake * cyc_rel), hogy a tiszta ALVAS-drift maradjon. Ha az awake_ms hianyzik
+  (regi dump), a korrekcio kimarad (a 'raw' es 'awake_corrected' drift egybeesik).
   A ds_c / die_c lehet "nan". A sor elejen lehet host-logger ISO8601-prefix +
   TAB; lehetnek '#'-kezdetu komment / RECONNECT sorok es egyeb boot-zaj
   sorok -> ezeket IGNORALJUK; a tokeneket BARHOL keressuk a sorban regex-szel.
@@ -62,6 +66,7 @@ _F_DS_UNIX = re.compile(r'\bds_unix=(-?\d+)')
 _F_DS_C    = re.compile(r'\bds_c=(nan|[-+]?\d+(?:\.\d+)?)', re.IGNORECASE)
 _F_DIE_C   = re.compile(r'\bdie_c=(nan|[-+]?\d+(?:\.\d+)?)', re.IGNORECASE)
 _F_HX      = re.compile(r'\bhx=(-?\d+)')
+_F_AWAKE   = re.compile(r'\bawake_ms=(\d+)')   # opcionalis (regi dumpbol hianyozhat)
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +100,7 @@ def linfit(xs, ys):
 # ---------------------------------------------------------------------------
 
 class Record:
-    __slots__ = ('idx', 'cycle', 'ds_unix', 'ds_c', 'die_c', 'hx', 'src_line')
+    __slots__ = ('idx', 'cycle', 'ds_unix', 'ds_c', 'die_c', 'hx', 'awake_ms', 'src_line')
 
     def __init__(self):
         self.idx = None
@@ -104,6 +109,7 @@ class Record:
         self.ds_c = float('nan')
         self.die_c = float('nan')
         self.hx = None
+        self.awake_ms = None
         self.src_line = ''
 
 
@@ -136,6 +142,7 @@ def parse_record_line(line):
     r.cycle = _int(_F_CYCLE)
     r.ds_unix = _int(_F_DS_UNIX)
     r.hx = _int(_F_HX)
+    r.awake_ms = _int(_F_AWAKE)   # None ha hianyzik (regi dump)
     r.ds_c = _parse_temp(_F_DS_C, line)
     r.die_c = _parse_temp(_F_DIE_C, line)
 
@@ -189,25 +196,8 @@ def parse_dump(path):
 # (a) ORA-DRIFT — DS3231 a referencia
 # ---------------------------------------------------------------------------
 
-def clock_drift_block(records, period_s, start_unix):
-    """Linearis fit: valos eltelt ido (ds_unix - start_unix) vs relativ cycle.
-
-    A node "vart" ideje = cycle * period_s; a cycle-t a 0. rekord cycle-jehez
-    relativizaljuk (cyc_rel). A fit meredeksege = mert periodus (s/cycle), ebbol
-    drift = (T_meas - period_s)/period_s.
-
-    Visszaad: (dict drift-metrikak, resid lista a cyc_rel-rendben).
-    """
-    if len(records) < 2:
-        return {
-            "T_meas_s_per_cycle": float('nan'),
-            "drift_ppm": float('nan'), "drift_pct": float('nan'),
-            "drift_s_per_hour": float('nan'), "r2": float('nan'),
-            "residual_std_s": float('nan'), "n": len(records),
-        }, []
-    cyc0 = records[0].cycle
-    xs = [r.cycle - cyc0 for r in records]
-    ys = [r.ds_unix - start_unix for r in records]
+def _drift_metrics(xs, ys, period_s):
+    """OLS (ys vs xs) -> drift-metrika dict + residual lista."""
     b, a, r2 = linfit(xs, ys)
     drift = (b - period_s) / period_s if period_s else float('nan')
     resid = [ys[i] - (a + b * xs[i]) for i in range(len(xs))]
@@ -219,8 +209,65 @@ def clock_drift_block(records, period_s, start_unix):
         "drift_s_per_hour": round(drift * 3600, 4),
         "r2": round(r2, 8) if r2 == r2 else float('nan'),
         "residual_std_s": round(rstd, 4),
-        "n": len(records),
+        "n": len(xs),
     }, resid
+
+
+def clock_drift_block(records, period_s, start_unix):
+    """Linearis fit: valos eltelt ido (ds_unix - start_unix) vs relativ cycle.
+
+    A node "vart" ideje = cycle * period_s; a cycle-t a 0. rekord cycle-jehez
+    relativizaljuk (cyc_rel). A fit meredeksege = mert periodus (s/cycle), ebbol
+    drift = (T_meas - period_s)/period_s.
+
+    AWAKE-KORREKCIO: a ds_unix-kulonbseg minden ciklusban = awake (meres-ido) +
+    period*(1+drift). Ezert a NYERS drift tartalmazza az awake/period tagot (60 s-nal
+    ~2,3%, ami elfedi a valodi ~0,3-0,6% ora-driftet). Ha van awake_ms adat, az ATLAGOS
+    awake-et cyc_rel-aranyosan LEVONJUK (az M1 m1_to_json.py idiomaja) -> a tiszta ALVAS-
+    drift marad. A ket eredmenyt is visszaadjuk (raw + awake_corrected); a TISZTA
+    (awake-korrigalt) az iranyado, ha van awake adat.
+
+    Visszaad: (dict, resid). A resid az AWAKE-KORRIGALT fit-e (ha van awake), kulonben a
+    nyers — ezt hasznalja a homerseklet-elemzes (a hofuggo ingadozas tisztabb benne).
+    """
+    nan_block = {
+        "T_meas_s_per_cycle": float('nan'), "drift_ppm": float('nan'),
+        "drift_pct": float('nan'), "drift_s_per_hour": float('nan'),
+        "r2": float('nan'), "residual_std_s": float('nan'), "n": len(records),
+    }
+    if len(records) < 2:
+        return {"raw": nan_block, "awake_corrected": None,
+                "avg_awake_ms": None, **nan_block}, []
+
+    cyc0 = records[0].cycle
+    xs = [r.cycle - cyc0 for r in records]
+    ys = [r.ds_unix - start_unix for r in records]
+
+    raw, raw_resid = _drift_metrics(xs, ys, period_s)
+
+    # awake-korrekcio: avg_awake (ms->s) * cyc_rel levonasa (csak ha van awake adat)
+    awake_vals = [r.awake_ms for r in records if r.awake_ms is not None]
+    awake_corrected = None
+    avg_awake_ms = None
+    resid = raw_resid
+    if awake_vals:
+        avg_awake_ms = sum(awake_vals) / len(awake_vals)
+        avg_awake_s = avg_awake_ms / 1000.0
+        ys_corr = [ys[i] - avg_awake_s * xs[i] for i in range(len(xs))]
+        awake_corrected, resid = _drift_metrics(xs, ys_corr, period_s)
+        avg_awake_ms = round(avg_awake_ms, 1)
+
+    # a "fo" mezok (lapos hozzaferes): az awake-korrigalt, ha van; kulonben a nyers
+    primary = awake_corrected if awake_corrected is not None else raw
+    out = {
+        "raw": raw,
+        "awake_corrected": awake_corrected,
+        "avg_awake_ms": avg_awake_ms,
+        "awake_contribution_ppm": (round(raw["drift_ppm"] - awake_corrected["drift_ppm"], 2)
+                                   if awake_corrected is not None else None),
+    }
+    out.update(primary)   # T_meas/drift_ppm/drift_pct/... a fo (korrigalt) ertekkel
+    return out, resid
 
 
 # ---------------------------------------------------------------------------
@@ -341,7 +388,7 @@ def write_csv(path, records, resid, start_unix):
     with open(path, 'w', newline='') as f:
         w = csv.writer(f)
         w.writerow(['idx', 'cycle', 'cyc_rel', 'ds_unix', 'elapsed_s',
-                    'ds_c', 'die_c', 'hx', 'clock_residual_s'])
+                    'ds_c', 'die_c', 'hx', 'awake_ms', 'clock_residual_s'])
         for i, r in enumerate(records):
             ds_c = '' if r.ds_c != r.ds_c else "{:.2f}".format(r.ds_c)
             die_c = '' if r.die_c != r.die_c else "{:.2f}".format(r.die_c)
@@ -352,6 +399,7 @@ def write_csv(path, records, resid, start_unix):
                 r.ds_unix - start_unix,
                 ds_c, die_c,
                 r.hx if r.hx is not None else '',
+                r.awake_ms if r.awake_ms is not None else '',
                 res,
             ])
 
@@ -475,11 +523,24 @@ def print_summary(result, stats=None):
         P("DS3231 ho-tartomany: {:.2f}..{:.2f} C (span {:.2f} C)".format(
             m['ds_c_range']['min'], m['ds_c_range']['max'], m['ds_c_range']['span']))
     P("-" * 64)
-    P("(a) ORA-DRIFT: {:+.5f} % ({:+.1f} ppm, {:+.4f} s/ora)  R^2={}  resid_std={} s"
-      .format(c['drift_pct'], c['drift_ppm'], c['drift_s_per_hour'],
+    if c.get('avg_awake_ms') is not None:
+        raw = c['raw']
+        P("(a) ORA-DRIFT [awake-korrigalt]: {:+.5f} % ({:+.1f} ppm, {:+.4f} s/ora)  "
+          "R^2={}  resid_std={} s".format(
+              c['drift_pct'], c['drift_ppm'], c['drift_s_per_hour'],
               c['r2'], c['residual_std_s']))
-    P("    T_meas = {} s/cycle (nevleges {} s)".format(
-        c['T_meas_s_per_cycle'], m['nominal_period_s']))
+        P("    nyers (awake nelkul): {:+.5f} % ({:+.1f} ppm) | avg_awake={} ms | "
+          "awake-jarulek={} ppm".format(
+              raw['drift_pct'], raw['drift_ppm'], c['avg_awake_ms'],
+              c.get('awake_contribution_ppm')))
+        P("    T_meas = {} s/cycle (nevleges {} s); a tiszta ALVAS-drift az iranyado"
+          .format(c['T_meas_s_per_cycle'], m['nominal_period_s']))
+    else:
+        P("(a) ORA-DRIFT: {:+.5f} % ({:+.1f} ppm, {:+.4f} s/ora)  R^2={}  resid_std={} s"
+          .format(c['drift_pct'], c['drift_ppm'], c['drift_s_per_hour'],
+                  c['r2'], c['residual_std_s']))
+        P("    T_meas = {} s/cycle (nevleges {} s); NINCS awake_ms a dumpban -> nyers drift"
+          .format(c['T_meas_s_per_cycle'], m['nominal_period_s']))
     P("(b) ORA-DRIFT vs HO (ds_c): coef={} ppm/C  R^2={}  span={} C  -> jellemezheto: {}"
       .format(ds.get('coef_ppm_per_C'), ds.get('r2'), ds.get('temp_span'),
               ds['characterizable']))
@@ -502,7 +563,7 @@ def print_summary(result, stats=None):
 def _gen_synthetic_dump(path, drift_pct=0.3, period_s=600, n_records=120,
                         ds_start=0.0, ds_end=35.0,
                         hx_base=100000, hx_slope=250.0, start_unix=1719600000,
-                        cycle0=7):
+                        cycle0=7, awake_ms=1400):
     """Ismert parameteru szintetikus M1B dump (fejlec + rekordok), '#'-kommenttel
     es host-idobelyeg-prefixszel keverve a robusztussag teszteleshez.
 
@@ -529,13 +590,14 @@ def _gen_synthetic_dump(path, drift_pct=0.3, period_s=600, n_records=120,
         frac = k / max(1, n_records - 1)
         ds_c = ds_start + (ds_end - ds_start) * frac
         die_c = ds_c + 2.0
-        # valos eltelt ido = k * period * (1+drift); ds_unix = start + ezt kerekitve
-        elapsed = k * period_s * (1.0 + drift_pct / 100.0)
+        # valos eltelt ido minden ciklusban = period*(1+drift) + awake (meres-ido);
+        # a Python az atlagos awake-et levonja -> a korrigalt drift = drift_pct.
+        elapsed = k * (period_s * (1.0 + drift_pct / 100.0) + awake_ms / 1000.0)
         ds_unix = start_unix + int(round(elapsed))
         hx = hx_base + int(round(hx_slope * ds_c))
         rec = ("M1B idx={idx} cycle={c} ds_unix={du} ds_c={dsc:.2f} "
-               "die_c={diec:.2f} hx={hx}\n").format(
-            idx=k, c=cyc, du=ds_unix, dsc=ds_c, diec=die_c, hx=hx)
+               "die_c={diec:.2f} hx={hx} awake_ms={aw}\n").format(
+            idx=k, c=cyc, du=ds_unix, dsc=ds_c, diec=die_c, hx=hx, aw=awake_ms)
         if k % 17 == 0:
             # host-prefixes sor
             lines.append("2026-06-29T08:{:02d}:00.000000\t".format(k % 60) + rec)
@@ -555,7 +617,7 @@ def _gen_synthetic_dump_thermal(path, period_s=600, n_records=200,
                                 ds_start=0.0, ds_end=35.0,
                                 base_drift_pct=0.3, thermal_ppm_per_C=120.0,
                                 hx_base=100000, hx_slope=250.0,
-                                start_unix=1719600000):
+                                start_unix=1719600000, awake_ms=1400):
     """Ho-FUGGO ora-drift dump: a pillanatnyi rata = base + ho-tag, hogy a (b)
     ppm/C jellemezheto legyen es ELLENORIZHESSUK a visszanyert meredeksegre.
 
@@ -574,14 +636,14 @@ def _gen_synthetic_dump_thermal(path, period_s=600, n_records=200,
         ds_c = ds_start + (ds_end - ds_start) * frac
         die_c = ds_c + 2.0
         if k > 0:
-            # az ELOZO->mostani intervallum rataja a mostani ho-n (kozelites)
+            # az ELOZO->mostani intervallum rataja a mostani ho-n (kozelites) + awake
             inst = base_drift_pct / 100.0 + thermal_ppm_per_C * 1e-6 * (ds_c - ds_ref)
-            elapsed += period_s * (1.0 + inst)
+            elapsed += period_s * (1.0 + inst) + awake_ms / 1000.0
         ds_unix = start_unix + int(round(elapsed))
         hx = hx_base + int(round(hx_slope * ds_c))
         lines.append("M1B idx={idx} cycle={c} ds_unix={du} ds_c={dsc:.2f} "
-                     "die_c={diec:.2f} hx={hx}\n".format(
-                         idx=k, c=k, du=ds_unix, dsc=ds_c, diec=die_c, hx=hx))
+                     "die_c={diec:.2f} hx={hx} awake_ms={aw}\n".format(
+                         idx=k, c=k, du=ds_unix, dsc=ds_c, diec=die_c, hx=hx, aw=awake_ms))
     with open(path, 'w') as f:
         f.writelines(lines)
     return base_drift_pct / 100.0, thermal_ppm_per_C, hx_slope
@@ -616,17 +678,29 @@ def run_selftest():
     result, resid, txs, tys, hxs, hys = analyze(records, header, period_s, [10, 60, 1440])
     print_summary(result, stats)
 
-    # drift_ppm ~ 3000 (0.3%)
-    got_ppm = result['clock_drift']['drift_ppm']
+    # AWAKE-KORRIGALT drift_ppm ~ 3000 (0.3%); a NYERS tartalmazza az awake-jarulekot
+    # (awake_ms=1400, period=600 -> ~2333 ppm), igy raw ~ 5333 ppm.
+    cd = result['clock_drift']
+    got_ppm = cd['drift_ppm']           # = awake-korrigalt (a fo mezo)
+    raw_ppm = cd['raw']['drift_ppm']
     exp_ppm = exp_drift * 1e6
     tol_ppm = 60.0   # a ds_unix egesz-masodperc kerekites zaja miatt
-    print("  [drift] vart ~{:+.1f} ppm -> visszaadott {:+.1f} ppm (R^2={})".format(
-        exp_ppm, got_ppm, result['clock_drift']['r2']))
+    print("  [drift] vart ~{:+.1f} ppm (awake-korrigalt) -> visszaadott {:+.1f} ppm "
+          "(nyers {:+.1f}, avg_awake {} ms, jarulek {} ppm, R^2={})".format(
+              exp_ppm, got_ppm, raw_ppm, cd['avg_awake_ms'],
+              cd['awake_contribution_ppm'], cd['r2']))
     if abs(got_ppm - exp_ppm) > tol_ppm:
-        print("  FAIL: drift_ppm elteres {:.1f} > tures {:.1f}".format(
+        print("  FAIL: awake-korrigalt drift_ppm elteres {:.1f} > tures {:.1f}".format(
             abs(got_ppm - exp_ppm), tol_ppm)); ok = False
     else:
-        print("  PASS: drift_ppm a tureshataron belul")
+        print("  PASS: awake-korrigalt drift_ppm a tureshataron belul")
+    # az awake-jarulek ~ awake_ms/1000/period * 1e6 = 1400/1000/600*1e6 = 2333 ppm
+    exp_contrib = 1400 / 1000.0 / 600.0 * 1e6
+    if cd['awake_contribution_ppm'] is None or abs(cd['awake_contribution_ppm'] - exp_contrib) > 60.0:
+        print("  FAIL: awake-jarulek ({}) elter a vart ~{:.0f} ppm-tol".format(
+            cd['awake_contribution_ppm'], exp_contrib)); ok = False
+    else:
+        print("  PASS: awake-jarulek a vart ~{:.0f} ppm kozeleben".format(exp_contrib))
 
     # hx counts/C ~ 250
     got_hx = result['hx711_temp_drift']['coef_counts_per_C']
