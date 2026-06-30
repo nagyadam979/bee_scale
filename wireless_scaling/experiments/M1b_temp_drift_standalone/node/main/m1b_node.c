@@ -174,6 +174,14 @@
 /* 1 -> az EEPROM-fejléc write_index=0-ra (régi log eldobva) + AZONNAL mérés-start. EGYSZER! */
 #define M1B_ERASE_AND_START     0
 
+/* 1 -> DIAGNOSZTIKAI mód: az app ÉBREN marad (nem alszik, USB-n végig monitorozható), és
+ *      ciklikusan: I2C-busz scan + AT24C32 írás/visszaolvasás teszt + DS3231 idő/hő + HX711
+ *      nyers. HW-bringup hibakereséshez (cím / write-protect / bekötés). 0 = normál üzem. */
+#define M1B_DIAG_MODE           0
+/* A diag EEPROM write-teszt CÍME: NEM a 0x0000 fejléc, hanem egy magas, nem használt cím,
+ * hogy a teszt ne basszon bele egy esetleges valós logba. */
+#define M1B_DIAG_EE_TEST_ADDR   0x0F00
+
 /* --- HX711 mintavétel --- */
 #define M1B_HX_SETTLE_MS        400     /* power-up utáni settle (ms) az 1. minta előtt */
 #define M1B_HX_SKIP             2       /* az első ennyi mintát eldobjuk (tranziens) */
@@ -514,6 +522,14 @@ static esp_err_t ee_read_record(uint16_t idx, m1b_sample_t *s)
 
 static void hx711_gpio_setup(int pd_sck_level)
 {
+    /* KRITIKUS: a deep sleep előtt a PD_SCK-t gpio_hold_en()-nel HIGH-on (power-down)
+     * befagyasztottuk. Ébredés után (deep sleep = reboot a C3-on) a hold MÉG AKTÍV, ezért
+     * a lenti gpio_set_level NEM hatna -> a HX711 power-downban ragadna, a DOUT sosem menne
+     * LOW, és minden timer-wake olvasás 0-t / timeoutot adna (a cold-boot idx=0 jó volt,
+     * idx>=1 hx=0 — ez volt a tünet). A hold-ot a setup ELŐTT fel kell oldani. */
+    gpio_hold_dis(HX711_PD_SCK_GPIO);
+    gpio_deep_sleep_hold_dis();
+
     gpio_config_t pdsck_cfg = {
         .pin_bit_mask = (1ULL << HX711_PD_SCK_GPIO),
         .mode = GPIO_MODE_OUTPUT,
@@ -716,6 +732,68 @@ static void enter_deep_sleep(void)
     esp_deep_sleep_start();
 }
 
+/* ===================== DIAGNOSZTIKA (M1B_DIAG_MODE) ===================== */
+#if M1B_DIAG_MODE
+/* Ébren maradó hibakereső loop: I2C-scan + AT24C32 write/readback + DS3231 + HX711. NEM tér vissza. */
+static void run_diag(void)
+{
+    ESP_LOGW(TAG, "=== M1B DIAG MODE === (nem alszik; Ctrl-C a monitorbol a kilepeshez)");
+    ESP_LOGI(TAG, "I2C: SDA=GPIO%d SCL=GPIO%d @%d Hz | DS3231=0x%02X AT24C32=0x%02X",
+             M1B_I2C_SDA_GPIO, M1B_I2C_SCL_GPIO, M1B_I2C_FREQ_HZ, DS3231_ADDR, AT24C32_ADDR);
+
+    int round = 0;
+    while (1) {
+        printf("\n----- DIAG round %d -----\n", round++);
+
+        /* 1) I2C-busz scan: mely 7-bites címek ACK-olnak. */
+        printf("I2C scan:");
+        int found = 0;
+        for (uint16_t a = 0x08; a <= 0x77; a++) {
+            if (i2c_master_probe(s_i2c_bus, a, 50) == ESP_OK) {
+                printf(" 0x%02X", (unsigned)a);
+                found++;
+            }
+        }
+        printf("  (%d eszkoz)\n", found);
+
+        /* 2) AT24C32 fejléc (0x0000) nyers 6 bájt — amit a dump is olvas. */
+        uint8_t hdr[6] = { 0 };
+        esp_err_t er = ee_read(M1B_HDR_ADDR, hdr, sizeof(hdr));
+        if (er == ESP_OK) {
+            printf("EE header @0x0000: %02X %02X %02X %02X %02X %02X\n",
+                   hdr[0], hdr[1], hdr[2], hdr[3], hdr[4], hdr[5]);
+        } else {
+            printf("EE header olvasas HIBA: %s\n", esp_err_to_name(er));
+        }
+
+        /* 3) AT24C32 ÍRÁS/VISSZAOLVASÁS teszt egy nem használt címen. round-fuggo minta,
+         *    hogy a 'beragadt' (mindig ugyanaz) olvasas is kiderüljön. */
+        uint8_t pat[6] = { 0xDE, 0xAD, 0xBE, 0xEF, (uint8_t)round, (uint8_t)~round };
+        uint8_t rb[6]  = { 0 };
+        esp_err_t we = ee_write(M1B_DIAG_EE_TEST_ADDR, pat, sizeof(pat));
+        esp_err_t re = ee_read(M1B_DIAG_EE_TEST_ADDR, rb, sizeof(rb));
+        bool match = (we == ESP_OK && re == ESP_OK && memcmp(pat, rb, sizeof(pat)) == 0);
+        printf("EE write/readback @0x%04X: w=%s r=%s rb=%02X %02X %02X %02X %02X %02X -> %s\n",
+               (unsigned)M1B_DIAG_EE_TEST_ADDR, esp_err_to_name(we), esp_err_to_name(re),
+               rb[0], rb[1], rb[2], rb[3], rb[4], rb[5],
+               match ? "OK (iras MEGY)" : "FAIL (write-protect? cim? bekotes?)");
+
+        /* 4) DS3231 idő + hő. */
+        int64_t u = ds3231_read_unix();
+        float dc  = ds3231_read_temp_c();
+        printf("DS3231: unix=%lld  temp=%.2f C\n", (long long)u, (double)dc);
+
+        /* 5) C3 die-hő + HX711 nyers. */
+        float die = read_die_temp_c();
+        int32_t hx = hx711_measure();
+        printf("die_c=%.2f C  HX711 raw=%ld\n", (double)die, (long)hx);
+
+        fflush(stdout);
+        vTaskDelay(pdMS_TO_TICKS(2000));
+    }
+}
+#endif /* M1B_DIAG_MODE */
+
 /* ===================== app_main ===================== */
 
 void app_main(void)
@@ -742,6 +820,10 @@ void app_main(void)
 #if M1B_SET_RTC_ON_BOOT
     /* EGYSZER: a DS3231 idejét beírjuk a beégetett epoch-ból, majd a normál menet. */
     ds3231_set_time_from_epoch(M1B_RTC_SET_EPOCH);
+#endif
+
+#if M1B_DIAG_MODE
+    run_diag();   /* nem tér vissza: ébren maradó HW-bringup diagnosztika */
 #endif
 
     if (timer_wake) {
