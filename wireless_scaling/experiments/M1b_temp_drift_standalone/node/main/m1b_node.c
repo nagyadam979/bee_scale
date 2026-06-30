@@ -169,7 +169,7 @@
 /* ===================== HANGOLHATÓ PARAMÉTEREK ===================== */
 
 /* A deep-sleep ébredési periódus T másodpercben (= a dump period_s mezeje). Alap 60 s. */
-#define M1B_WAKE_PERIOD_SEC     60
+#define M1B_WAKE_PERIOD_SEC     300
 
 /* --- ÜZEMMÓD-KAPCSOLÓK (lásd a fenti MUNKAFOLYAMAT-blokkot) --- */
 /* 1 -> boot-kor beírja a DS3231-be a M1B_RTC_SET_EPOCH időt (UTC), majd normál menet. EGYSZER! */
