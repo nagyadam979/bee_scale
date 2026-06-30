@@ -183,6 +183,12 @@
  *      ciklikusan: I2C-busz scan + AT24C32 írás/visszaolvasás teszt + DS3231 idő/hő + HX711
  *      nyers. HW-bringup hibakereséshez (cím / write-protect / bekötés). 0 = normál üzem. */
 #define M1B_DIAG_MODE           0
+/* 1 -> RECOVERY-dump: cold boot-kor a write_index-tol ES a magic-tol FUGGETLENUL kiirja a
+ *      TELJES EEPROM-ot (mind a M1B_MAX_RECORDS rekord-helyet). Adatmentes esetre: ha egy
+ *      veletlen erase csak a write_index-et nullazta, a regi rekordok FIZIKAILAG meg ott
+ *      vannak — ez kiolvassa mind; a Python szuri az ervenyeseket (valos ds_unix). NEM ir,
+ *      NEM torol (dump-ag). 0 = normal (write_index szerinti) dump. */
+#define M1B_DUMP_ALL            0
 /* A diag EEPROM write-teszt CÍME: NEM a 0x0000 fejléc, hanem egy magas, nem használt cím,
  * hogy a teszt ne basszon bele egy esetleges valós logba. */
 #define M1B_DIAG_EE_TEST_ADDR   0x0F00
@@ -649,6 +655,14 @@ static void dump_log(void)
         ESP_LOGW(TAG, "DUMP: EEPROM-fejlec olvasas hiba (I2C?). Nincs mit dumpolni.");
         return;
     }
+#if M1B_DUMP_ALL
+    /* RECOVERY: a write_index/magic figyelmen kivul hagyva, MIND a 255 rekord-helyet kiirjuk.
+     * A Python a valos ds_unix alapjan szuri az ervenyeseket (a soha-nem-irt helyek szemete /
+     * 0xFF / 0 kiesik). Igy egy veletlen erase utan a fizikailag megmaradt regi log visszanyerheto. */
+    ESP_LOGW(TAG, "DUMP-ALL (RECOVERY): teljes EEPROM (%u hely), write_index=%u figyelmen kivul.",
+             (unsigned)M1B_MAX_RECORDS, (unsigned)widx);
+    widx = M1B_MAX_RECORDS;
+#else
     if (magic != M1B_EE_MAGIC || widx == 0) {
         ESP_LOGW(TAG, "DUMP: nincs ervenyes log (magic=0x%08X widx=%u). Indits uj merest (M1B_ERASE_AND_START=1).",
                  (unsigned)magic, (unsigned)widx);
@@ -657,6 +671,7 @@ static void dump_log(void)
     if (widx > M1B_MAX_RECORDS) {
         widx = M1B_MAX_RECORDS;   /* védelem: a buffer megtelt, csak a férőképes rekordok */
     }
+#endif
 
     /* start_unix = az 1. rekord ds_unix-e. */
     m1b_sample_t first;
