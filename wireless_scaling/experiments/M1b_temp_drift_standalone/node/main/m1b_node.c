@@ -87,11 +87,13 @@
  *   ZS-042 modul EGY I2C buszon (modul 3,3V-ról):
  *     DS3231  @0x68  (±2 ppm hőkompenzált referencia + saját hőszenzor ±0,25°C)
  *     AT24C32 @0x57  (4 KB = 32 kbit, perzisztens — túléli a tápelvételt)
- *     I2C pinek: SDA = GPIO5, SCL = GPIO6  (a HX711-gyel HELYET CSERÉLVE — a HX711 által
- *                felszabadított 5/6-ra kerültek. NEM 3/4=HX711, NEM 18/19=USB, NEM 20/21=UART,
- *                NEM 2/8/9=strapping). 400 kHz.
- *                FELTÉTELEZÉS: a felhasználó explicit csak a HX711 4/3-at erősítette meg; az
- *                I2C 5/6 a "tiszta csere" következtetése. A fizikai bekötésnél ELLENŐRIZNI kell!
+ *     I2C pinek: SDA = GPIO5, SCL = GPIO6  — FIGYELEM: NEM VÉGLEGES. A HX711 4/3-ra kötése
+ *                elvette az I2C korábbi 4/3 lábait, az új I2C-hely viszont MÉG NINCS ELDÖNTVE.
+ *                Az itteni 5/6 csak IDEIGLENES, ütközésmentes placeholder (a HX711 által
+ *                felszabadított lábak), hogy a build érvényes maradjon és ne ütközzön a
+ *                HX711 4/3-mal. A tényleges I2C-kiosztást a node végleges bekötésekor kell
+ *                meghatározni (NEM 3/4=HX711, NEM 18/19=USB, NEM 20/21=UART, NEM 2/8/9=strapping).
+ *                400 kHz.
  *
  *   Táp: power bank a SuperMini USB-C-jén -> on-board LDO -> 3,3V.
  *
@@ -204,8 +206,8 @@
 
 /* --- I2C busz / eszközcímek --- */
 #define M1B_I2C_PORT            (-1)            /* -1 = auto port-választás (IDF 5.5) */
-#define M1B_I2C_SDA_GPIO        GPIO_NUM_5   /* ZS-042 SDA — casing-átkötés: a HX711-gyel cserélve (volt GPIO4). FELTÉTELEZÉS, bekötésnél ellenőrizni! */
-#define M1B_I2C_SCL_GPIO        GPIO_NUM_6   /* ZS-042 SCL — casing-átkötés: a HX711-gyel cserélve (volt GPIO3). FELTÉTELEZÉS, bekötésnél ellenőrizni! */
+#define M1B_I2C_SDA_GPIO        GPIO_NUM_5   /* ZS-042 SDA — IDEIGLENES placeholder! Végleges I2C-hely MÉG NINCS eldöntve (a volt 4/3-at a HX711 elvette). */
+#define M1B_I2C_SCL_GPIO        GPIO_NUM_6   /* ZS-042 SCL — IDEIGLENES placeholder! Végleges I2C-hely MÉG NINCS eldöntve (a volt 4/3-at a HX711 elvette). */
 #define M1B_I2C_FREQ_HZ         400000
 #define M1B_I2C_TIMEOUT_MS      100
 #define DS3231_ADDR             0x68
