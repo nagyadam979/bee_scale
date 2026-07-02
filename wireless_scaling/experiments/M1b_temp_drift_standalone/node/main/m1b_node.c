@@ -77,23 +77,17 @@
  *   ESP32-C3 SuperMini. Kivezetett GPIO: 0-10, 20, 21. Strapping (kerülendő): 2/8/9.
  *   USB-Serial-JTAG (konzol): 18/19. UART0: 20/21.
  *
- *   HX711 + mérőcella (ÉLES BEKÖTÉS — casing-routing miatt átkötve; felhasználó igazolta,
- *   hogy így fér be minden elektronika a nyomtatott házba. Korábban GPIO5/6, lásd H1/H2):
- *     PD_SCK = GPIO4  (HIGH = power-down, LOW = power-up)   [korábban GPIO5]
- *     DOUT   = GPIO3  (adat)                                 [korábban GPIO6]
+ *   HX711 + mérőcella (FIX, a H1/H2-ből):
+ *     PD_SCK = GPIO5  (HIGH = power-down, LOW = power-up)
+ *     DOUT   = GPIO6  (adat)
  *     25 SCK-pulzus = 24-bit, A-csatorna / gain 128. Power-up után ~400 ms settle,
  *     első pár mintát eldobni, N átlag. Sweep alatt KONSTANS terhelés.
  *
  *   ZS-042 modul EGY I2C buszon (modul 3,3V-ról):
  *     DS3231  @0x68  (±2 ppm hőkompenzált referencia + saját hőszenzor ±0,25°C)
  *     AT24C32 @0x57  (4 KB = 32 kbit, perzisztens — túléli a tápelvételt)
- *     I2C pinek: SDA = GPIO5, SCL = GPIO6  — FIGYELEM: NEM VÉGLEGES. A HX711 4/3-ra kötése
- *                elvette az I2C korábbi 4/3 lábait, az új I2C-hely viszont MÉG NINCS ELDÖNTVE.
- *                Az itteni 5/6 csak IDEIGLENES, ütközésmentes placeholder (a HX711 által
- *                felszabadított lábak), hogy a build érvényes maradjon és ne ütközzön a
- *                HX711 4/3-mal. A tényleges I2C-kiosztást a node végleges bekötésekor kell
- *                meghatározni (NEM 3/4=HX711, NEM 18/19=USB, NEM 20/21=UART, NEM 2/8/9=strapping).
- *                400 kHz.
+ *     I2C pinek: SDA = GPIO4, SCL = GPIO3  (NEM 5/6=HX711, NEM 18/19=USB, NEM 20/21=UART,
+ *                NEM 2/8/9=strapping). 400 kHz.
  *
  *   Táp: power bank a SuperMini USB-C-jén -> on-board LDO -> 3,3V.
  *
@@ -206,16 +200,16 @@
 
 /* --- I2C busz / eszközcímek --- */
 #define M1B_I2C_PORT            (-1)            /* -1 = auto port-választás (IDF 5.5) */
-#define M1B_I2C_SDA_GPIO        GPIO_NUM_5   /* ZS-042 SDA — IDEIGLENES placeholder! Végleges I2C-hely MÉG NINCS eldöntve (a volt 4/3-at a HX711 elvette). */
-#define M1B_I2C_SCL_GPIO        GPIO_NUM_6   /* ZS-042 SCL — IDEIGLENES placeholder! Végleges I2C-hely MÉG NINCS eldöntve (a volt 4/3-at a HX711 elvette). */
+#define M1B_I2C_SDA_GPIO        GPIO_NUM_4   /* ZS-042 SDA — éles bekötés (felhasználó igazolta) */
+#define M1B_I2C_SCL_GPIO        GPIO_NUM_3   /* ZS-042 SCL — éles bekötés (felhasználó igazolta) */
 #define M1B_I2C_FREQ_HZ         400000
 #define M1B_I2C_TIMEOUT_MS      100
 #define DS3231_ADDR             0x68
 #define AT24C32_ADDR            0x57
 
-/* --- HX711 GPIO (ÉLES BEKÖTÉS — casing-routing miatt átkötve, felhasználó igazolta; volt 5/6) --- */
-#define HX711_PD_SCK_GPIO       GPIO_NUM_4      /* SCK: HIGH = power-down, LOW = power-up (volt GPIO5) */
-#define HX711_DOUT_GPIO         GPIO_NUM_3      /* DT/DOUT: adat (volt GPIO6) */
+/* --- HX711 GPIO (FIX, a H1/H2-vel azonos) --- */
+#define HX711_PD_SCK_GPIO       GPIO_NUM_5      /* HIGH = power-down, LOW = power-up */
+#define HX711_DOUT_GPIO         GPIO_NUM_6      /* adat */
 
 /* --- AT24C32 EEPROM elrendezés --- */
 #define AT24C32_PAGE_SIZE       32
