@@ -1,0 +1,21 @@
+# RG — Esőmérő reed-impulzus kísérlet · sdkconfig.defaults
+#
+# A target-specifikus default-okat (esp32c3) az `idf.py set-target esp32c3` hozza. Rádió
+# (WiFi/BT) itt nincs használva; ezek a flagek a flash/RAM-méretet és a boot-zajt csökkentik.
+
+# --- Konzol a natív USB-Serial-JTAG-on ---
+# Az ESP32-C3 SuperMini-nek NINCS külön USB-UART bridge chipje: a USB-C közvetlenül a C3
+# beépített USB-Serial-JTAG-jára megy. A boot/log erre irányítva látszik USB-n.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# --- Flash méret ---
+# A board-def (esp32-c3-devkitm-1) 4 MB-ot vár; a legtöbb C3 SuperMini 4 MB. Ha a darabod
+# más (1/2 MB), állítsd át (CONFIG_ESPTOOLPY_FLASHSIZE_2MB stb.).
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+# --- Soros log: kompakt, gyors boot ---
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
+
+# --- RTC slow clock: default belső RC (külső 32k kristály nincs a SuperMini-n), a legkisebb
+#     fogyasztású deep sleephez. Szándékosan nem írjuk felül. ---
