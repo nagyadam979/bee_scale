@@ -37,8 +37,9 @@
 // ───────────────────────── HANGOLHATÓ PARAMÉTEREK ─────────────────────────
 
 // RG_MODE — melyik kísérletet futtatjuk:
-//   0 = PADI KALIBRÁLÓ / BOUNCE (ESP ébren marad, GPIO-ISR + SW-debounce, élő számláló-log).
-//       Erre kalibrálod a tényleges ml/billenés térfogatot és nézed a reed-bounce viselkedést.
+//   0 = CSAK KIÍRÁS (ELSŐ KÖR): ESP ébren marad, GPIO-él-ISR + SW-debounce, és minden
+//       billenést + periodikus életjelet a soros monitorra ír. Semmi deep sleep, semmi rádió.
+//       Ezen látod, hogy a jószág egyáltalán mér-e, és erre kalibrálhatod a mm/billenést.
 //   1 = DEEP-SLEEP WAKE-ON-TIP (A út): minden billenésre ébred, RTC-számláló, vissza alvásba.
 //       Ezen méred az ébredés-költséget és a deep-sleep számlálás megbízhatóságát.
 #define RG_MODE 0
@@ -67,7 +68,7 @@ static const char *TAG = "RG";
 static RTC_DATA_ATTR uint32_t rtc_tip_count = 0;   // összes billenés a bekapcsolás óta
 static RTC_DATA_ATTR uint32_t rtc_boot_count = 0;  // hányszor ébredtünk (diagnosztika)
 
-// ───────────────────────── MODE 0: padi kalibráló ─────────────────────────
+// ─────────────────── MODE 0: csak kiírás (első kör) ───────────────────
 
 static QueueHandle_t s_evt_queue = NULL;
 static volatile int64_t s_last_tip_us = 0;
@@ -85,11 +86,12 @@ static void IRAM_ATTR rg_isr_handler(void *arg)
     xQueueSendFromISR(s_evt_queue, &evt, NULL);
 }
 
-static void run_calibration_mode(void)
+static void run_print_mode(void)
 {
-    ESP_LOGI(TAG, "MODE 0 — padi kalibráló/bounce. Pin=GPIO%d, debounce=%d ms, %.4f mm/tip.",
+    ESP_LOGI(TAG, "MODE 0 — CSAK KIÍRÁS. Pin=GPIO%d, debounce=%d ms, %.4f mm/tip.",
              RG_PIN, RG_DEBOUNCE_MS, RG_MM_PER_TIP);
-    ESP_LOGI(TAG, "Billentsd a vödröt kézzel / önts vizet. A számláló élőben nő.");
+    ESP_LOGI(TAG, "Reed a RJ11 2 középső erén (polaritás mindegy). Nyugalomban a pin HIGH,");
+    ESP_LOGI(TAG, "billenéskor rövid LOW. Billentsd a vödröt / zárd rövidre a 2 eret.");
 
     gpio_config_t io = {
         .pin_bit_mask = 1ULL << RG_PIN,
@@ -104,12 +106,24 @@ static void run_calibration_mode(void)
     gpio_install_isr_service(0);
     gpio_isr_handler_add(RG_PIN, rg_isr_handler, NULL);
 
+    ESP_LOGI(TAG, "Indul. Pin kezdő szint=%d (1=nyugalom). Figyelem a billenéseket...",
+             gpio_get_level(RG_PIN));
+
     uint32_t tips = 0;
     uint32_t evt;
+    int hb = 0;   // életjel-számláló (1 s-os timeout-tickek)
     for (;;) {
         if (xQueueReceive(s_evt_queue, &evt, pdMS_TO_TICKS(1000))) {
             tips++;
-            ESP_LOGI(TAG, "TIP #%" PRIu32 "  ->  %.4f mm (össz.)", tips, tips * RG_MM_PER_TIP);
+            hb = 0;
+            ESP_LOGI(TAG, "TIP #%" PRIu32 "  +%.4f mm  ->  össz %.4f mm  (pin=%d, t=%llu s)",
+                     tips, RG_MM_PER_TIP, tips * RG_MM_PER_TIP, gpio_get_level(RG_PIN),
+                     (unsigned long long)(esp_timer_get_time() / 1000000));
+        } else if (++hb >= 10) {   // ~10 s-onként életjel, hogy lásd: fut és figyel
+            hb = 0;
+            ESP_LOGI(TAG, "...figyelek (pin=%d, eddig %" PRIu32 " tip = %.4f mm, t=%llu s)",
+                     gpio_get_level(RG_PIN), tips, tips * RG_MM_PER_TIP,
+                     (unsigned long long)(esp_timer_get_time() / 1000000));
         }
     }
 }
@@ -177,7 +191,7 @@ static void run_deep_sleep_wake_on_tip(void)
 void app_main(void)
 {
 #if RG_MODE == 0
-    run_calibration_mode();
+    run_print_mode();
 #else
     run_deep_sleep_wake_on_tip();
 #endif
