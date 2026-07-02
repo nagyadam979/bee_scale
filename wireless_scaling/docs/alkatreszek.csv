@@ -13,3 +13,4 @@ DS18B20+,Hőmérő (OneWire),410,3,1
 DS3231+AT24C32 RTCM,Timestamp modul,854,0,1
 ZTE MF79U,4G LTE WiFi stick (uplink),9714,0,1
 load switch / MOSFET,uplink 5V kapcsolás,200,0,1
+casing,3D nyomtatott ház ,3000,3,1
