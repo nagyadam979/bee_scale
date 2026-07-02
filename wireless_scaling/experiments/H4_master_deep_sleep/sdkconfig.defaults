@@ -1,0 +1,28 @@
+# H4 — master deep-sleep áram-mérő firmware · sdkconfig.defaults
+#
+# Cél: a lehető legkisebb nyugalmi áram és a mérést nem zavaró boot. Csak indokolt
+# beállítások; a target-specifikus default-okat (esp32s3) az `idf.py set-target esp32s3`
+# (ill. a PlatformIO board=esp32-s3-devkitc-1) hozza. A rádió (WiFi/BT) nincs használva.
+
+# --- Konzol a natív USB-Serial-JTAG-on ---
+# Az ESP32-S3-Zero USB-C-je KÖZVETLENÜL az S3 beépített USB-Serial-JTAG-jára megy (nincs
+# külön USB-UART bridge chip). A boot/wakeup logot (és a monitort) ezért a USB-Serial-JTAG
+# console-ra irányítjuk, különben az USB-n nincs log.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# --- Flash méret ---
+# Az S3-Zero az ESP32-S3FH4R2 lapkát használja: 4 MB flash (+ 2 MB PSRAM). A board-def
+# (esp32-s3-devkitc-1) 8 MB-ot vár -> méret-eltérés warning; 4 MB-ra állítjuk.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+# --- PSRAM: a deep-sleep méréshez NEM használjuk (nincs bekapcsolva) ---
+# A 2 MB PSRAM init áramot húz ébren, de deep sleepben lekapcsol; a nyugalmi áramra nincs
+# hatása. Szándékosan nem engedélyezzük, hogy a boot egyszerű és gyors maradjon.
+
+# --- Soros log: kompakt boot, kevés UART-aktivitás ---
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
+
+# --- RTC slow clock: az alapértelmezett belső RC oszcillátor a legkisebb fogyasztású
+#     deep sleephez. Az S3-Zero-n nincs külső 32k kristály -> default (internal RC), nem
+#     írjuk felül. ---
