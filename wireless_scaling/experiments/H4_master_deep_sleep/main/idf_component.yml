@@ -1,0 +1,6 @@
+# H4 — managed komponens függőség: espressif/led_strip
+# A fedélzeti WS2812 RGB LED boot-glitch miatt világít; a puszta data-LOW nem oltja ki
+# (a WS2812 tartja a latch-elt színt). Ezért deep sleep előtt EGY fekete frame-et küldünk
+# az led_strip RMT-driverével (led_strip_clear -> minden pixel 0 + refresh). 3.x API.
+dependencies:
+  espressif/led_strip: "^3.0.0"
