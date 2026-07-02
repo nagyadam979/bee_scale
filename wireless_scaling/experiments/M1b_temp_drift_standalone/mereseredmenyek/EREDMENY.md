@@ -3,7 +3,7 @@
 > Egyszeri éles futás (2026-06-30), ESP32-C3 SuperMini + ZS-042 (DS3231+AT24C32) + HX711 +
 > mérőcella, nagy power bankról, off-grid. A részletes fejlesztési napló a commit-történet.
 > **A modul ezzel a setuppal LEZÁRVA**; a teljesebb (erase-biztonság, prod-üzem) tesztek a
-> végleges ESP32-S3-Zero masterrel, külön környezetben jönnek.
+> végleges masterrel (a master immár ESP32-C3 SuperMini — 2026-07-02 pivot, lásd H4), külön környezetben jönnek.
 
 ## Setup
 - Node deep-sleep, **T = 300 s** ébredési periódus, konstans cella-terhelés.
@@ -37,5 +37,5 @@
   lefutott, mielőtt a BOOT+reset megelőzhette volna. **A teljes adat visszanyerhető volt**, mert
   az erase csak a fejléc write_index-ét nullázza, a rekordok fizikailag az EEPROM-ban maradtak
   → a `M1B_DUMP_ALL` recovery-mód (teljes EEPROM-kiolvasás + Python-szűrés) mentette ki.
-- A végleges (S3-Zero master) setupban az erase legyen **dump-alapértelmezett + explicit,
+- A végleges (C3-master, 2026-07-02 pivot) setupban az erase legyen **dump-alapértelmezett + explicit,
   véletlenül nem kiváltható** erase-úttal.

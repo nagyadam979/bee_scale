@@ -14,7 +14,7 @@ DC/DC veszteség, esetleges 4G uplink és retry-k.
 - Setup 2/2.5/3 alatt fut (valós forgalom kell, nem bench-szimuláció).
 
 ## Bemenet / előfeltételek
-- ESP32-S3-Zero master + 18650 táp-pack + DC/DC (buck-boost) a master tápútján.
+- ESP32-C3 SuperMini master (2026-07-02 pivot az S3-Zero-ról, lásd H4) + 18650 táp-pack + DC/DC (buck-boost) a master tápútján.
 - Áram-/energiamérő a teljes ciklusra (átlagáram-integrálás).
 - Működő RX-ablak-firmware (Sz3) és opcionálisan a 4G uplink (Sz5).
 

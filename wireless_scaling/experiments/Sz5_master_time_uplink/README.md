@@ -13,7 +13,7 @@ Cél: rekonstruált abszolút timestamp ±1 perc tűréssel egy mesterséges kim
 - Kapcsolódik: H3 (uplink a duty-cycle átlagot torzítja → külön mérni).
 
 ## Bemenet / előfeltételek
-- Master board (ESP32-S3-Zero), NTP-elérés (uplinken át), nyers master log.
+- Master board (ESP32-C3 SuperMini; 2026-07-02 pivot az S3-Zero-ról, lásd H4), NTP-elérés (uplinken át), nyers master log.
 - ZTE MF79U 4G stick (WiFi hotspot, Yettel SIM, B20/B8), MOSFET/load switch a stick 5V tápján.
 - Python offline elemző réteg (a nyers log újrajátszásához).
 

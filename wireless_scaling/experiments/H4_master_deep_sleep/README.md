@@ -1,6 +1,20 @@
-# H4 — Master board deep-sleep áram (ESP32-S3-Zero)
+# H4 — Master board deep-sleep áram (ESP32-S3-Zero) — LEZÁRVA, a board ELVETVE
 
 **Típus:** Hardver chunk · **Setup:** 0 (bench) · **Irány:** (A) elektromos/energetikai
+
+## ⛔ Kimenet / döntés (2026-07-02)
+Az ESP32-S3-Zero nyers deep-sleep árama **mA-nagyságrend** (éles darabon) — a WS2812 fedélzeti
+LED SW-kioltása (fekete-frame + data-LOW/hold) és a 4 MB flash-kényszer / boot-loop-fix (lásd
+commit-történet) UTÁN is. Ez **nagyságrenddel a node C3 ~185 µA (H1) fölött** → az S3-Zero
+**alkalmatlan** az akkus / ultralow-power masterhez.
+
+**Pivot: a master is ESP32-C3 SuperMini** (a már bizonyított node-board; a H1 deep-sleep minta
+újrahasznosítva). A master nyugalmi alapszáma ezzel a H1 C3-száma (~185 µA). A kétmagos + PSRAM
+előny nem hiányzik: az **RX-ablak és az uplink szekvenciális** (a 4G stick amúgy is ~2-3 perc alatt
+bootol az ESP-NOW vétel UTÁN), a napi puffert az **AT24C256 EEPROM** fedezi. Lásd `MEMORY.md` 7. + 8.
+
+Az alábbi eredeti, S3-specifikus leírás a mérés dokumentációjaként marad meg (a firmware/build a
+mappában szintén S3-célú — historikus artefakt).
 
 ## Cél
 A **master** (ESP32-S3-Zero, Waveshare) nyers nyugalmi (deep-sleep) áramának kimérése —

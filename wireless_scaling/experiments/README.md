@@ -42,6 +42,7 @@ Háttér / rendszerterv: `../MEMORY.md` (7. szakasz), `../docs/new_base_componen
 | H1 | [`H1_node_board_prep/`](H1_node_board_prep/) | 0 | LED leszedve, deep-sleep áram mérve (gyári vs. módosított) |
 | H2 | [`H2_hx711_power_path/`](H2_hx711_power_path/) | 0 | HX711 nyugalmi áram + excitation-lekapcsolás igazolva |
 | H3 | [`H3_master_power_duty_cycle/`](H3_master_power_duty_cycle/) | 2/2.5/3 | Master 2h-ciklus átlagáram valós forgalommal |
+| H4 | [`H4_master_deep_sleep/`](H4_master_deep_sleep/) | 0 | **S3-Zero master deep-sleep mA → board ELVETVE; a master is C3 SuperMini (pivot 2026-07-02)** |
 
 ### Szoftver
 | Chunk | Mappa | Setup | Egymondatos kimenet |

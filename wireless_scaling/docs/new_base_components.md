@@ -46,15 +46,17 @@ Fixed-size struct (`payload_t`), nincs parse/string. Slave és master ugyanazt h
 
 ## Adattárolás és perzisztencia
 
-### PSRAM mint tömeg-puffer
-- Becslés ~32 byte/rekord, ~1.5 MB elérhető PSRAM → ~49 000 rekord. 12 node negyedóránként ~1150 rekord/nap → **~40 napnyi** puffer felhő-kimaradás esetén is.
-- **Megszorítás:** a PSRAM nem perzisztens — reset/áramszünet törli. Ezt veszi át az EEPROM checkpoint + `seq`-gapdetektálás.
+### Napi puffer az EEPROM-ban (nincs PSRAM)
+- **2026-07-02 pivot:** a master ESP32-C3 SuperMini lett (az S3-Zero deep sleepben mA-t húz, H4) → **nincs PSRAM**, a korábbi ~40 napos RAM-puffer terve elesik.
+- A valós igény nem 40 nap, hanem a **napi feltöltési ablakok közti** adat megtartása + reset-túlélés — ezt közvetlenül az **AT24C256 EEPROM** adja (perzisztens → a reset-túlélés is ingyen).
+- **Kapacitás:** a fixed-size `payload_t` ~10-12 byte/rekord → 32 KB ≈ ~2800-3200 rekord. A napi puffer akkor elég, ha `node_szám × napi_mintaszám ≲ ~3000`. Példák: 1 node @ negyedóra (96/nap) → ~1 hónap; 4 node → ~1 hét; 12 node → ~2-3 nap. A hobbi-skálán (pár node) egy nap bőven belefér, több napnyi tartalékkal.
+- Ha a node-szám × mintaszám kinőné a 32 KB-ot: sűrűbb uplink-ablak, nagyobb EEPROM (AT24C512), vagy külső SPI flash — de a jelenlegi skálán nem kell.
 
 ### EEPROM checkpoint — AT24C256-I2C
 - I²C, **32 KB** (256 kbit; a "256kB" bolti jelölés félrevezető), jumperes cím (0x50–0x57) + hardveres write-protect, fedélzeti pull-up.
 - Lapméret 64 byte → a checkpoint-slotokat lap-igazítva, hogy egy írás egyetlen page-write legyen.
 - Endurance 1M írás/cella + slot-alapú wear leveling → gyakorlatilag soha nem kopik el ritka checkpointnál.
-- Tartalom: node-onkénti utolsó `seq` + timestamp + integritás-jelző (a legfrissebb érvényes slot kiválasztásához reset után).
+- Tartalom: **(a)** a még fel nem töltött rekordok napi puffere, **(b)** node-onkénti utolsó `seq` + timestamp + integritás-jelző (a legfrissebb érvényes slot kiválasztásához reset után).
 - Bekötés: VCC (3.3V), GND, SDA, SCL — `Wire.begin(sda, scl)`.
 
 ---
@@ -91,7 +93,7 @@ A hardvert a szigorúbb (akkus) esetre tervezzük, a szoftver flaggel kezeli a k
 - **A) Folyamatos táp** (hálózat / nagy napelem+puffer): a load switch "mindig be", uplink folyamatosan mehet, nincs boot-probléma.
 - **B) Csak akku/napelem:** a master a nap 99%-ában lekapcsolva tartja az uplinket, napi 1 ablakra kapcsol; a load switch + (szükség esetén) HTTP-vezérlés kezeli.
 
-A napi 1 feltöltés a ~40 napos PSRAM-puffer mellett bőven biztonságos; pár kihagyott nap sem visz adatot.
+A napi 1 feltöltés az EEPROM napi pufferével biztonságos a hobbi-skálán (pár node); a puffer-tartalék (lásd fenti kapacitás-becslés) a node-szám függvényében pár kihagyott ablakot is elnyel.
 
 ---
 
@@ -111,7 +113,7 @@ A napi 1 feltöltés a ~40 napos PSRAM-puffer mellett bőven biztonságos; pár 
 
 | Alkatrész | Típus | Funkció | Megjegyzés |
 |---|---|---|---|
-| Board | ESP32-S3-Zero | vétel + időbélyeg + PSRAM-puffer + felhőzés | 4 MB flash / 2 MB PSRAM; kétmagos |
+| Board | ESP32-C3 SuperMini | vétel + időbélyeg + EEPROM-puffer + felhőzés | egymagos RISC-V; **2026-07-02 pivot az S3-Zero-ról** (az S3 deep sleepben mA-t húz, H4); ~185 µA alvó /H1/; PSRAM nem kell (szekvenciális RX→uplink, napi EEPROM-puffer) |
 | Checkpoint | AT24C256-I2C modul | reset-túlélő `seq`-mentés | I²C, 32 KB, wear leveling |
 | Uplink | ZTE MF79U | 4G WiFi stick (Yettel SIM) | B20+B8; opcionális TS-9 külső antenna |
 | Táp-kapcsoló | MOSFET / load switch | uplink 5V kapcsolása | master GPIO vezérli |
