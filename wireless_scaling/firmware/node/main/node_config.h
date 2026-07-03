@@ -67,15 +67,15 @@
  * A C3-on CSAK az ADC1 (GPIO0..4) megbízható: az ADC2 (GPIO5) oneshot módban HW-korlátos +
  * WiFi-vel ütközik (Espressif dok/errata) -> a vbat ADC kényszerűen a 0..4 oldalra kerül.
  * Foglalt: GPIO4(SCK), GPIO3(DT), GPIO2 strapping -> vbat ADC = GPIO0 (ADC1_CH0), fizikailag
- * elérhető. A NPN-kapcsoló (digitális) az elérhető 5..10 oldalon (GPIO7). */
+ * elérhető. A NPN-kapcsoló (digitális) az elérhető 5..10 oldalon (GPIO10). */
 #define VBAT_ADC_GPIO        GPIO_NUM_0   /* ADC1 bemenet (info; a driver a csatornát használja) */
 #define VBAT_ADC_UNIT        ADC_UNIT_1   /* ADC1 — WiFi mellett is megbízható (ADC2 nem!) */
 #define VBAT_ADC_CHANNEL     ADC_CHANNEL_0/* GPIO0 == ADC1 csatorna 0 a C3-on */
 #define VBAT_ADC_ATTEN       ADC_ATTEN_DB_12 /* ~0..2.5 V lineáris (a leosztott ~2.1 V belefér) */
-#define VBAT_SW_GPIO         GPIO_NUM_7   /* NPN bázis (10k-n át); HIGH = osztó él, LOW = lekapcsol */
+#define VBAT_SW_GPIO         GPIO_NUM_10  /* NPN bázis (10k-n át); HIGH = osztó él, LOW = lekapcsol */
 
-/* DS18B20 1-Wire adatláb (+ 4.7k felhúzó a HW-en). */
-#define DS18B20_GPIO         GPIO_NUM_10
+/* DS18B20 1-Wire adatláb (+ 4.7k felhúzó a HW-en). Sima digitális IO, bekötés-kényelem szerint. */
+#define DS18B20_GPIO         GPIO_NUM_7
 
 /* Beépített kék user LED (a mérés alatt kikapcsolva tartjuk; tipikusan aktív-alacsony). */
 #define USER_LED_GPIO        GPIO_NUM_8
