@@ -81,10 +81,13 @@
 #define USER_LED_GPIO        GPIO_NUM_8
 
 /* ===================== vbat osztó paraméterek ===================== */
-/* Osztásarány: (R_top + R_bot) / R_bot. 100k/100k -> 2. A nyers mV-t ennyivel szorozzuk. */
+/* Osztásarány: (R_top + R_bot) / R_bot. 10k/10k -> 2. A nyers mV-t ennyivel szorozzuk.
+ * 10k/10k: Thévenin 5 kΩ (< Espressif ~10 kΩ ajánlás) -> az ADC pontosan mér KONDI NÉLKÜL is.
+ * A kapcsolt NPN miatt alvásban 0 szivárgás; a mérés-alatti ~210 µA elhanyagolható. */
 #define VBAT_DIVIDER_RATIO   2
-/* RC-beállás a 100 nF ADC-pufferre (NPN-bekapcsolás UTÁN várunk ennyit mérés előtt). */
-#define VBAT_SETTLE_MS       30
+/* Beállás a NPN-bekapcsolás UTÁN, mérés előtt. Kondi NÉLKÜL a beállás <1 ms; 10 ms biztonságos
+ * ráhagyás. (Ha később 100 nF ADC-puffert teszel be, ez nyugodtan maradhat.) */
+#define VBAT_SETTLE_MS       10
 /* Hány ADC-mintát átlagoljunk egy leolvasáshoz (zaj-csillapítás). */
 #define VBAT_ADC_SAMPLES     16
 
