@@ -2,6 +2,12 @@
 
 **Típus:** Szoftver chunk · **Setup:** 2 / 3 · **Irány:** (B)/(C), nagyrészt **párhuzamosan fejleszthető**
 
+## 🔄 RESCOPE (2026-07-03 — always-on master)
+Hálózati tápon a master **folyamatosan neten van** → az **NTP végig él**, így a szabadonfutó-óra ±1 perces
+**rekonstrukció csak egy net-kimaradásra** releváns (nem a normál üzemre). A „napi 1 ablak" / load-switch /
+MF79U-boot részek **historikusak** (a stick tiszta hálózati tápon mindig bekapcsolva). Az uplink-koegzisztencia
+most **D1** szerint: egyidejű WiFi STA + ESP-NOW (az **Sz2b** validálja), nem időbeli szétválasztás.
+
 ## Cél
 A master abszolút időtengelye és a felhő-uplink: **NTP + szabadonfutó óra**, az NTP–belsőóra
 eltérés logolása, **utólagos lineáris korrekció Pythonban**, valamint a **4G uplink** (ZTE MF79U).
@@ -35,9 +41,9 @@ Cél: rekonstruált abszolút timestamp ±1 perc tűréssel egy mesterséges kim
 | 4G uplink | batch feltöltés sikeres, utána EEPROM checkpoint |
 
 ## Nyitott kérdések / kockázatok
-- **MF79U firmware** tápra-felregisztrálása: tápot adva jön-e net beavatkozás nélkül? Ha nem →
-  HTTP POST a `192.168.x.1` admin végpontra, vagy „mindig bekapcsolva" (csak folyamatos tápnál). Éles darabon mérendő (MEMORY.md #1).
-- 2.4 GHz koegzisztencia: feltöltés alatt **ESP-NOW vétel szünetel** (seq+PSRAM miatt nincs adatvesztés).
+- **MF79U áramszünet utáni auto-recovery** (alacsony prioritás — a stick mindig tápon): egy áramszünet
+  után magától visszaregisztrál-e a mobilnetre? Ha nem → HTTP POST a `192.168.x.1` admin végpontra. Éles darabon mérendő (MEMORY.md #1).
+- 2.4 GHz koegzisztencia: **D1 — egyidejű WiFi STA + ESP-NOW** a terv (az Sz2b validálja); a régi „feltöltéskor ESP-NOW szünetel" csak fallback (seq+PSRAM miatt akkor sincs adatvesztés).
 - Tápzaj: 4G adás-tüskék → külön táprail / 1000 µF puffer a stick tápján.
 
 ## Hivatkozások

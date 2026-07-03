@@ -2,7 +2,7 @@
 
 ## Rendszerarchitektúra
 
-**Topológia:** master–slave, csillag elrendezés. Több slave node (kaptáronként), egy központi master.
+**Topológia:** master–slave, csillag elrendezés. Több slave node (kaptáronként), egy központi master. A **master hibrid** (D4, 2026-07-03): a vétel/időbélyeg/felhőzés mellett **maga is mér** a saját kaptárán, saját `unit_id`-vel.
 
 **Kommunikáció:** ESP-NOW (slave→master) + WiFi koegzisztencia. A master WiFi STA módban csatlakozik az uplinkhez, és az ESP-NOW-t ugyanarra a csatornára húzza; a slave-ek ehhez igazodnak (különben csomagvesztés).
 
@@ -36,7 +36,7 @@ Fixed-size struct (`payload_t`), nincs parse/string. Slave és master ugyanazt h
 ### Node → Master: ESP-NOW
 - Connectionless, nincs WiFi-asszociáció → rövid ébredés→küldés→alvás ciklus, alacsony node-fogyasztás.
 - **MAC-szintű ACK ≠ alkalmazás-szintű kézbesítés.** Megbízható átvitelhez app-szintű ack kell: a master visszaigazol, a node timeoutra retransmittál; a `seq` kiszűri a duplikátumot és detektálja a hiányt.
-- **Adatvesztés vs. energia kompromisszum:** vagy "tűzz-és-felejts" + `seq`-alapú gapdetektálás az elemzésben (kevesebb node-fogyasztás), vagy app-ack (több ébrenlét, garantáltabb kézbesítés). Kutatási idősornál a detektálható gap kezelhető → a könnyebbik út is védhető. **Always-on masterrel** (hálózati táp, 2026-07-03) a master mindig figyel → a node tűzz-és-felejts broadcastja mindig megérkezik, nem kell a node-ébredést a master ablakához igazítani (a rendezvous/drift-guard nagyrészt felesleges).
+- **Adatvesztés vs. energia kompromisszum:** vagy "tűzz-és-felejts" + `seq`-alapú gapdetektálás az elemzésben (kevesebb node-fogyasztás), vagy app-ack (több ébrenlét, garantáltabb kézbesítés). Kutatási idősornál a detektálható gap kezelhető → a könnyebbik út is védhető. **Always-on masterrel** (hálózati táp, 2026-07-03) a master mindig figyel → a node tűzz-és-felejts broadcastja mindig megérkezik, nem kell a node-ébredést a master ablakához igazítani (a rendezvous/drift-guard nagyrészt felesleges). A master WiFi STA + ESP-NOW **egyidejű üzeme** a terv (**D1**) — az **Sz2b** validálja.
 - Titkosítás opcionálisan: PMK/LMK AES-128.
 
 ### Master → Felhő: MQTT QoS 1 (vagy HTTPS)
@@ -74,7 +74,7 @@ Fixed-size struct (`payload_t`), nincs parse/string. Slave és master ugyanazt h
   - Ha nem → a master HTTP POST-tal a `192.168.x.1` admin végpontra (alap jelszó `admin`) visszakapcsolja az adatot bekapcsolás után; vagy "mindig bekapcsolva" üzem (csak folyamatos tápnál).
 
 ### Uplink-master koegzisztencia (közös doboz, ~2 mm)
-1. **2.4 GHz önzavar:** a stick WiFi hotspotja és az ESP WiFi/ESP-NOW-ja is 2.4 GHz. Időbeli szétválasztás: **feltöltési ablak alatt az ESP-NOW vétel szünetel** (a `seq`+PSRAM miatt nincs adatvesztés, csak késleltetés).
+1. **2.4 GHz önzavar:** a stick WiFi hotspotja és az ESP WiFi/ESP-NOW-ja is 2.4 GHz. **D1 (2026-07-03): a terv az egyidejű üzem** — a master a stick hotspotjára STA-ként kapcsolódva figyel, közben ESP-NOW-t is vesz (azonos csatorna). Ezt az **Sz2b validálja**; ha nem stabil, **fallback: ablakos** üzem (feltöltéskor az ESP-NOW rövid szünet — a `seq`+PSRAM miatt csak késleltetés, nincs adatvesztés).
 2. **Tápzaj:** a 4G adás-tüskék rángatják az 5V-ot → külön táprail vagy bő puffer-elkó (pl. 1000 µF) a stick tápján.
 3. **RF-áthallás:** a TS-9 külső antennát vezesd ki a doboz szélére/kívülre (egyben jobb térerő).
 4. Opcionálisan földelt árnyékolólemez a két panel közé (általában felesleges, ha az antenna kint van).
@@ -85,13 +85,14 @@ Fixed-size struct (`payload_t`), nincs parse/string. Slave és master ugyanazt h
 
 ---
 
-## Master táp — HÁLÓZATI (eldöntve 2026-07-03)
+## Master táp — TISZTA HÁLÓZATI (D3, eldöntve 2026-07-03)
 A master **hálózati tápot** kap → **always-on**: az ESP sosem alszik, a WiFi + ESP-NOW folyamatosan
 él, az uplink bármikor mehet. A deep-sleep / duty-cycle energiakérdés így **tárgytalan** a masteren.
 
-- A load switch a stick 5V tápját kapcsolhatja (akár „mindig be" is), a boot-probléma sem szorít.
+- **Táplánc:** **5V adapter → sima 5V→3.3V konverter** (LDO vagy buck) a master 3.3V sínjéhez. A stick 5V-ot közvetlenül az adapterről kapja.
+- **Akkus áthidalás / UPS NINCS** (D3): egy hálózati áramszünet a mastert leállítja; a node-ok tovább mérnek és pufferelnek, a `seq`-gap az újraindulás után detektálja a kimaradást.
 - A korábban tervezett **akku/napelem üzemmód elesik** (nincs napi 1 ablakra korlátozott feltöltés).
-- A ~40 napos PSRAM-puffer megmarad, de már csak **hálózat-/felhő-kimaradás** elleni tartalék (a master maga mindig fut).
+- A ~40 napos PSRAM-puffer megmarad, de már csak **hálózat-/felhő-kimaradás** elleni tartalék (amíg van hálózati táp, a master fut).
 
 ---
 
@@ -111,11 +112,13 @@ A master **hálózati tápot** kap → **always-on**: az ESP sosem alszik, a WiF
 
 | Alkatrész | Típus | Funkció | Megjegyzés |
 |---|---|---|---|
-| Board | ESP32-S3-Zero | vétel + időbélyeg + PSRAM-puffer + felhőzés | 4 MB flash / 2 MB PSRAM; kétmagos; **hálózati táp/always-on** → a deep-sleep áram (H4: mA) tárgytalan |
+| Board | ESP32-S3-Zero | vétel + időbélyeg + felhőzés + **saját mérés** | 4 MB flash / 2 MB PSRAM; kétmagos; **hálózati táp/always-on** → a deep-sleep áram (H4: mA) tárgytalan |
+| Mérő-lánc | HBS-SCL-50 + HX711-M + DS18B20+ | **a master maga is mér** (saját kaptár, saját `unit_id` — D4) | mint a node mérőlánca; LDO-ról szűrt 3.3V |
 | Checkpoint | AT24C256-I2C modul | reset-túlélő `seq`-mentés | I²C, 32 KB, wear leveling |
 | Uplink | ZTE MF79U | 4G WiFi stick (Yettel SIM) | B20+B8; opcionális TS-9 külső antenna |
-| Táp-kapcsoló | MOSFET / load switch | uplink 5V kapcsolása | master GPIO vezérli |
-| Táp | hálózati (5V adapter) | always-on master | eldöntve 2026-07-03 |
+| Táp | 5V hálózati adapter | always-on master (tiszta hálózati, D3) | nincs akkus áthidalás |
+| 3.3V rail | 5V→3.3V konverter (LDO/buck) | master 3.3V ellátás | az 5V adapterről |
+| Táp-kapcsoló | MOSFET / load switch | uplink 5V kapcsolása (opcionális) | master GPIO; a stick amúgy is mindig tápon |
 
 ---
 

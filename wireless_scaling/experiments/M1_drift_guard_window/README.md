@@ -2,6 +2,11 @@
 
 **Típus:** Mérési chunk · **Setup:** 2 (1 node + master, hosszú futás) · **Irány:** (B) rádiós protokoll (mérési input)
 
+## ⚠️ A GUARD-WINDOW KIMENET KIHASZNÁLATLAN (2026-07-03)
+Always-on masterrel nincs slot/rendezvous-ablak → az Sz4 guard-window (amit ez a chunk táplálna)
+**tárgytalan**. **Maga a drift-mérés érvényes és historikus értékű** (a node RC-óra viselkedése,
+hő-drift), csak nem az RX időzítéséhez kell. Lásd a repo always-on döntéseit (MEMORY.md 7.).
+
 ## Cél
 A node saját **deep-sleep időzítőjének tényleges driftjének** kimérése több órás/napos futás
 alapján (master-logolt várt vs. tényleges ébredés), hőmérséklet-ingadozásban. Ez **táplálja az
