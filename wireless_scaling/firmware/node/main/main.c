@@ -63,6 +63,10 @@ static void build_payload(sz2_payload_t *p, const node_wake_state_t *st,
     p->temp             = temp;
     p->vbat             = vbat;
     p->crc              = sz2_payload_crc(p);
+
+    /* A mért adat láthatóvá tétele a soros logon (temp NAN, ha nincs bekötve hőmérő). */
+    ESP_LOGI(TAG, "payload: seq=%u weight=%.0f temp=%.2f vbat=%u mV",
+             (unsigned)p->seq, (double)p->weight, (double)p->temp, (unsigned)p->vbat);
 }
 
 #if NODE_PROFILE == NODE_PROFILE_BENCH
@@ -107,16 +111,21 @@ static void run_phase_for(uint32_t sample_interval_ms, void (*sample)(const node
 }
 
 /* --- fázis-mintavevő visszahívások (a szekvencer hívja ciklikusan) --- */
-static void sample_hx711(const node_wake_state_t *st)  { (void)st; (void)hx711_read_raw(); }
-static void sample_vbat(const node_wake_state_t *st)   { (void)st; (void)vbat_sample_mv(); }
-static void sample_ds18b20(const node_wake_state_t *st){ (void)st; (void)ds18b20_read_temp(); }
+/* A fázis-mintavevők a nyers értéket a logra is kiírják (a DMM-lépcső mellett a mért adat is látszik). */
+static void sample_hx711(const node_wake_state_t *st)  { (void)st; ESP_LOGI(TAG, "HX711 raw=%ld", (long)hx711_read_raw()); }
+static void sample_vbat(const node_wake_state_t *st)   { (void)st; ESP_LOGI(TAG, "vbat=%u mV", (unsigned)vbat_sample_mv()); }
+static void sample_ds18b20(const node_wake_state_t *st){ (void)st; ESP_LOGI(TAG, "temp=%.2f C", (double)ds18b20_read_temp()); }
 
 static void sample_espnow(const node_wake_state_t *st)
 {
-    /* Friss (részleges) mérés -> payload -> broadcast. A BENCH-ben a szenzorok stub/valós
-     * értéke megy; a cél a link-terhelés. */
+    /* Friss mérés -> payload -> broadcast. A HX711-et a leolvasáshoz fel kell hozni (a HX711-fázis
+     * végén power-downba került); a vbat_read_mv maga kapcsolja az osztót. A cél a link-terhelés is. */
+    hx711_power_up();
+    float weight = hx711_read_weight();
+    hx711_power_down();
+
     sz2_payload_t p;
-    build_payload(&p, st, hx711_read_weight(), ds18b20_read_temp(), vbat_read_mv());
+    build_payload(&p, st, weight, ds18b20_read_temp(), vbat_read_mv());
     espnow_tx_send(&p, NODE_TX_REPEAT);
 }
 
