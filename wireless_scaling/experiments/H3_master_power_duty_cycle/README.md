@@ -2,6 +2,10 @@
 
 **Típus:** Hardver chunk · **Setup:** 2 / 2.5 / 3 (valós forgalom kell hozzá) · **Irány:** (A) elektromos/energetikai
 
+## ⛔ FELFÜGGESZTVE (2026-07-03)
+A master **hálózati tápot** kap → always-on, nincs 18650 táp-pack a masteren → a duty-cycle
+átlagáram / pack-méretezés **tárgytalan**. Az alábbi leírás a korábbi akkus master-tervhez készült.
+
 ## Cél
 A master 18650 táp-packjének kimérése és a **2 órás ciklusra számolt átlagáramának**
 meghatározása **valós forgalommal**. A ~16–20 mA csak az RX duty-cycle ideális komponense
@@ -14,7 +18,7 @@ DC/DC veszteség, esetleges 4G uplink és retry-k.
 - Setup 2/2.5/3 alatt fut (valós forgalom kell, nem bench-szimuláció).
 
 ## Bemenet / előfeltételek
-- ESP32-C3 SuperMini master (2026-07-02 pivot az S3-Zero-ról, lásd H4) + 18650 táp-pack + DC/DC (buck-boost) a master tápútján.
+- ESP32-S3-Zero master + 18650 táp-pack + DC/DC (buck-boost) a master tápútján.
 - Áram-/energiamérő a teljes ciklusra (átlagáram-integrálás).
 - Működő RX-ablak-firmware (Sz3) és opcionálisan a 4G uplink (Sz5).
 

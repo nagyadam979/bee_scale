@@ -1,20 +1,12 @@
-# H4 — Master board deep-sleep áram (ESP32-S3-Zero) — LEZÁRVA, a board ELVETVE
+# H4 — Master board deep-sleep áram (ESP32-S3-Zero) — TÁRGYTALAN
 
 **Típus:** Hardver chunk · **Setup:** 0 (bench) · **Irány:** (A) elektromos/energetikai
 
-## ⛔ Kimenet / döntés (2026-07-02)
-Az ESP32-S3-Zero nyers deep-sleep árama **mA-nagyságrend** (éles darabon) — a WS2812 fedélzeti
-LED SW-kioltása (fekete-frame + data-LOW/hold) és a 4 MB flash-kényszer / boot-loop-fix (lásd
-commit-történet) UTÁN is. Ez **nagyságrenddel a node C3 ~185 µA (H1) fölött** → az S3-Zero
-**alkalmatlan** az akkus / ultralow-power masterhez.
-
-**Pivot: a master is ESP32-C3 SuperMini** (a már bizonyított node-board; a H1 deep-sleep minta
-újrahasznosítva). A master nyugalmi alapszáma ezzel a H1 C3-száma (~185 µA). A kétmagos + PSRAM
-előny nem hiányzik: az **RX-ablak és az uplink szekvenciális** (a 4G stick amúgy is ~2-3 perc alatt
-bootol az ESP-NOW vétel UTÁN), a napi puffert az **AT24C256 EEPROM** fedezi. Lásd `MEMORY.md` 7. + 8.
-
-Az alábbi eredeti, S3-specifikus leírás a mérés dokumentációjaként marad meg (a firmware/build a
-mappában szintén S3-célú — historikus artefakt).
+## ⛔ TÁRGYTALAN (2026-07-03)
+A master **hálózati tápot** kap → **always-on**, sosem alszik → a deep-sleep áram irreleváns.
+A mérés kimutatta: az S3-Zero deep sleepben **mA-t húz** (a WS2812 SW-kioltása + 4 MB flash-fix
+UTÁN is), ezért egy ideig felmerült a C3-ra váltás — de a hálózati táp okafogyottá tette, **az
+S3-Zero marad** (dual-core + PSRAM az always-on RX/uplinkhez). Az alábbi leírás historikus.
 
 ## Cél
 A **master** (ESP32-S3-Zero, Waveshare) nyers nyugalmi (deep-sleep) áramának kimérése —

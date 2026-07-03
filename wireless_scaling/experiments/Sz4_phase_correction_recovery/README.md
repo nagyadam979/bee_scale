@@ -2,6 +2,12 @@
 
 **Típus:** Szoftver chunk · **Setup:** 2 (1 node + master, hosszú futás) · **Irány:** (B) rádiós protokoll
 
+## ⚠️ NAGYRÉSZT TÁRGYTALAN (2026-07-03)
+A master **hálózati tápon always-on** → nincs vételi ablak, amit a node-nak el kéne találnia, tehát
+**nincs slot, amit tartani kell** → a fáziskorrekció/guard-window (és az M1 drift-kimenet) kihasználatlan.
+A node deep-sleep drift csak a saját belső logjait érinti, de a hiteles időbélyeg a masteré. Az alábbi
+leírás a korábbi duty-cycle-es master-modellhez készült.
+
 ## Cél
 A node deep-sleep órájának driftjét kompenzáló slot-tartás: a master oldali
 `next_slot_offset_s` / `clock_correction_s` számítás, és a node szélesebb keresése ACK-hiányra

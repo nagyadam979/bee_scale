@@ -36,7 +36,7 @@ Fixed-size struct (`payload_t`), nincs parse/string. Slave és master ugyanazt h
 ### Node → Master: ESP-NOW
 - Connectionless, nincs WiFi-asszociáció → rövid ébredés→küldés→alvás ciklus, alacsony node-fogyasztás.
 - **MAC-szintű ACK ≠ alkalmazás-szintű kézbesítés.** Megbízható átvitelhez app-szintű ack kell: a master visszaigazol, a node timeoutra retransmittál; a `seq` kiszűri a duplikátumot és detektálja a hiányt.
-- **Adatvesztés vs. energia kompromisszum:** vagy "tűzz-és-felejts" + `seq`-alapú gapdetektálás az elemzésben (kevesebb node-fogyasztás), vagy app-ack (több ébrenlét, garantáltabb kézbesítés). Kutatási idősornál a detektálható gap kezelhető → a könnyebbik út is védhető.
+- **Adatvesztés vs. energia kompromisszum:** vagy "tűzz-és-felejts" + `seq`-alapú gapdetektálás az elemzésben (kevesebb node-fogyasztás), vagy app-ack (több ébrenlét, garantáltabb kézbesítés). Kutatási idősornál a detektálható gap kezelhető → a könnyebbik út is védhető. **Always-on masterrel** (hálózati táp, 2026-07-03) a master mindig figyel → a node tűzz-és-felejts broadcastja mindig megérkezik, nem kell a node-ébredést a master ablakához igazítani (a rendezvous/drift-guard nagyrészt felesleges).
 - Titkosítás opcionálisan: PMK/LMK AES-128.
 
 ### Master → Felhő: MQTT QoS 1 (vagy HTTPS)
@@ -46,17 +46,15 @@ Fixed-size struct (`payload_t`), nincs parse/string. Slave és master ugyanazt h
 
 ## Adattárolás és perzisztencia
 
-### Napi puffer az EEPROM-ban (nincs PSRAM)
-- **2026-07-02 pivot:** a master ESP32-C3 SuperMini lett (az S3-Zero deep sleepben mA-t húz, H4) → **nincs PSRAM**, a korábbi ~40 napos RAM-puffer terve elesik.
-- A valós igény nem 40 nap, hanem a **napi feltöltési ablakok közti** adat megtartása + reset-túlélés — ezt közvetlenül az **AT24C256 EEPROM** adja (perzisztens → a reset-túlélés is ingyen).
-- **Kapacitás:** a fixed-size `payload_t` ~10-12 byte/rekord → 32 KB ≈ ~2800-3200 rekord. A napi puffer akkor elég, ha `node_szám × napi_mintaszám ≲ ~3000`. Példák: 1 node @ negyedóra (96/nap) → ~1 hónap; 4 node → ~1 hét; 12 node → ~2-3 nap. A hobbi-skálán (pár node) egy nap bőven belefér, több napnyi tartalékkal.
-- Ha a node-szám × mintaszám kinőné a 32 KB-ot: sűrűbb uplink-ablak, nagyobb EEPROM (AT24C512), vagy külső SPI flash — de a jelenlegi skálán nem kell.
+### PSRAM mint tömeg-puffer
+- Becslés ~32 byte/rekord, ~1.5 MB elérhető PSRAM → ~49 000 rekord. 12 node negyedóránként ~1150 rekord/nap → **~40 napnyi** puffer felhő-kimaradás esetén is.
+- **Megszorítás:** a PSRAM nem perzisztens — reset/áramszünet törli. Ezt veszi át az EEPROM checkpoint + `seq`-gapdetektálás.
 
 ### EEPROM checkpoint — AT24C256-I2C
 - I²C, **32 KB** (256 kbit; a "256kB" bolti jelölés félrevezető), jumperes cím (0x50–0x57) + hardveres write-protect, fedélzeti pull-up.
 - Lapméret 64 byte → a checkpoint-slotokat lap-igazítva, hogy egy írás egyetlen page-write legyen.
 - Endurance 1M írás/cella + slot-alapú wear leveling → gyakorlatilag soha nem kopik el ritka checkpointnál.
-- Tartalom: **(a)** a még fel nem töltött rekordok napi puffere, **(b)** node-onkénti utolsó `seq` + timestamp + integritás-jelző (a legfrissebb érvényes slot kiválasztásához reset után).
+- Tartalom: node-onkénti utolsó `seq` + timestamp + integritás-jelző (a legfrissebb érvényes slot kiválasztásához reset után).
 - Bekötés: VCC (3.3V), GND, SDA, SCL — `Wire.begin(sda, scl)`.
 
 ---
@@ -83,17 +81,17 @@ Fixed-size struct (`payload_t`), nincs parse/string. Slave és master ugyanazt h
 
 ### Energiamérleg (uplink)
 - Napi 1 bekapcsolás, ~2 perc aktív: ~2 W × 2 perc ≈ **0,067 Wh/nap** ≈ **~13 mAh/nap** (5V-on). Elhanyagolható.
-- A master táp-méretezésnél nem ez dominál, hanem a **master ESP saját fogyasztása** a vételi ablakok között (mennyit alszik vs. mennyit figyel ESP-NOW-ra).
+- Hálózati tápon (2026-07-03) a master energiamérlege nem szorít (always-on); ez a becslés a korábbi akkus tervhez készült.
 
 ---
 
-## Master táp — kétféle üzemmód
-A hardvert a szigorúbb (akkus) esetre tervezzük, a szoftver flaggel kezeli a különbséget; a helyszín dönt.
+## Master táp — HÁLÓZATI (eldöntve 2026-07-03)
+A master **hálózati tápot** kap → **always-on**: az ESP sosem alszik, a WiFi + ESP-NOW folyamatosan
+él, az uplink bármikor mehet. A deep-sleep / duty-cycle energiakérdés így **tárgytalan** a masteren.
 
-- **A) Folyamatos táp** (hálózat / nagy napelem+puffer): a load switch "mindig be", uplink folyamatosan mehet, nincs boot-probléma.
-- **B) Csak akku/napelem:** a master a nap 99%-ában lekapcsolva tartja az uplinket, napi 1 ablakra kapcsol; a load switch + (szükség esetén) HTTP-vezérlés kezeli.
-
-A napi 1 feltöltés az EEPROM napi pufferével biztonságos a hobbi-skálán (pár node); a puffer-tartalék (lásd fenti kapacitás-becslés) a node-szám függvényében pár kihagyott ablakot is elnyel.
+- A load switch a stick 5V tápját kapcsolhatja (akár „mindig be" is), a boot-probléma sem szorít.
+- A korábban tervezett **akku/napelem üzemmód elesik** (nincs napi 1 ablakra korlátozott feltöltés).
+- A ~40 napos PSRAM-puffer megmarad, de már csak **hálózat-/felhő-kimaradás** elleni tartalék (a master maga mindig fut).
 
 ---
 
@@ -113,11 +111,11 @@ A napi 1 feltöltés az EEPROM napi pufferével biztonságos a hobbi-skálán (p
 
 | Alkatrész | Típus | Funkció | Megjegyzés |
 |---|---|---|---|
-| Board | ESP32-C3 SuperMini | vétel + időbélyeg + EEPROM-puffer + felhőzés | egymagos RISC-V; **2026-07-02 pivot az S3-Zero-ról** (az S3 deep sleepben mA-t húz, H4); ~185 µA alvó /H1/; PSRAM nem kell (szekvenciális RX→uplink, napi EEPROM-puffer) |
+| Board | ESP32-S3-Zero | vétel + időbélyeg + PSRAM-puffer + felhőzés | 4 MB flash / 2 MB PSRAM; kétmagos; **hálózati táp/always-on** → a deep-sleep áram (H4: mA) tárgytalan |
 | Checkpoint | AT24C256-I2C modul | reset-túlélő `seq`-mentés | I²C, 32 KB, wear leveling |
 | Uplink | ZTE MF79U | 4G WiFi stick (Yettel SIM) | B20+B8; opcionális TS-9 külső antenna |
 | Táp-kapcsoló | MOSFET / load switch | uplink 5V kapcsolása | master GPIO vezérli |
-| Táp | nyitott | folyamatos vagy akku/napelem | helyszínfüggő |
+| Táp | hálózati (5V adapter) | always-on master | eldöntve 2026-07-03 |
 
 ---
 
@@ -127,4 +125,4 @@ A napi 1 feltöltés az EEPROM napi pufferével biztonságos a hobbi-skálán (p
 - **WiFi/ESP-NOW azonos csatorna** — korán tesztelendő (kész).
 - **MF79U firmware** tápra-felregisztrálása — tesztelendő (lásd uplink).
 - **2.4 GHz koegzisztencia** — feltöltés alatt ESP-NOW szünetel.
-- **Master ESP nyugalmi fogyasztása** dominálja a táp-mérleget — külön végigszámolandó akkus esetben.
+- ~~**Master ESP nyugalmi fogyasztása** dominálja a táp-mérleget~~ — **tárgytalan** (2026-07-03: hálózati táp, always-on master).

@@ -1,7 +1,7 @@
 # bee_scale · wireless_scaling — Modul memória
 
 > Tartós alapdokumentum a node-ház (2. fázis) almodulhoz. Ez orientálja a jövőbeli munkamenetet: cél, döntések, geometria-állapot, nyitott kérdések. Frissítsd, amikor egy döntés megszületik vagy egy geometriai fázis lezárul. A **részletes napló a commit-történet** (mit/miért/mi-működött/mi-nem).
-> Utolsó frissítés: 2026-07-02 (**master-pivot: ESP32-S3-Zero → ESP32-C3 SuperMini** — a H4 deep-sleep mérés szerint az S3 mA-t húz; lásd 7. + 8./H4. Korábban 2026-06-29: M1 chunk — node óra-drift; H1 + H2 + Sz2; rendszerarchitektúra a 7.; geometria a 2026-06-23-i állapot)
+> Utolsó frissítés: 2026-07-03 (**master HÁLÓZATI TÁP → always-on**: a master ESP32-S3-Zero marad /dual-core + PSRAM/, mert a deep-sleep áram tárgytalan; ez egyszerűsíti a rendezvous/drift-réteget is — lásd 7. + 8./H4. Korábban 2026-06-29: M1 chunk — node óra-drift; H1 + H2 + Sz2; geometria a 2026-06-23-i állapot)
 
 > **Státusz:** a geometria **stabil és validált** — 2 nyomtatott part (`housing`, `bottom_lid`), 1-1 összefüggő solid. **Jelenleg senki nem dolgozik a modell geometriáján** — a következő geometriai munka KÜLÖN döntéssel indul. A modell forrása: `enclosure.py` (minden méret a fájl tetején, kommentált változó).
 
@@ -54,19 +54,20 @@ A méhkaptár-mérleg **vezeték nélküli node** teljes fejlesztése — elektr
 > Részletes doksi + BOM-megjegyzések: `docs/new_base_components.md`. BOM-tábla: `docs/alkatreszek.csv`. **Kód még nincs** — ez a megegyezett terv, nem implementáció.
 
 - **Topológia:** master–slave csillag (több slave node/kaptár → 1 master). Kommunikáció **ESP-NOW** (slave→master), a master WiFi STA + ESP-NOW **azonos csatornán** (különben csomagvesztés; ez kész/tesztelt).
-- **Master vételi pipeline:** producer (ESP-NOW callback → `xQueueSendFromISR`, semmi más) / consumer (időbélyegez, pufferel, felhőz). **Egymagos C3-on** a kettő egy magon fut queue-val — nincs kétmagos igény: az **RX-ablak és az uplink szekvenciális** (előbb ESP-NOW vétel + EEPROM-puffer, utána a 4G stick táp alá → ~2-3 perc boot → feltöltés), nem párhuzamos. **Időbélyeg a masteré** (`rx_millis`+NTP); a slave-idő deep sleep alatt megbízhatatlan.
+- **Master vételi pipeline:** producer (ESP-NOW callback → `xQueueSendFromISR`, semmi más) / consumer (másik mag: időbélyegez, pufferel, felhőz). A master **hálózati tápon always-on** (nem alszik) → a két mag folyamatosan viszi az RX-et és a felhős I/O-t, egymás akadályozása nélkül. **Időbélyeg a masteré** (`rx_millis`+NTP); a slave-idő deep sleep alatt megbízhatatlan.
 - **Adatformátum:** fixed-size `payload_t` (`packed`): `unit_id, seq, weight, temp, vbat`. A `seq` adja a hiány/duplikátum-detektálást.
-- **Perzisztencia:** **SD ELHAGYVA.** A C3-nak nincs PSRAM-ja → a korábbi ~40 napos PSRAM-puffer ELESIK; a valós igény a **napi feltöltési ablakok közti** adat + reset-túlélés, ezt az **AT24C256 EEPROM** (32 KB = 256 kbit, slot-wear-leveling) fedezi: egy nap adata (pár node × napi mintaszám × ~10 B fixed-size rekord) bőven belefér. Node-onkénti utolsó `seq`+ts checkpoint + `seq`-gapdetektálás a hiány/duplikátum ellen.
+- **Perzisztencia:** **SD ELHAGYVA.** Tömeg-puffer a master **PSRAM**-jában (~40 nap; always-on masterrel ez immár tisztán **hálózat-/felhő-kimaradás** elleni tartalék — a master maga mindig fut), reset-túlélést **AT24C256 EEPROM checkpoint** (32 KB = 256 kbit, slot-wear-leveling, node-onkénti utolsó `seq`+ts) + `seq`-gapdetektálás ad.
 - **Felhőzés:** MQTT QoS 1 / HTTPS, batch-elve, sikeres feltöltés után EEPROM checkpoint.
 - **Uplink:** **ZTE MF79U** 4G LTE WiFi stick (Yettel, B20/B8 vidéki sávok; opcionális TS-9 külső antenna). A master a stick **WiFi hotspotjára** csatlakozik STA-ként (nincs USB host gond). Load switch/MOSFET kapcsolja a stick 5V tápját (master GPIO).
-- **Master táp — 2 üzemmód (HW a szigorúbbra, SW flag dönt):** A) folyamatos táp (uplink mindig be); B) akku/napelem (napi 1 feltöltési ablak; a napi EEPROM-puffer fedezi a két feltöltés közti adatot).
-- **Boardok:** node = ESP32-C3 SuperMini (egymagos, deep sleep), master = **szintén ESP32-C3 SuperMini** — 2026-07-02-i pivot: az eredetileg tervezett ESP32-S3-Zero deep sleepben mA-t húz (éles mérés, H4) → alkalmatlan az ultralow-power/akkus módhoz; a már bizonyított C3-ra váltunk (H1: ~185 µA). Egymagos elég (lásd vételi pipeline), PSRAM nem kell (lásd perzisztencia).
+- **Master táp — HÁLÓZATI (eldöntve 2026-07-03):** folyamatos hálózati táp → az uplink mindig mehet, a master **always-on** (nincs deep sleep). A korábbi akku/napelem üzemmód (napi 1 ablak) elesik; a ~40 napos PSRAM-puffer így csak hálózat-/felhő-kimaradás elleni tartalék.
+- **Boardok:** node = ESP32-C3 SuperMini (egymagos, deep sleep), master = **ESP32-S3-Zero** (2 MB PSRAM, kétmagos) — hálózati táp/always-on, ezért a deep-sleep áram tárgytalan (a H4 mérés szerint mA-t húzna, de nem alszik; lásd 8./H4).
+- **Always-on következmény a timing-rétegre:** mivel a master folyamatosan figyel, a node deep-sleep drift **NEM érinti a vételt** (nincs rendezvous-ablak, amit el lehet véteni), az időbélyeg amúgy is a masteré. Ezért az **Sz3 rendezvous/slot és az Sz4 drift-guard-window nagyrészt felesleges**, az **M1 guard-window kimenete kihasználatlan**. Megmarad: `seq`-gap hiánydetektálás + broadcast-redundancia; nagy flottánál (12 node) a broadcast-ütközés kezelése (jitter/redundancia) maradhat kérdés.
 
 **Nyitott architektúra-kérdések:**
 1. **MF79U firmware** tápra-felregisztrálása: tápot adva jön-e net beavatkozás nélkül? (Ha nem → HTTP POST a `192.168.x.1` admin végpontra, vagy „mindig bekapcsolva" üzem.) — éles darabon mérendő.
-2. **Master ESP átlagfogyasztása** dominálja a táp-mérleget akkus esetben — a nyugalmi alap ismert (C3, ~185 µA /H1/), a duty-cycle (mennyit alszik vs. ESP-NOW-ra figyel + uplink) még végigszámolandó (H3).
+2. ~~Master ESP nyugalmi fogyasztása~~ — **TÁRGYTALAN** (2026-07-03): a master hálózati tápon always-on, nincs akkus táp-mérleg a masteren.
 3. **HX711 táp:** tiszta, LDO-ról szűrt 3.3V kell (nem a süllyedő cellasín), különben a `weight` az akku töltöttségével driftel.
-4. **ESP-NOW kézbesítés:** app-ack (több ébrenlét) vs. tűzz-és-felejts + `seq`-gap (kevesebb fogyasztás) — kutatási idősornál a gap kezelhető. Eldöntendő.
+4. **ESP-NOW kézbesítés:** az always-on master (mindig figyel) mellett a node **tűzz-és-felejts** broadcastja (+ `seq`-gap az elemzésben) a fő irány — nem kell a node-ébredést a master ablakához igazítani. App-ack csak ha garantált kézbesítés kell; nagy flottánál a broadcast-ütközés kezelése a nyitott pont.
 
 ## 8. Kísérleti eredmények / mérések (`experiments/`)
 
@@ -89,11 +90,11 @@ A méhkaptár-mérleg **vezeték nélküli node** teljes fejlesztése — elektr
 - **Hőfüggés NEM jellemezhető** ebből a futásból (a C3 belső die-hő csak 23,8–28,8 °C közt mozgott, R²=0,019; beltéri stabil hő). Tág hő-ingás (kaptár/kültér, nappal-éjjel) kell hozzá. A C3 SuperMini-n nincs külső 32k kristály → a drift kompenzálatlan, és **deep sleep alatt nincs RC-újrakalibráció** (a hő-drift menet közben kompenzálatlan; lásd a kutatás ~1000 ppm/°C becslését).
 - **Guard-window (Sz4-nek):** `guard_s(N) = |drift|·N·T + margin` (margin = 3× residual-szórás ≈ 0,34 s). N=10 → ~2 s, N=60 → ~11 s, **N=1440 (12 h @ 30 s) → ~260 s.**
 - **Setup:** tűzz-és-felejts beacon — **NINCS Sz3 ACK/slot** (a README azt írta elő, de a master-időbélyeg úgyis a referencia → kivágva). Node deep-sleepből 30 s-onként 1 ESP-NOW broadcast (RTC_DATA_ATTR-megőrzött **abszolút** cycle# + boot_id), ébredésenként 3× redundancia. **A Sz2 PHY-fix** (`set_protocol` LR-nélkül + `esp_now_set_peer_rate_config` 11b/1M_L mindkét oldalon + master PS_NONE) **és a H1 deep-sleep minta** (USB-JTAG-pad lekapcsolás, `gpio_hold`) **újrahasználva.** Offline Python host- ÉS master-referencián illeszt (`m1_drift_analyze.py` + `m1_to_json.py` → CSV + JSON; `log.txt` a nyers log).
-- **ANOMÁLIA — 87,9% csomagvesztés (88/726 cycle):** erős RSSI (átlag −30 dBm) mellett sok többperces blackout (max ~34 perc; 0 logger-reconnect → RF/ESP-NOW-RX szintű, nem USB). **A driftet NEM rontja** (abszolút cycle# → a regresszió a meglévő pontokra illeszt, R²=1,0). Ez a **worst-case** setup (C3↔classic-ESP32, ideiglenes pad, másik szoba). **Az adatvesztés-kivizsgálás a VÉGLEGES hardverrel (a master immár ESP32-C3 SuperMini — lásd 2026-07-02 pivot, H4) külön, Sz2/Sz3 alatt — NEM az M1 scope-ja.**
+- **ANOMÁLIA — 87,9% csomagvesztés (88/726 cycle):** erős RSSI (átlag −30 dBm) mellett sok többperces blackout (max ~34 perc; 0 logger-reconnect → RF/ESP-NOW-RX szintű, nem USB). **A driftet NEM rontja** (abszolút cycle# → a regresszió a meglévő pontokra illeszt, R²=1,0). Ez a **worst-case** setup (C3↔classic-ESP32, ideiglenes pad, másik szoba). **Az adatvesztés-kivizsgálás a VÉGLEGES hardverrel (ESP32-S3-Zero master) külön, Sz2/Sz3 alatt — NEM az M1 scope-ja.**
 
-**H4 — master deep-sleep áram (ESP32-S3-Zero) — a board ELVETVE, PIVOT C3-ra (2026-07-02):**
-- Az S3-Zero nyers deep-sleep árama **mA-nagyságrend** (éles darabon) — a WS2812 fedélzeti LED SW-kioltása (fekete-frame + data-LOW/hold) és a 4 MB flash-kényszer / boot-loop-fix után is. Ez **nagyságrenddel a node C3 ~185 µA (H1) fölött** → az S3-Zero alkalmatlan az akkus / ultralow-power masterhez.
-- **Döntés: a master is ESP32-C3 SuperMini** (a már bizonyított node-board; H1 deep-sleep minta újrahasznosítva). A master nyugalmi alapszáma ezzel = a H1 C3-száma (~185 µA); a kétmagos + PSRAM előnyre nincs szükség (7.: szekvenciális RX→uplink — a 4G stick amúgy is ~2-3 perc alatt bootol a vétel után —, napi puffer az AT24C256 EEPROM-ban). BOM-hatás: az S3-Zero kiesik, a C3 master-darabszáma +1.
+**H4 — master deep-sleep áram (ESP32-S3-Zero) — TÁRGYTALAN (2026-07-03):**
+- A mérés kimutatta: az S3-Zero deep sleepben **mA-nagyságrendet** húz (a WS2812 fedélzeti LED SW-kioltása /fekete-frame + data-LOW/hold/ és a 4 MB flash-kényszer / boot-loop-fix UTÁN is). Emiatt egy ideig felmerült a **C3-ra váltás** (2026-07-02 pivot, majd visszavonva).
+- **Végül a master HÁLÓZATI TÁPOT kap → always-on, sosem alszik** → a deep-sleep áram irreleváns. Az **S3-Zero marad** (dual-core + PSRAM az always-on RX/uplinkhez). A H4 firmware/mappa historikus artefakt; a chunk lezárva/tárgytalan.
 
 ## 9. Mappastruktúra és modul-fájlok
 

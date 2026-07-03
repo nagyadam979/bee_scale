@@ -2,6 +2,12 @@
 
 **Típus:** Szoftver chunk · **Setup:** 1 (1 node + 1 master, padon) · **Irány:** (B) rádiós protokoll
 
+## ⚠️ NAGYRÉSZT TÁRGYTALAN (2026-07-03)
+A master **hálózati tápon always-on** → mindig figyel, így a **rendezvous/slot-logika felesleges**
+(a node tűzz-és-felejts broadcastja mindig megérkezik; a hiánydetektálás `seq`-gapből megy). Ami
+esetleg megmaradhat: az **app-szintű ACK** csak akkor, ha garantált kézbesítés kell — de kutatási
+idősornál a `seq`-gap kezelhető. Az alábbi leírás a korábbi duty-cycle-es master-modellhez készült.
+
 ## Cél
 A protokoll-mag: **slot-logika, HELLO/batch, app-szintű ACK, `seq`-duplikátumszűrés, ACK-vezérelt
 buffer-törlés** (`clear_buffer_until_seq`). A MAC-szintű ACK ≠ alkalmazás-szintű kézbesítés — itt

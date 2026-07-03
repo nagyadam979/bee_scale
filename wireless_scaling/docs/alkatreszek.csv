@@ -1,5 +1,6 @@
  alkatrész név,funkció, ár (HUF Ntt), node, master
-esp32 C3 Supermin,"MCU (single core, 400kB SRAM) - node ÉS master (2026-07-02 pivot az S3-Zero-ról)",850,3,1
+esp32 C3 Supermin,"MCU (single core, 400kB SRAM)",850,3,0
+ESP32-S3-Zero,"MCU (dual core, 512kB SRAM, 2MB PSRAM) - master, hálózati táp/always-on",2350,0,1
 AT24C256-I2C,EEPROM 32KB (256kbit),349,0,1
 HBS-SCL-50,mégleg cella,366,3,1
 "953R 0,1%",prec. ellenállás,66,6,2

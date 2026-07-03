@@ -41,8 +41,8 @@ Háttér / rendszerterv: `../MEMORY.md` (7. szakasz), `../docs/new_base_componen
 |---|---|---|---|
 | H1 | [`H1_node_board_prep/`](H1_node_board_prep/) | 0 | LED leszedve, deep-sleep áram mérve (gyári vs. módosított) |
 | H2 | [`H2_hx711_power_path/`](H2_hx711_power_path/) | 0 | HX711 nyugalmi áram + excitation-lekapcsolás igazolva |
-| H3 | [`H3_master_power_duty_cycle/`](H3_master_power_duty_cycle/) | 2/2.5/3 | Master 2h-ciklus átlagáram valós forgalommal |
-| H4 | [`H4_master_deep_sleep/`](H4_master_deep_sleep/) | 0 | **S3-Zero master deep-sleep mA → board ELVETVE; a master is C3 SuperMini (pivot 2026-07-02)** |
+| H3 | [`H3_master_power_duty_cycle/`](H3_master_power_duty_cycle/) | — | **FELFÜGGESZTVE** (2026-07-03) — master hálózati táp/always-on, nincs akku-pack méretezés |
+| H4 | [`H4_master_deep_sleep/`](H4_master_deep_sleep/) | 0 | **TÁRGYTALAN** (2026-07-03) — master hálózati táp/always-on, nem alszik (a mérés: S3 mA-t húzna) |
 
 ### Szoftver
 | Chunk | Mappa | Setup | Egymondatos kimenet |
@@ -50,8 +50,8 @@ Háttér / rendszerterv: `../MEMORY.md` (7. szakasz), `../docs/new_base_componen
 | Sz0 | [`Sz0_wire_protocol/`](Sz0_wire_protocol/) | Setup 1 előtt | Verziózott közös packet/header (node ↔ master szerződés) |
 | Sz1 | [`Sz1_node_sampling_ring_buffer/`](Sz1_node_sampling_ring_buffer/) | 0 | Korrekt `seq`-elt mintasor a ring bufferben, rádió nélkül |
 | Sz2 | [`Sz2_espnow_low_level/`](Sz2_espnow_low_level/) | 1 | 1000 csomag veszteség/lefagyás nélkül padon |
-| Sz3 | [`Sz3_rendezvous_app_ack/`](Sz3_rendezvous_app_ack/) | 1 | Buffer pontosan az ACK-elt mintákig ürül |
-| Sz4 | [`Sz4_phase_correction_recovery/`](Sz4_phase_correction_recovery/) | 2 | Node a slotjában marad N cikluson át injektált/mért drift mellett |
+| Sz3 | [`Sz3_rendezvous_app_ack/`](Sz3_rendezvous_app_ack/) | 1 | **Nagyrészt tárgytalan** always-on masterrel (tűzz-és-felejts); csak az app-ack marad opció, ha garantált kézbesítés kell |
+| Sz4 | [`Sz4_phase_correction_recovery/`](Sz4_phase_correction_recovery/) | 2 | **Nagyrészt tárgytalan** — always-on master, nincs slot/rendezvous-ablak, amit tartani kéne |
 | Sz5 | [`Sz5_master_time_uplink/`](Sz5_master_time_uplink/) | 2/3 | Rekonstruált abszolút timestamp ±1 perc, 4G uplink |
 
 ### Mérés
@@ -60,6 +60,12 @@ Háttér / rendszerterv: `../MEMORY.md` (7. szakasz), `../docs/new_base_componen
 | M1 | [`M1_drift_guard_window/`](M1_drift_guard_window/) | 2 | Tényleges deep-sleep timer drift → Sz4 guard-window paraméter |
 
 ---
+
+> **2026-07-03 — hálózati tápú (always-on) master:** mivel a master sosem alszik és mindig figyel,
+> a node deep-sleep drift nem érinti a vételt. Ezért **H3/H4 tárgytalan** (nincs master-akku), és az
+> **Sz3 rendezvous / Sz4 drift-guard nagyrészt felesleges** (tűzz-és-felejts + `seq`-gap). Az M1
+> guard-window kimenete kihasználatlan. Az alábbi kritikus-út ábra a korábbi (duty-cycle-es master)
+> modellt tükrözi — az always-on ág rövidebb: **H1 → H2 → Sz0 → Sz1 → Sz2 → (Sz5 uplink)**.
 
 ## Kritikus út és párhuzamos utak
 
