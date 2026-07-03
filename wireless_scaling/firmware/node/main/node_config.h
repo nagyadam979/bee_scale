@@ -57,14 +57,18 @@
 /* ===================== PIN-TERV (ESP32-C3 SuperMini) ===================== */
 /* Kivezetve: GPIO0..10, 20, 21. ADC-képes: GPIO0..4. Strapping (kerülendő): GPIO2, 8, 9. */
 
-/* HX711 — H1/H2 fix bekötés, NE változtasd (a chunkök azonos bekötése). */
-#define HX711_PD_SCK_GPIO    GPIO_NUM_5   /* PD_SCK: HIGH>60us = power-down; olvasáskor SCK */
-#define HX711_DOUT_GPIO      GPIO_NUM_6   /* DOUT: adat (input), LOW = konverzió kész */
+/* HX711 — a CASINGBE ÉPÍTETT mérleg tényleges bekötése (NEM a H1/H2 GPIO5/6!): a fizikai
+ * huzalozás miatt SCK=GPIO4, DT=GPIO3. Mindkettő a VDD3P3_RTC tartományban (GPIO0..5) -> a
+ * PD_SCK deep-sleep HIGH-hold (gpio_hold) működik. NE változtasd (a HW már így van kötve). */
+#define HX711_PD_SCK_GPIO    GPIO_NUM_4   /* PD_SCK: HIGH>60us = power-down; olvasáskor SCK */
+#define HX711_DOUT_GPIO      GPIO_NUM_3   /* DOUT: adat (input), LOW = konverzió kész */
 
-/* vbat feszültségosztó ADC + NPN low-side kapcsoló. */
-#define VBAT_ADC_GPIO        GPIO_NUM_4   /* ADC1 bemenet (info; a driver a csatornát használja) */
+/* vbat feszültségosztó ADC + NPN low-side kapcsoló.
+ * ADC1 lábak: GPIO0..4. Foglalt: GPIO4(SCK), GPIO3(DT). Szabad ADC1: GPIO0/1 (GPIO2 strapping).
+ * -> vbat ADC = GPIO1 (ADC1_CH1). A vbat-osztó még nincs bekötve, GPIO0 is szabad, ha kényelmesebb. */
+#define VBAT_ADC_GPIO        GPIO_NUM_1   /* ADC1 bemenet (info; a driver a csatornát használja) */
 #define VBAT_ADC_UNIT        ADC_UNIT_1   /* ADC1 — WiFi mellett is megbízható (ADC2 nem!) */
-#define VBAT_ADC_CHANNEL     ADC_CHANNEL_4/* GPIO4 == ADC1 csatorna 4 a C3-on */
+#define VBAT_ADC_CHANNEL     ADC_CHANNEL_1/* GPIO1 == ADC1 csatorna 1 a C3-on */
 #define VBAT_ADC_ATTEN       ADC_ATTEN_DB_12 /* ~0..2.5 V lineáris (a leosztott ~2.1 V belefér) */
 #define VBAT_SW_GPIO         GPIO_NUM_7   /* NPN bázis (10k-n át); HIGH = osztó él, LOW = lekapcsol */
 
