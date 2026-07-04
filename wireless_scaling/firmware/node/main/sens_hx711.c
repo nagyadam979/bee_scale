@@ -59,6 +59,12 @@ void hx711_init(void)
 
 void hx711_power_up(void)
 {
+    /* A power_down() GPIO-holdot tett a PD_SCK-ra (befagyasztja HIGH-ban, AKTÍV módban is).
+     * Enélkül a set_level(0) HATÁSTALAN -> a chip power-downban ragad -> DOUT timeout.
+     * (Ez okozta a 2. fázis power_down UTÁNI olvasások — pl. 6. fázis — timeoutjait.) */
+    gpio_hold_dis(HX711_PD_SCK_GPIO);
+    gpio_deep_sleep_hold_dis();
+
     gpio_set_level(HX711_PD_SCK_GPIO, 0);          /* LOW = power-up, excitation BE */
     vTaskDelay(pdMS_TO_TICKS(HX711_SETTLE_MS));    /* első stabil konverzióra várunk */
 }
