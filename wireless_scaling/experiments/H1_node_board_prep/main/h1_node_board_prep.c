@@ -68,14 +68,27 @@
 
 /*
  * HX711 GPIO-k. Általános IO, NEM strapping, nincs USB/UART/SPI-flash ütközés.
- *   PD_SCK = GPIO5, DOUT = GPIO6 — szabadon átírható a tényleges bekötésedhez.
+ *   PD_SCK = GPIO4, DOUT = GPIO3 — a casing tényleges bekötése (lásd node_config.h).
  *   A deep sleep alatti HIGH-tartást a C3-on a gpio_hold_en() + gpio_deep_sleep_hold_en()
  *   biztosítja — a C3-nak NINCS RTCIO perifériája (SOC_RTCIO_PIN_COUNT=0), így rtc_gpio_*
- *   nem elérhető. GPIO5 azért is jó választás, mert GPIO0..5 a VDD3P3_RTC tartományba esik
+ *   nem elérhető. GPIO4 azért is jó választás, mert GPIO0..5 a VDD3P3_RTC tartományba esik
  *   (ez számít, ha később GPIO-wakeupot is akarnánk deep sleepből).
  */
-#define HX711_PD_SCK_GPIO       GPIO_NUM_5   /* HX711 PD_SCK (power-down clock) */
-#define HX711_DOUT_GPIO         GPIO_NUM_6   /* HX711 DOUT  (adat, itt nem olvassuk) */
+#define HX711_PD_SCK_GPIO       GPIO_NUM_4   /* HX711 PD_SCK (power-down clock) */
+#define HX711_DOUT_GPIO         GPIO_NUM_3   /* HX711 DOUT  (adat, itt nem olvassuk) */
+
+/*
+ * A CASINGBE ÉPÍTETT, TELJES node TOVÁBBI aktív lábai (ezeket az eredeti H1-váz NEM kezelte,
+ * mert csak a csupasz boardot mérte — de a teljes elektronikán KRITIKUSAK az alvóáramra).
+ * Egyeznek a firmware/node/main/node_config.h bekötésével.
+ *   - VBAT_SW_GPIO (GPIO10): a 10k/10k vbat-osztó low-side NPN-kapcsolójának bázisa. HA a láb
+ *     alvás közben LEBEG, az NPN részben nyithat -> az osztó folyamatosan szivárog az akkusínről
+ *     (~3,7 V / 20 kΩ ≈ 185 µA). Ezért alvásra EXPLICIT LOW + GPIO-hold: az NPN biztosan ZÁR.
+ *   - DS18B20_GPIO (GPIO7): 1-Wire adatláb (HW 4,7k felhúzóval). Itt nincs bekötve hőmérő /
+ *     nem olvassuk -> bemenetnek hagyjuk (a felhúzót nem hajtjuk).
+ */
+#define VBAT_SW_GPIO            GPIO_NUM_10  /* vbat-osztó NPN bázis: LOW = osztó lekapcsol */
+#define DS18B20_GPIO            GPIO_NUM_7   /* DS18B20 1-Wire (itt nem használt) */
 
 /*
  * Beépített kék user LED. A deep-sleep mérésnél KIKAPCSOLVA tartjuk.
@@ -127,6 +140,39 @@ static void hx711_power_down(void)
 }
 
 /*
+ * A teljes node TOVÁBBI perifériáinak alvásbarát beállítása (a HX711-en/LED-en túl).
+ * KRITIKUS a deep-sleep áramra: a vbat-osztó NPN-kapcsolóját (GPIO10) EXPLICIT LOW-ra hajtjuk,
+ * hogy az NPN biztosan ZÁRJON és a 10k/10k osztó ne szivárogjon (a lebegő bázis részleges
+ * nyitást és ~185 µA szivárgást okozhat). A DS18B20-lábat bemenetnek hagyjuk (HW felhúzó).
+ * A GPIO10 LOW szintjének deep sleep alatti megtartását a hold_critical_gpios_for_sleep() végzi.
+ */
+static void extra_peripherals_sleep_safe(void)
+{
+    gpio_config_t sw_cfg = {
+        .pin_bit_mask = (1ULL << VBAT_SW_GPIO),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&sw_cfg));
+    ESP_ERROR_CHECK(gpio_set_level(VBAT_SW_GPIO, 0));   /* NPN OFF -> osztó lekapcsol */
+
+    /* DS18B20 adatláb bemenetnek, felhúzás nélkül (a felhúzó a HW-en van, nem hajtjuk). */
+    gpio_config_t onewire_cfg = {
+        .pin_bit_mask = (1ULL << DS18B20_GPIO),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&onewire_cfg));
+
+    ESP_LOGI(TAG, "Extra periferiak alvasra: vbat NPN(GPIO%d)=LOW (oszto le), DS18B20(GPIO%d)=input",
+             VBAT_SW_GPIO, DS18B20_GPIO);
+}
+
+/*
  * A kék user LED-et biztosan kikapcsolja (a deep-sleep mérés alatt sötét).
  * A polaritás darabfüggő lehet; itt OUTPUT-ra állítjuk és kioltjuk mindkét feltevés
  * szerint biztonságosan: a leggyakoribb aktív-alacsony esetben HIGH = LED off.
@@ -165,12 +211,13 @@ static void hold_critical_gpios_for_sleep(void)
 {
     gpio_hold_en(HX711_PD_SCK_GPIO);   /* PD_SCK aktuális (HIGH) szintje befagyasztva */
     gpio_hold_en(USER_LED_GPIO);       /* LED off szintje befagyasztva */
+    gpio_hold_en(VBAT_SW_GPIO);        /* vbat NPN bázis LOW szintje befagyasztva -> osztó zárva marad */
 
     /* A holdok deep sleep alatt is éljenek (globális engedély). */
     gpio_deep_sleep_hold_en();
 
-    ESP_LOGI(TAG, "GPIO hold: PD_SCK(GPIO%d) HIGH es LED(GPIO%d) megtartva alvas alatt",
-             HX711_PD_SCK_GPIO, USER_LED_GPIO);
+    ESP_LOGI(TAG, "GPIO hold: PD_SCK(GPIO%d) HIGH, LED(GPIO%d) off, vbat NPN(GPIO%d) LOW megtartva alvas alatt",
+             HX711_PD_SCK_GPIO, USER_LED_GPIO, VBAT_SW_GPIO);
 }
 
 void app_main(void)
@@ -185,6 +232,10 @@ void app_main(void)
 
     /* 2) HX711 power-down — PD_SCK magas, DOUT bemenet. */
     hx711_power_down();
+
+    /* 2b) A teljes node többi lába alvásra: vbat-osztó NPN LE (GPIO10 LOW), DS18B20 input.
+     *     Enélkül a lebegő NPN-bázis miatt az osztó szivárog -> hamis deep-sleep áram. */
+    extra_peripherals_sleep_safe();
 
     /*
      * 3) Alvásbarát GPIO-konfig: minden NEM használt, kivezetett GPIO maradjon
