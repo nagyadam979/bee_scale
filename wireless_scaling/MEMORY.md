@@ -1,7 +1,7 @@
 # bee_scale · wireless_scaling — Modul memória
 
 > Tartós alapdokumentum a node-ház (2. fázis) almodulhoz. Ez orientálja a jövőbeli munkamenetet: cél, döntések, geometria-állapot, nyitott kérdések. Frissítsd, amikor egy döntés megszületik vagy egy geometriai fázis lezárul. A **részletes napló a commit-történet** (mit/miért/mi-működött/mi-nem).
-> Utolsó frissítés: 2026-07-03 (**master HÁLÓZATI TÁP → always-on**, S3-Zero marad /dual-core+PSRAM/. Napi döntések: **D1** egyidejű WiFi STA + ESP-NOW üzem /validálandó, fallback ablakos/; **D2** csomagvesztés-kivizsgálás → új **Sz2b** chunk; **D3** master tiszta hálózati táp /5V adapter → 5V→3.3V, nincs akku-áthidalás/; **D4** master **hibrid** — maga is mér, saját `unit_id`, DS3231 RTC törölve. Korábban 2026-06-29: M1 — node óra-drift; H1+H2+Sz2; geometria 2026-06-23)
+> Utolsó frissítés: 2026-07-04 (**BENCH — ELSŐ fogyasztásmérés a TELJES node-elektronikán, akkuról**: áram-lépcsők kimérve; a 3,2 mA alvóáram gyökéroka a TPS63000-M kényszerített PWM-je volt → **PS-pad átforrasztás /PFM/ → 750 µA**; + HX711 power_up GPIO-hold fix — lásd 8./BENCH. Korábban 2026-07-03: **master HÁLÓZATI TÁP → always-on**, S3-Zero marad /dual-core+PSRAM/; napi döntések **D1**–**D4** /egyidejű WiFi STA+ESP-NOW → Sz2b; csomagvesztés-kivizsgálás → Sz2b; tiszta hálózati táp; hibrid mérő-master, DS3231 törölve/. 2026-06-29: M1 — node óra-drift; H1+H2+Sz2; geometria 2026-06-23)
 
 > **Státusz:** a geometria **stabil és validált** — 2 nyomtatott part (`housing`, `bottom_lid`), 1-1 összefüggő solid. **Jelenleg senki nem dolgozik a modell geometriáján** — a következő geometriai munka KÜLÖN döntéssel indul. A modell forrása: `enclosure.py` (minden méret a fájl tetején, kommentált változó).
 
@@ -9,7 +9,7 @@
 
 ## 1. A modul egy mondatban
 
-A méhkaptár-mérleg **vezeték nélküli node** teljes fejlesztése — elektronika (firmware), kísérletek és a **3D nyomtatott ház**. Jelenleg a 3D ház (parametrikus, ~IP65, ASA, build123d; mérőcella + ESP32 + 18650 akku befogadása) a kész/aktív rész; a **rendszerarchitektúra papíron eldöntve** (lásd 7. szakasz). Az `experiments/` már **kóddal + mért eredménnyel** kész chunkokat tartalmaz (H1, H2, Sz2, M1, M1b — lásd 8.; RG folyamatban); a `firmware/` (kiérlelt node/master kód) még üres.
+A méhkaptár-mérleg **vezeték nélküli node** teljes fejlesztése — elektronika (firmware), kísérletek és a **3D nyomtatott ház**. Jelenleg a 3D ház (parametrikus, ~IP65, ASA, build123d; mérőcella + ESP32 + 18650 akku befogadása) a kész/aktív rész; a **rendszerarchitektúra papíron eldöntve** (lásd 7. szakasz). Az `experiments/` már **kóddal + mért eredménnyel** kész chunkokat tartalmaz (H1, H2, Sz2, M1, M1b — lásd 8.; RG folyamatban); a `firmware/node` már áll (valódi HX711/vbat/ESP-NOW driverek, BENCH profillal kimérve — 8./BENCH), a master-firmware még üres.
 
 ## 2. Kontextus és skála
 
@@ -51,7 +51,7 @@ A méhkaptár-mérleg **vezeték nélküli node** teljes fejlesztése — elektr
 
 ## 7. Rendszerarchitektúra (firmware / elektronika) — papíron eldöntve
 
-> Részletes doksi + BOM-megjegyzések: `docs/new_base_components.md`. BOM-tábla: `docs/alkatreszek.csv`. Ez a megegyezett rendszerterv. A `firmware/` (kiérlelt kód) még üres; az `experiments/`-ben viszont már futó, mért chunkok vannak (H1/H2/Sz2/M1/M1b — 8.).
+> Részletes doksi + BOM-megjegyzések: `docs/new_base_components.md`. BOM-tábla: `docs/alkatreszek.csv`. Ez a megegyezett rendszerterv. A `firmware/node` már fut (BENCH-hel kimérve — 8./BENCH); az `experiments/`-ben futó, mért chunkok vannak (H1/H2/Sz2/M1/M1b — 8.).
 
 - **Topológia:** master–slave csillag (több slave node/kaptár → 1 master). A **master hibrid** (D4): a vétel/időbélyeg/felhőzés mellett **maga is mér** a saját kaptárán, saját `unit_id`-vel. Kommunikáció **ESP-NOW** (slave→master), a master WiFi STA (uplink) + ESP-NOW **azonos csatornán**. **D1: a WiFi STA és az ESP-NOW egyidejű üzeme a terv** (a master mindig kapcsolódva figyel is) — ezt az **Sz2b validálja**; ha nem stabil, **fallback: ablakos** (feltöltéskor az ESP-NOW rövid szünet).
 - **Master vételi pipeline:** producer (ESP-NOW callback → `xQueueSendFromISR`, semmi más) / consumer (másik mag: időbélyegez, pufferel, felhőz). A master **hálózati tápon always-on** (nem alszik) → a két mag folyamatosan viszi az RX-et és a felhős I/O-t, egymás akadályozása nélkül. **Időbélyeg a masteré** (`rx_millis`+NTP); a slave-idő deep sleep alatt megbízhatatlan.
@@ -96,13 +96,21 @@ A méhkaptár-mérleg **vezeték nélküli node** teljes fejlesztése — elektr
 - A mérés kimutatta: az S3-Zero deep sleepben **mA-nagyságrendet** húz (a WS2812 fedélzeti LED SW-kioltása /fekete-frame + data-LOW/hold/ és a 4 MB flash-kényszer / boot-loop-fix UTÁN is). Emiatt egy ideig felmerült a **C3-ra váltás** (2026-07-02 pivot, majd visszavonva).
 - **Végül a master HÁLÓZATI TÁPOT kap → always-on, sosem alszik** → a deep-sleep áram irreleváns. Az **S3-Zero marad** (dual-core + PSRAM az always-on RX/uplinkhez). A H4 firmware/mappa historikus artefakt; a chunk lezárva/tárgytalan.
 
+**BENCH — ELSŐ fogyasztásmérés a TELJES node-elektronikán, akkuról (`firmware/node`, 2026-07-04):**
+- **Setup:** teljes tápút — 18650 → TP4056 → **TPS63000-M** buck-boost → 3,3 V; **DMM az akku + ágában**, log nélkül (stopper + áram-lépcsők, a BENCH fázis-szekvencer 20 s-os fázisai). Először mértünk a teljes, összeszerelt elektronikán (eddig csak részegységeken: H1/H2).
+- **Áram-lépcsők:** baseline (minden ki) **20 mA**; HX711 **24,6 mA** (+4,6 mA — egybevág a H2-es ~5 mA-rel); VBAT **21,3 mA**; DS18B20 (stub) **20,8 mA**; WiFi idle **89 mA**; ESP-NOW TX **90–100 mA**; deep sleep ELŐSZÖR **3,2 mA**.
+- **A 3,2 mA alvóáram gyökéroka — MEGOLDVA:** a TPS63000-M modul gyárilag **kényszerített PWM**-ben járt (PS forrpont nyitva). A modulon 4 forrpont: 3 Vout-választó (5V / 4,2V / 3,3V — egyszerre csak EGY lehet zárva!) + 1 **PS pad**. A PS pad átforrasztása (PS/SYNC → GND) → **power-save/PFM mód** → alvóáram **3,2 mA → 750 µA**. Megjegyzés: a `docs/TPS63000-M_EN_10049565.pdf` valójában Hestore-fedlap + TI chip-adatlap; a **modul** forrpontjait a Hestore termékoldal (https://www.hestore.hu/prod_10049565.html) dokumentálja.
+- **A 750 µA szétbontása (adatlap-elemzés):** a konverter „legálisan" **~310–450 µA** (PFM hatásfok kis terhelésen ~58–66%; a Vin 3,6–4,2 V buck-boost átmeneti zóna a legrosszabb; quiescent ~46 µA bemenet-oldalon) + SuperMini deep sleep **~185 µA** (H1 referencia; ezen a példányon power LED nincs — ellenőrizve) → **marad ~300–450 µA megmagyarázatlan.** Fő gyanúsított: a **vbat-osztó** (az NPN nem zár alvásban VAGY GPIO0 pad-dióda szivárgás teli akkunál; 3,7 V / 20 kΩ ≈ 185 µA); másodlagos: a TPS modul FB-osztója. **HX711 kizárva** (power-down ~0, H2-ben igazolt).
+- **Firmware-fix (a BENCH találta):** a `hx711_power_down()` GPIO-holdja eddig csak `hx711_init()`-ben (reboot után) oldódott fel → reboot nélküli power_down→power_up ciklusnál (6. fázis, ESPNOW_TX) a PD_SCK HIGH-on ragadt, a HX711 power-downban maradt, a read timeout 0-t adott. Fix: `gpio_hold_dis()` + `gpio_deep_sleep_hold_dis()` a `hx711_power_up()` elején — flashelve, igazoltan működik.
+- **NYITOTT — következő mérés:** alvás alatt feszültségmérés az osztó alsó 10k-ján (GPIO0–GND): ~0 mV → osztó ártatlan; ~1,8–2 V → NPN nyitva ragadt; köztes → pad-dióda szivárgás. Utána szükség esetén konverter-KIMENETI árammérés. Becsült terepi üzemidő 3,5 Ah-val: 750 µA → **~5–6 hónap**; osztó rendezve (~550 µA) → **~8 hónap**.
+
 ## 9. Mappastruktúra és modul-fájlok
 
 Részletes mappa-leírás + munkamódszer: `CLAUDE.md`.
 
 - **`enclosure/`** — 3D modellezés: `enclosure.py` (fő build123d modell, méretek a tetején) + `validate.py`/`preview.py`/`_zsection.py` (validáló + vizuális ellenőrző eszközök) + `datasheets/cell_SC902/` (mérőcella-adatlapok) + `export/` (generált STL/STEP/PNG) + `requirements.txt`.
 - **`experiments/`** — node-kísérletek: a validációs chunk-struktúra (H1–H3 / Sz0–Sz5 / M1, lásd `experiments/README.md`). **H1 kész** (deep-sleep áram), **H2 kész** (HX711 power-path), **Sz2 kész** (ESP-NOW alacsony szint, 1000/1000 padon), **M1 kész** (node óra-drift mérve), a többi chunk README-spec.
-- **`firmware/`** — a node-firmware (jelenleg üres — ide a kiérlelt kód).
+- **`firmware/`** — a kiérlelt kód: `node/` (ESP-IDF/PlatformIO node-firmware — BENCH fázis-szekvencer + éles profil, valódi HX711/vbat/ESP-NOW driverek) + `common/protocol.h`. A master-firmware még hiányzik.
 - **`docs/`** — `new_base_components.md` (alkatrész-méretek) + `alkatreszek.csv` (BOM: alkatrész / funkció / ár / node–master darab).
 - **`agents/enclosure-builder.md`** — a geom. iterációt izolált kontextusban futtató al-ágens.
 - A teljes `bee_scale` projekt-kontextusa (mérési lánc, backend, dashboard): a `prototype/` modul (1. fázis).
