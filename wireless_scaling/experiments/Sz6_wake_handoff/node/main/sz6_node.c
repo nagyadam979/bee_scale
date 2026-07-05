@@ -205,6 +205,19 @@ static void wifi_espnow_init(void)
     ESP_ERROR_CHECK(esp_wifi_set_protocol(WIFI_IF_STA,
         WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N));
     ESP_ERROR_CHECK(esp_wifi_set_channel(SZ6_CHANNEL, WIFI_SECOND_CHAN_NONE));
+    /* Explicit max TX-teljesítmény + log (0.25 dBm egység; 84 = 21 dBm, 34 = 8.5 dBm).
+     * A C3 SuperMini ismert antenna-illesztési hibája miatt a TELJES power torzíthat
+     * (PA/VSWR) — a CSÖKKENTETT power adott példányon javíthatja a kézbesítést, ezért
+     * build-flaggel hangolható (SZ6_TX_POWER). */
+#ifndef SZ6_TX_POWER
+#define SZ6_TX_POWER 84
+#endif
+    int8_t txp_before = 0;
+    esp_wifi_get_max_tx_power(&txp_before);
+    esp_wifi_set_max_tx_power(SZ6_TX_POWER);
+    int8_t txp_after = 0;
+    esp_wifi_get_max_tx_power(&txp_after);
+    ESP_LOGI(TAG, "max_tx_power: %d -> %d (0.25 dBm egyseg)", (int)txp_before, (int)txp_after);
 
     ESP_ERROR_CHECK(esp_now_init());
     ESP_ERROR_CHECK(esp_now_register_send_cb(send_cb));
@@ -311,16 +324,19 @@ static void cycle_task(void *arg)
 
     uint32_t awake_ms = (uint32_t)((esp_timer_get_time() - t0) / 1000);
 
-    /* GÉP-GREP-ELHETŐ ciklus-összesítő — a bench kiértékelés erre a sorra épül. */
-    ESP_LOGI(TAG, "SZ6 CYCLE node=%d seq=%u result=%s tries=%u dest=%c awake_ms=%u "
-                  "ok_total=%u fail_total=%u txfail=%u",
-             SZ6_NODE_ID, (unsigned)rtc_seq, ok ? "OK" : "FAIL", (unsigned)tries,
-             dest_mode, (unsigned)awake_ms, (unsigned)rtc_ok_cycles,
-             (unsigned)rtc_fail_cycles, (unsigned)s_tx_status_fail);
-
-    /* Konzol-flush + flash-elkapó ablak, majd tiszta rádió-leállás és alvás. */
-    fflush(stdout);
-    vTaskDelay(pdMS_TO_TICKS(SZ6_LINGER_MS));
+    /* GÉP-GREP-ELHETŐ ciklus-összesítő — a bench kiértékelés erre a sorra épül.
+     * 3× ISMÉTELVE a linger-ablakban: a USJ-konzol kimenete host-open ELŐTT elveszik
+     * (a macOS nem polloz nyitatlan CDC-t), a host-logger pedig csak az enumeráció után
+     * ~0,5-1 s-mal nyit — az ismétlés így is elkapható. A parse (node,seq)-re dedupol. */
+    for (int r = 0; r < 3; r++) {
+        ESP_LOGI(TAG, "SZ6 CYCLE node=%d seq=%u result=%s tries=%u dest=%c awake_ms=%u "
+                      "ok_total=%u fail_total=%u txfail=%u",
+                 SZ6_NODE_ID, (unsigned)rtc_seq, ok ? "OK" : "FAIL", (unsigned)tries,
+                 dest_mode, (unsigned)awake_ms, (unsigned)rtc_ok_cycles,
+                 (unsigned)rtc_fail_cycles, (unsigned)s_tx_status_fail);
+        fflush(stdout);
+        vTaskDelay(pdMS_TO_TICKS(SZ6_LINGER_MS / 3));
+    }
     esp_now_deinit();
     esp_wifi_stop();
 
@@ -329,6 +345,69 @@ static void cycle_task(void *arg)
     esp_deep_sleep((uint64_t)sleep_us);
 }
 
+#ifdef SZ6_RXTEST
+/* =================== DIAGNOSZTIKAI RX-TESZT (promiscuous sniffer) ===================
+ * Build: env node2rx (platformio.ini) — a node NEM alszik, csatorna-forgalmat számol.
+ * Cél: eldönteni, hogy a node RÁDIÓ-VÉTELE működik-e (ha igen, de a TX-e nem ér el a
+ * masterig -> TX-oldali RF/antenna gyanú; ha semmit se hall -> RX is halott = HW hiba).
+ * A Sz2 SZ2_SNIFFER mintája: minden 802.11 frame + az ESPNOW vendor action frame-ek
+ * (cat=127, Espressif OUI 18:fe:34) külön számolva, 1 Hz-es riporttal. */
+static volatile uint32_t s_sniff_total = 0;
+static volatile uint32_t s_sniff_action = 0;
+static volatile uint32_t s_sniff_espnow = 0;
+static uint8_t s_last_src[6];
+static int8_t  s_last_rssi;
+
+static void sniffer_cb(void *buf, wifi_promiscuous_pkt_type_t type)
+{
+    const wifi_promiscuous_pkt_t *p = (const wifi_promiscuous_pkt_t *)buf;
+    const uint8_t *d = p->payload;
+    (void)type;
+    s_sniff_total++;
+    uint8_t ftype = (d[0] >> 2) & 0x3;
+    uint8_t fsub  = (d[0] >> 4) & 0xF;
+    memcpy(s_last_src, d + 10, 6);
+    s_last_rssi = p->rx_ctrl.rssi;
+    if (ftype == 0 && fsub == 0xD) {
+        s_sniff_action++;
+        if (p->rx_ctrl.sig_len > 27 && d[24] == 0x7F &&
+            d[25] == 0x18 && d[26] == 0xfe && d[27] == 0x34) {
+            s_sniff_espnow++;
+        }
+    }
+}
+
+void app_main(void)
+{
+    ESP_LOGW(TAG, "=== Sz6 NODE — DIAG RX-TESZT (sniffer, csatorna=%d) ===", SZ6_CHANNEL);
+    esp_err_t e = nvs_flash_init();
+    if (e == ESP_ERR_NVS_NO_FREE_PAGES || e == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase()); ESP_ERROR_CHECK(nvs_flash_init());
+    } else { ESP_ERROR_CHECK(e); }
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_start());
+    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
+    ESP_ERROR_CHECK(esp_wifi_set_protocol(WIFI_IF_STA,
+        WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N));
+    ESP_ERROR_CHECK(esp_wifi_set_channel(SZ6_CHANNEL, WIFI_SECOND_CHAN_NONE));
+    ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true));
+    ESP_ERROR_CHECK(esp_wifi_set_promiscuous_rx_cb(sniffer_cb));
+    int8_t txp = 0; esp_wifi_get_max_tx_power(&txp);
+    ESP_LOGW(TAG, "SNIFFER aktiv, max_tx_power=%d (0.25dBm egyseg)", (int)txp);
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        ESP_LOGW(TAG, "SNIFF total=%u action=%u ESPNOW=%u | utolso src=%02X:%02X:%02X:%02X:%02X:%02X rssi=%d",
+                 (unsigned)s_sniff_total, (unsigned)s_sniff_action, (unsigned)s_sniff_espnow,
+                 s_last_src[0], s_last_src[1], s_last_src[2], s_last_src[3], s_last_src[4],
+                 s_last_src[5], (int)s_last_rssi);
+    }
+}
+#else
 void app_main(void)
 {
     /* Új futás detektálása. NEM a wakeup cause-t nézzük, hanem a reset-okot: az RTC-memória
@@ -365,3 +444,4 @@ void app_main(void)
 
     xTaskCreate(cycle_task, "sz6_cycle", 4096, NULL, 5, NULL);
 }
+#endif /* SZ6_RXTEST */

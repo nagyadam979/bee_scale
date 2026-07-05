@@ -39,16 +39,20 @@ def main() -> None:
         while True:
             ser = None
             try:
-                # rtscts/dsrdtr ki; a DTR/RTS explicit False MIELŐTT nyitunk, hogy a
-                # nyitás ne okozzon auto-reset/bootloader belépést (esptool-szekvenciát
-                # csak a flash-eszköz csináljon).
+                # RESET-MENTES nyitás (az esp-idf-monitor --no-reset receptje): a chip
+                # USB-Serial-JTAG-je a (DTR=0, RTS=1) átmenetre resetel. Nyitás ELŐTT
+                # mindkét vonal ASSERT (az (1,1) sosem resetel; a macOS driver amúgy is
+                # ezt csinálja nyitáskor), nyitás UTÁN először az RTS-t, majd a DTR-t
+                # engedjük el — így sosem megyünk át a reset-állapoton.
                 ser = serial.Serial()
                 ser.port = port
                 ser.baudrate = 115200
                 ser.timeout = 1.0
-                ser.dtr = False
-                ser.rts = False
+                ser.dtr = True
+                ser.rts = True
                 ser.open()
+                ser.rts = False   # RTS elengedés ELŐSZÖR
+                ser.dtr = False   # DTR utána -> nincs (DTR=0, RTS=1) átmenet
                 log.write(f"{ts()} [LOGGER] port nyitva\n")
                 buf = b""
                 while True:
