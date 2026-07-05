@@ -139,6 +139,7 @@ static SemaphoreHandle_t s_tx_done = NULL;
 static SemaphoreHandle_t s_ack_sem = NULL;
 static volatile uint32_t s_ack_wait_seq = 0;   /* melyik seq ACK-ját várjuk éppen        */
 static uint8_t           s_ack_src[6];         /* az ACK feladója (= a master MAC-je)    */
+static volatile int8_t   s_ack_rssi = -128;    /* az utolsó vett ACK RSSI-je (scan-hoz)  */
 
 static volatile uint32_t s_tx_status_fail = 0; /* send-cb status FAIL (unicastnál: nincs MAC-ACK) */
 
@@ -171,6 +172,7 @@ static void recv_cb(const esp_now_recv_info_t *info, const uint8_t *data, int le
     if (ack->node_id != SZ2B_NODE_ID) return;
     if (ack->ack_last_seq != s_ack_wait_seq) return;
     memcpy((void *)s_ack_src, info->src_addr, 6);
+    s_ack_rssi = (info->rx_ctrl != NULL) ? (int8_t)info->rx_ctrl->rssi : -128;
     xSemaphoreGive(s_ack_sem);
 }
 
@@ -300,15 +302,24 @@ static bool try_deliver(sz2_payload_t *p, uint32_t *tries, char *dest_mode)
     return false;
 }
 
-/* CSATORNA-SCAN DISCOVERY: 1..13 csatornán broadcast DATA + rövid ACK-várás; ahol ACK jön,
- * azt cache-eljük RTC-be. Max SZ2B_SCAN_SWEEPS teljes sweep. Siker: true + rtc_channel set. */
+/* CSATORNA-SCAN DISCOVERY: 1..13 csatornán broadcast DATA + rövid ACK-várás. Az ACK-nál
+ * NEM állunk meg (P3 tanulság: erős jelnél a szomszéd csatorna átszűrődése miatt az ACK
+ * a ROSSZ — a valóditól ±1-2 — csatornán is hallható, és az első találat félretanít):
+ * a TELJES sweep végén a LEGERŐSEBB ACK-RSSI-jű csatornát cache-eljük — a valódi csatornán
+ * az ACK szűrő-csillapítás nélkül, mindig erősebben jön. A DATA már az első ACK-kal
+ * kézbesítve (a master a DUP-okat szűri és újra-ACK-olja). Max SZ2B_SCAN_SWEEPS sweep. */
 static bool scan_deliver(sz2_payload_t *p, uint32_t *tries, char *dest_mode)
 {
     *dest_mode = 'S';
     rtc_scan_cycles++;
     for (int sweep = 1; sweep <= SZ2B_SCAN_SWEEPS; sweep++) {
+        int best_ch   = 0;
+        int best_rssi = -128;
         for (int ch = SZ2B_SCAN_CH_FIRST; ch <= SZ2B_SCAN_CH_LAST; ch++) {
             ESP_ERROR_CHECK(esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE));
+            /* Elkésett (csatornaváltás közben érkezett) ACK jelzésének ürítése, hogy a
+             * mostani ablakban CSAK az ezen a csatornán hallott ACK számítson. */
+            while (xSemaphoreTake(s_ack_sem, 0) == pdTRUE) { }
             (*tries)++;
             p->packet_idx        = *tries;
             p->send_timestamp_ms = (uint32_t)(esp_timer_get_time() / 1000);
@@ -317,11 +328,20 @@ static bool scan_deliver(sz2_payload_t *p, uint32_t *tries, char *dest_mode)
             send_serialized(BROADCAST_MAC, p);
 
             if (xSemaphoreTake(s_ack_sem, pdMS_TO_TICKS(SZ2B_SCAN_ACK_TIMEOUT_MS)) == pdTRUE) {
-                rtc_channel = (uint8_t)ch;
-                learn_master_from_ack();
-                ESP_LOGI(TAG, "scan OK: csatorna=%d (sweep=%d)", ch, sweep);
-                return true;
+                int r = (int)s_ack_rssi;
+                ESP_LOGI(TAG, "scan ACK: ch=%d rssi=%d (sweep=%d)", ch, r, sweep);
+                if (r > best_rssi) {
+                    best_rssi = r;
+                    best_ch   = ch;
+                }
             }
+        }
+        if (best_ch != 0) {
+            rtc_channel = (uint8_t)best_ch;
+            learn_master_from_ack();
+            ESP_ERROR_CHECK(esp_wifi_set_channel(best_ch, WIFI_SECOND_CHAN_NONE));
+            ESP_LOGI(TAG, "scan OK: csatorna=%d rssi=%d (sweep=%d)", best_ch, best_rssi, sweep);
+            return true;
         }
         ESP_LOGW(TAG, "scan sweep %d/%d: nincs ACK egyik csatornan sem",
                  sweep, SZ2B_SCAN_SWEEPS);
