@@ -1,0 +1,4 @@
+; Sz2b — WiFi hitelesítők MINTA. Másold creds.ini néven (gitignored!), és írd be a valós
+; SSID/jelszó párost. A p2/p3 master env-ek build_flags-ként húzzák be (${creds.build_flags}).
+[creds]
+build_flags = -DSZ2B_WIFI_SSID=\"my-test-ssid\" -DSZ2B_WIFI_PASS=\"my-test-pass\"

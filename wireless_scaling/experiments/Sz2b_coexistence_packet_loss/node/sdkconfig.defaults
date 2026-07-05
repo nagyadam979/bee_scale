@@ -1,0 +1,19 @@
+# Sz2b NODE — ESP32-C3 SuperMini · sdkconfig.defaults (az Sz6 node mintája)
+#
+# Cél: ESP-NOW wake→scan/TX→ACK→sleep ciklus. A WiFi/ESP-NOW-t a framework alapból
+# tartalmazza; itt csak a konzolt, flash-méretet és a log-szintet rögzítjük.
+
+# --- Konzol a natív USB-Serial-JTAG-on ---
+# A C3 SuperMini USB-C-je közvetlenül a beépített USB-Serial-JTAG-ra megy (nincs bridge chip).
+# FIGYELEM: deep sleep alatt a port NEM enumerál -> a log csak az awake-ablakban olvasható,
+# a flash-t az awake-ablakban kell elkapni (../../Sz6_wake_handoff/tools/flash_catch.sh).
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# --- Flash méret: a legtöbb C3 SuperMini 4 MB. ---
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+# --- Soros log szint: INFO (ciklus-sorok). ---
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+
+# --- Boot gyorsítás: kevesebb bootloader-zaj (rövidebb awake-ablak = kisebb fogyasztás). ---
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y

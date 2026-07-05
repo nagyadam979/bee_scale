@@ -1,0 +1,18 @@
+# Sz2b MASTER — ESP32-S3-Zero · sdkconfig.defaults (az Sz6 master mintája)
+#
+# Cél: always-on ESP-NOW vétel + app-ACK + WiFi STA (DHCP, gateway-forgalom). A WiFi/lwip-et
+# a framework alapból tartalmazza; itt csak a konzolt, flash-méretet és a log-szintet rögzítjük.
+
+# --- Konzol a natív USB-Serial-JTAG-on ---
+# Az S3-Zero USB-C-je közvetlenül az S3 beépített USB-Serial-JTAG-jára megy (nincs bridge chip).
+# A master always-on -> a port stabil, a log háttérből olvasható (serial_logger.py).
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# --- Flash méret: S3-Zero = ESP32-S3FH4R2, 4 MB (a platformio.ini is kényszeríti). ---
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+# --- PSRAM: az Sz2b bench-hez nem kell (a vételi queue a belső RAM-ban van) -> nincs bekapcsolva. ---
+
+# --- Soros log szint: INFO (RX-sorok + periodikus STAT + WiFi-események). ---
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
