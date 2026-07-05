@@ -4,7 +4,10 @@ __pycache__/
 *.pyc
 
 # --- Generált CAD export (STL/STEP/PNG/FCStd) — az enclosure.py reprodukálja ---
-enclosure/export/
+modeling/enclosure/export/
+
+# --- Szerkesztő helyi verziótörténet (VSCode Local History) ---
+.history/
 
 # --- macOS ---
 .DS_Store
