@@ -103,8 +103,14 @@
 /* ESP_ERR_ESPNOW_NO_MEM esetén ennyit várunk, majd UGYANAZT a próbát ismételjük (ms). */
 #define SZ6_NO_MEM_RETRY_MS         2
 
-/* Deep sleep előtti ébrenmaradás (ms): USB-CDC log-flush + a flash-elkapó ablak széle. */
-#define SZ6_LINGER_MS               700
+/* Deep sleep előtti ébrenmaradás (ms): USB-CDC log-flush + a flash-elkapó ablak széle.
+ * BENCH-érték: a macOS USB-enumeráció ~1 s a wake után, a host-logger csak utána tud
+ * nyitni — a 2 s linger + az ismételt CYCLE sorok együtt teszik elkaphatóvá a node-logot.
+ * Éles (fogyasztás-optimalizált) profilban ez majd radikálisan csökken. */
+#define SZ6_LINGER_MS               2000
+
+/* Hányszor ismételje a CYCLE összesítő sort a linger alatt (host-open utáni elkapáshoz). */
+#define SZ6_CYCLE_LOG_REPEAT        5
 
 /* ================================================================= */
 
@@ -328,14 +334,14 @@ static void cycle_task(void *arg)
      * 3× ISMÉTELVE a linger-ablakban: a USJ-konzol kimenete host-open ELŐTT elveszik
      * (a macOS nem polloz nyitatlan CDC-t), a host-logger pedig csak az enumeráció után
      * ~0,5-1 s-mal nyit — az ismétlés így is elkapható. A parse (node,seq)-re dedupol. */
-    for (int r = 0; r < 3; r++) {
+    for (int r = 0; r < SZ6_CYCLE_LOG_REPEAT; r++) {
         ESP_LOGI(TAG, "SZ6 CYCLE node=%d seq=%u result=%s tries=%u dest=%c awake_ms=%u "
                       "ok_total=%u fail_total=%u txfail=%u",
                  SZ6_NODE_ID, (unsigned)rtc_seq, ok ? "OK" : "FAIL", (unsigned)tries,
                  dest_mode, (unsigned)awake_ms, (unsigned)rtc_ok_cycles,
                  (unsigned)rtc_fail_cycles, (unsigned)s_tx_status_fail);
         fflush(stdout);
-        vTaskDelay(pdMS_TO_TICKS(SZ6_LINGER_MS / 3));
+        vTaskDelay(pdMS_TO_TICKS(SZ6_LINGER_MS / SZ6_CYCLE_LOG_REPEAT));
     }
     esp_now_deinit();
     esp_wifi_stop();

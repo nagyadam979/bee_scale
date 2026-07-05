@@ -17,6 +17,7 @@ FIGYELEM: flasheléshez a portot el kell engedni -> a flash_catch.sh előtt ezt 
 loggert le kell állítani az adott portra (a macOS soros port exkluzív nyitású).
 """
 
+import os
 import sys
 import time
 import datetime
@@ -37,6 +38,12 @@ def main() -> None:
     with open(logfile, "a", buffering=1) as log:
         log.write(f"{ts()} [LOGGER] indul: {port}\n")
         while True:
+            # Finom (50 ms) poll a port felbukkanására: az alvó node awake-ablaka ~1,5 s,
+            # és ami a nyitás ELŐTT íródik a USJ-konzolra, az elveszik — minél korábban
+            # nyitunk, annál többet kapunk el a ciklus-logból.
+            if not os.path.exists(port):
+                time.sleep(0.05)
+                continue
             ser = None
             try:
                 # RESET-MENTES nyitás (az esp-idf-monitor --no-reset receptje): a chip
@@ -73,7 +80,7 @@ def main() -> None:
                         ser.close()
                 except Exception:
                     pass
-                time.sleep(0.5)
+                time.sleep(0.2)
 
 
 if __name__ == "__main__":
