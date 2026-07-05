@@ -1,0 +1,8 @@
+# PlatformIO build-artefaktok + gép-specifikus teljes sdkconfig (a defaults a forrás).
+node/.pio/
+master/.pio/
+node/sdkconfig.node1
+node/sdkconfig.node2
+master/sdkconfig.esp32-s3-zero
+# Futási logok (a serial_logger.py kimenete) — az eredmény-összefoglaló a README-be kerül.
+logs/
