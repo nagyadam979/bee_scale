@@ -85,10 +85,20 @@ a commit **elhagyása a legegyszerűbb**.
 | `create_items` OK, de a board **üres** | a `FootprintInstance.layer` nincs beállítva | **kötelező** `fp.layer = BoardLayer.BL_F_Cu` — enélkül a KiCad csendben eldobja |
 | `the client … already has a commit in progress` | előző futás `begin_commit` után elhalt `push`/`drop` nélkül | friss/egyedi `client_name`, vagy commit elhagyása; a lógó commit KiCad-újraindítással tűnik el |
 | `ConnectionError` nem záródik el a `try`-ban | `kipy.errors.ConnectionError` **árnyékolja** a beépítettet | `from kipy.errors import ApiError, ConnectionError as KiCadConnectionError` és azt kapd el |
+| `no handler … GetOpenDocuments` **nyitott editor ellenére is** | a `get_board()` a **manager** `api.sock`-ját éri el, de a board a **standalone `pcbnew`** külön socketjén van | csatlakozz a `pcbnew` socketjére: `KiCad(socket_path="ipc://" + glob("/tmp/kicad/api-*.sock")[0])` |
+| a footprint **teste elcsúszik** a horgonytól / a 3D modell nem ül a padokon | a pad/shape `position` **ABSZOLÚT** board-koordináta, **nem** anchor-relatív | a test abszolút koordinátája = `fp.position + relatív`; a 3D modell a horgonyra kerül (offset 0), így a testet is a horgonyra kell centrálni |
+| a `.models`/`.pads` lista **törlése nem hat** | a property **másolatot** ad vissza | a valós `fp.definition._unwrapped_items`-et szűrd (pl. `[it for it in items if not isinstance(it, Footprint3DModel)]`) |
 
 A legalattomosabb a **réteg-buktató**: a `create_items` visszaad egy elemet (látszólag
 siker), de réteg nélkül a footprint nem perzisztál. Ezért mindig **olvasd vissza**:
 `len(board.get_footprints())`, `len(board.get_pads())`.
+
+> **Koordináta-modell (élesben igazolva):** a `Pad`/`BoardRectangle`/… `position`-ja
+> **abszolút** board-koordináta, független a `FootprintInstance.position` (horgony)
+> értékétől. Ha „modul-relatív" elrendezést akarsz, magad add hozzá a horgonyt:
+> `pad.position = fp.position + relatív`. A footprint mozgatásakor a KiCad az összes
+> tagelemet együtt tolja, de **létrehozáskor** neked kell centrálnod a testet a
+> horgonyra — különben a hozzárendelt 3D modell (ami a horgonyhoz kötődik) elcsúszik.
 
 ---
 
@@ -103,7 +113,7 @@ from kipy.board_types import (FootprintInstance, Pad, PadType, PadStackType,
     PadStackShape, DrillShape, BoardLayer, BoardSegment)
 from kipy.geometry import Vector2
 
-# --- egy kör alakú PTH pad (footprint-relatív pozíció) ---
+# --- egy kör alakú PTH pad (a position ABSZOLÚT board-koordináta!) ---
 pad = Pad()
 pad.number = "1"
 pad.pad_type = PadType.PT_PTH
@@ -123,7 +133,7 @@ fp = FootprintInstance()
 fp.reference_field.text.value = "REF1"
 fp.value_field.text.value = "MyFootprint"
 fp.layer = BoardLayer.BL_F_Cu                  # ⚠️ KÖTELEZŐ
-fp.position = Vector2.from_xy_mm(0.0, 0.0)     # a pad-koordináták ehhez képest relatívak
+fp.position = Vector2.from_xy_mm(0.0, 0.0)     # horgony; a pad-koordináták ABSZOLÚTAK (nem ehhez relatívak)
 fp.definition.add_item(pad)
 
 # --- tábla-kontúr: szakasz az Edge.Cuts rétegen ---
