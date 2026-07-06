@@ -56,3 +56,101 @@ Két, az Sz2 után maradt kockázat lezárása a **végleges hardveren** (ESP32-
 - `../../MEMORY.md` (7. — D1/D2, ESP-NOW kézbesítés + koegzisztencia; 8./M1 — a 87,9% anomália).
 - Épít: [`../Sz2_espnow_low_level/`](../Sz2_espnow_low_level/) (PHY-fix, callback-fegyelem, diagnosztika).
 - Kapcsolódik: [`../Sz5_master_time_uplink/`](../Sz5_master_time_uplink/) (a stick-forgalom mint koegzisztencia-terhelés).
+
+---
+
+# EREDMÉNYEK (2026-07-05, padon) — ✅ D1 VALIDÁLVA
+
+> Az eredeti spec a 4G stick hotspotjával számolt; a bench **teszt-AP-val** futott (dlink,
+> WPA2, csatornája előre nem ismert — pont ez adta a chunk kulcsproblémáját). A stick-kel
+> való megismétlés az Sz5 scope-ja. A kód az **Sz6 PASS-forrás adaptációja** (protokoll
+> változatlan), az új réteg a node-oldali **csatorna-scan discovery** + a master **STA-réteg**.
+
+## Setup
+
+- **Master:** ESP32-S3-Zero (always-on, USB-tápon), STA a dlink-EDA4 AP-n + ESP-NOW
+  egyszerre; consumer core 1-en, WiFi/recv-cb core 0-n. Env-ek: `p1-espnow-only` /
+  `p2-sta-idle` / `p3-sta-traffic` (SZ2B_WIFI_MODE=0/1/2). Hitelesítők: `creds.ini`
+  (gitignored, minta: `creds.ini.example`).
+- **Node-ok:** 2× ESP32-C3 SuperMini, 12 s deep-sleep ciklus (Sz6 bench-profil),
+  **mindkettő SZ2B_TX_POWER=34 (8,5 dBm)** — lásd a 2. tanulságot.
+- **Az AP a 8-as csatornára tette a mastert** — a node-ok scan-nel találták meg.
+- Kiértékelés: `tools/analyze_sz2b.py` a master logján (ground truth).
+
+## A csatorna-követés (az implementált kulcsmegoldás)
+
+- Master STA-üzemben **nincs `esp_wifi_set_channel`** (törné az asszociációt); minden
+  ESP-NOW peer `channel=0` (aktuális csatorna). A tényleges csatornát a WIFI-események
+  és az MSTAT logolják.
+- Node: a talált csatorna **RTC-cache-ben** (deep sleepet túléli); ha nincs cache, VAGY
+  2 egymást követő ciklus ACK nélkül zárul → **1..13 scan** még ugyanabban a ciklusban
+  (csatornánként broadcast DATA + 80 ms ACK-várás, max 3 sweep). A sweep az első ACK-nál
+  NEM áll meg: a **legerősebb ACK-RSSI-jű csatornát** cache-eli (bleed-védelem, 3. tanulság).
+
+## Fázisok és mért számok
+
+| Fázis | Setup | Eredmény |
+|---|---|---|
+| 1. Baseline (15 p) | ESP-NOW only, fix ch1 | ✅ node1: 63, node2: 64 ciklus — 0 gap, 0 dup, 100% try=1 |
+| 2. STA idle (15 p) | STA-connect + ESP-NOW | ✅ átállás ch8-ra scan-nel; node2 discovery: `seq=1 try=8` (ch1..7 üres, ch8 talált); élesben elkapott WiFi-kiesés + 2,2 s reconnect alatt is 0 gap |
+| 3. Koegzisztencia (66 p soak) | STA + 5 s HTTP GET | WiFi/forgalom ✅ (0 disconnect, 748/748 GET, q_drop=0); node1 ⚠️ dup=344, try>1=22% → gyökérok-vadászat (2. tanulság), node2 referencia 0 hibával |
+| 4. Master-reboot | usb_reset a masterre | ✅ ~4 s reboot, STA +1,1 s / IP +4,5 s; mindkét node ELSŐ próbára vissza (cache-elt ch8+MAC); 0 ciklusveszteség (reboot < 12 s alvásperiódus) |
+| 5. ZÁRÓ SOAK (66 p, javított fw) | STA + forgalom | ✅ **node1: 276, node2: 278 ciklus — 0 gap, 0 dup, 100% try=1**; WiFi 0 disconnect; GET 791/796 = 99,4%; q_drop=0 — node1 átlag **−84 dBm-en**! |
+| + Kiterjesztett futás (4,6 h, estig) | ugyanaz | ✅ node1: 1162, node2: 1172 ciklus — **0 gap, 0 dup**; 0 disconnect; GET 3284/3293 = 99,7% |
+
+## PASS/FAIL (a záró soak + kiterjesztett futás alapján)
+
+| Kritérium | Cél | Mért | Ítélet |
+|---|---|---|---|
+| Végleges seq-gap (mindkét node) | 0 | 0 (5,7 h alatt összesen) | ✅ |
+| try>1 arány | < 5% | 0,0% | ✅ |
+| q_drop | 0 | 0 | ✅ |
+| WiFi asszociáció | folyamatos, reconnectek logolva | 0 disconnect a záró futásban; a P2-beli kiesés 2,2 s alatt felépült | ✅ |
+| WiFi-forgalom sikerarány | > 95% | 99,4–99,7% | ✅ |
+
+**D1 DÖNTÉS: az egyidejű WiFi STA + ESP-NOW üzem STABIL — nincs szükség ablakos fallbackre.**
+Az M1-ben látott 87,9%-os veszteség a végleges HW-n + fegyelmezett rétegen nem reprodukálódott;
+a bench során talált veszteségek gyökéroka RF-szintű volt (lásd lent), nem koegzisztencia.
+
+## Tanulságok (jövőbeli munkához KRITIKUS)
+
+1. **Csatorna-scan discovery működik és kell.** Az AP csatornája (itt: 8) előre nem
+   ismert és nem is stabil garantáltan → a fix csatornás node-minta STA-master mellett
+   halott. A scan+RTC-cache ára: egyszeri ~1 s discovery power-on után; utána a ciklus
+   rádiós munkája **21–143 ms** (unicast, try=1).
+2. **SuperMini TX-power TÍPUSHIBA, nem példányhiba.** Az Sz6-ban a node2, itt a node1
+   bukott meg teljes poweren (21 dBm): ~1 m-ről, valós (nem 10 cm-es) távolságon a master
+   a ch8-as küldéseit nem vette, miközben MAC-szinten ACK-olta (!). 8,5 dBm-re véve
+   (SZ2B_TX_POWER=34) azonnal 100%-os lett, és −84..−90 dBm-ig hibátlan maradt.
+   **Alapértelmezés mostantól: 8,5 dBm minden SuperMini node-on**; emelés csak mérés után.
+3. **Szomszéd-csatorna bleed félretanítja a naiv scant.** Erős jelnél a master ch8-as
+   ACK-ja a ch7/ch9-en is dekódolható → az első-ACK-ra megálló scan rossz csatornát
+   cache-elt (élesben elkapva: „scan OK: csatorna=7") → oszcilláció (dup-vihar / minden
+   2. ciklus elveszett). Fix: a teljes sweep kiértékelése, **max-RSSI csatorna** nyer.
+4. **S3-Zero antenna = link-budget gyanú (NYITOTT).** ~1 m-en −61..−86 dBm-et mérünk a
+   masternél (szabadtéri ideál ~−31 lenne 8,5 dBm-nél) → ~30–40 dB hiány a láncban; a
+   router jelét is csak −75..−88-cal látja. A user tapasztalata szerint ugyanezek a
+   SuperMini-k fém sátorban, 2–3 m-ről, másik (nem S3-Zero) masterrel hibátlanok → a fő
+   gyanúsított az S3-Zero kerámia-antennája, ami MINDEN link mindkét irányában ott van.
+   Előkészített kontrollmérés: `node2rx` env (C3↔C3 sniffer, ch8) — a node2 USB-kontakt
+   újbóli hibája miatt nem futott le. **Rendszerterv-következmény, ha igazolódik: külső
+   antennás master-board** (u.FL) — +20–30 dB az egész csillagra. Terepi range-teszt
+   mindenképp kell élesítés előtt.
+5. **node2 USB-enumeráció instabil (kontakt).** Rádión hibátlan, de az USB-portja kétszer
+   is eltűnt (replug elsőre megjavította). Fejlesztésnél számolni kell vele; a boardot
+   érdemes lehet cserélni/újraforrasztani.
+6. **A master STA-boot átmenete önjavító.** Boot után a master a default ch1-en ül, amíg
+   az asszociáció (1–5 s) át nem viszi az AP csatornájára — az ebben az ablakban ACK-ot
+   kapó node átmenetileg rossz csatornát tanulhat, de a streak→rescan út magától
+   helyrehozza (P2-ben megfigyelve, beavatkozás nélkül felépült).
+
+## Nyitott / következő lépések
+
+- **C3↔C3 sniffer-kontrollmérés** (env kész: `pio run -e node2rx`) az S3-Zero antenna
+  számszerűsítésére → master-board döntés (külső antenna?).
+- Megismétlés a **ZTE MF79U stick hotspotjával** (Sz5): DHCP/NAT + a stick 2,4 GHz
+  önzavara az igazi célkörnyezet.
+- **Redundancia-sweep (1×/3×/N×)** — az eredeti spec 3. célja; az app-ACK+retry mellett
+  a tűzz-és-felejts redundancia-méretezés kérdése maradt nyitva (élesben az ACK-os út megy).
+- Nagy flotta (12 node) ütközés-stressz — Sz6 óta változatlanul hátravan.
+- AP-csatornaváltás menet közbeni tesztje (a scan-út elvben fedi; explicit teszt nem volt).

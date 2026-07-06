@@ -439,6 +439,69 @@ static void cycle_task(void *arg)
     esp_deep_sleep((uint64_t)sleep_us);
 }
 
+#ifdef SZ2B_RXTEST
+/* =================== DIAGNOSZTIKAI RX-TESZT (promiscuous sniffer) ===================
+ * Build: env node2rx (platformio.ini) — a node NEM alszik, a megadott csatorna forgalmát
+ * számolja és minden frame src MAC + RSSI párosát logolja. Az Sz6 SZ6_RXTEST mintája,
+ * paraméterezhető csatornával (SZ2B_SNIFF_CHANNEL, default 8 = a dlink AP csatornája).
+ * CÉL (Sz2b): C3↔C3 link-budget kontrollmérés — a node1 broadcastjait egy MÁSIK C3
+ * mennyivel erősebben hallja, mint az S3-Zero master (gyanú: az S3-Zero kerámia-antenna
+ * a link-budget szűk keresztmetszete). A master ACK-jainak RSSI-je (21 dBm TX) a
+ * S3→C3 irányt is méri. */
+#ifndef SZ2B_SNIFF_CHANNEL
+#define SZ2B_SNIFF_CHANNEL 8
+#endif
+static volatile uint32_t s_sniff_total = 0;
+static volatile uint32_t s_sniff_espnow = 0;
+
+static void sniffer_cb(void *buf, wifi_promiscuous_pkt_type_t type)
+{
+    const wifi_promiscuous_pkt_t *pkt = (const wifi_promiscuous_pkt_t *)buf;
+    const uint8_t *d = pkt->payload;
+    (void)type;
+    s_sniff_total++;
+    uint8_t ftype = (d[0] >> 2) & 0x3;
+    uint8_t fsub  = (d[0] >> 4) & 0xF;
+    /* Csak a management/action frame-eket logoljuk soronként (ESP-NOW = vendor action). */
+    if (ftype == 0 && fsub == 0xD) {
+        bool is_espnow = (pkt->rx_ctrl.sig_len > 27 && d[24] == 0x7F &&
+                          d[25] == 0x18 && d[26] == 0xfe && d[27] == 0x34);
+        if (is_espnow) s_sniff_espnow++;
+        ESP_LOGI(TAG, "SNIFF FRAME src=%02X:%02X:%02X:%02X:%02X:%02X rssi=%d espnow=%d",
+                 d[10], d[11], d[12], d[13], d[14], d[15],
+                 (int)pkt->rx_ctrl.rssi, is_espnow ? 1 : 0);
+    }
+}
+
+void app_main(void)
+{
+    ESP_LOGW(TAG, "=== Sz2b NODE — DIAG RX-TESZT (sniffer, csatorna=%d) ===",
+             SZ2B_SNIFF_CHANNEL);
+    esp_err_t e = nvs_flash_init();
+    if (e == ESP_ERR_NVS_NO_FREE_PAGES || e == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ESP_ERROR_CHECK(nvs_flash_init());
+    } else {
+        ESP_ERROR_CHECK(e);
+    }
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_start());
+    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
+    ESP_ERROR_CHECK(esp_wifi_set_channel(SZ2B_SNIFF_CHANNEL, WIFI_SECOND_CHAN_NONE));
+    ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true));
+    ESP_ERROR_CHECK(esp_wifi_set_promiscuous_rx_cb(sniffer_cb));
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(5000));
+        ESP_LOGW(TAG, "SNIFF STAT total=%u espnow=%u",
+                 (unsigned)s_sniff_total, (unsigned)s_sniff_espnow);
+    }
+}
+#else
 void app_main(void)
 {
     /* Új futás detektálása. NEM a wakeup cause-t nézzük, hanem a reset-okot: az RTC-memória
@@ -478,3 +541,4 @@ void app_main(void)
 
     xTaskCreate(cycle_task, "sz2b_cycle", 4096, NULL, 5, NULL);
 }
+#endif /* SZ2B_RXTEST */
