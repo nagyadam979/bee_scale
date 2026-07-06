@@ -127,15 +127,24 @@ a bench során talált veszteségek gyökéroka RF-szintű volt (lásd lent), ne
    ACK-ja a ch7/ch9-en is dekódolható → az első-ACK-ra megálló scan rossz csatornát
    cache-elt (élesben elkapva: „scan OK: csatorna=7") → oszcilláció (dup-vihar / minden
    2. ciklus elveszett). Fix: a teljes sweep kiértékelése, **max-RSSI csatorna** nyer.
-4. **S3-Zero antenna = link-budget gyanú (NYITOTT).** ~1 m-en −61..−86 dBm-et mérünk a
-   masternél (szabadtéri ideál ~−31 lenne 8,5 dBm-nél) → ~30–40 dB hiány a láncban; a
-   router jelét is csak −75..−88-cal látja. A user tapasztalata szerint ugyanezek a
-   SuperMini-k fém sátorban, 2–3 m-ről, másik (nem S3-Zero) masterrel hibátlanok → a fő
-   gyanúsított az S3-Zero kerámia-antennája, ami MINDEN link mindkét irányában ott van.
-   Előkészített kontrollmérés: `node2rx` env (C3↔C3 sniffer, ch8) — a node2 USB-kontakt
-   újbóli hibája miatt nem futott le. **Rendszerterv-következmény, ha igazolódik: külső
-   antennás master-board** (u.FL) — +20–30 dB az egész csillagra. Terepi range-teszt
-   mindenképp kell élesítés előtt.
+4. **S3-Zero antenna: a link-budget gyanú MEGDŐLT (2026-07-06, `rssi_probe`).** A gyanút
+   (~30–40 dB deficit, külső antennás master-board szükségessége) egy egyszerűbb, a két-ESP32
+   bizonytalanságot kizáró méréssel cáfoltuk: mindkét board (S3-Zero és C3 SuperMini) STA-ként
+   UGYANAHHOZ a referencia-routerhez (dlink-EDA4) csatlakozott, és az AP-RSSI-t a
+   távolság függvényében mértük (`rssi_probe` firmware, telnet/UDP-riport). Eredmény:
+   - **S3-Zero:** a routeren (0 m) −66, 2–4 m-en **−44…−45**, 5–6 m-en −53 dBm; disc=0 végig.
+   - **C3 SuperMini:** a routeron (0 m) −74, közeltéri csúcs **−31…−34**, 5–6 m-en −55…−65; disc=0.
+   - Mindkét board ugyanabban a nagyságrendben mozog; **nincs 30–40 dB deficit sehol**, a
+     C3 csúcsértéke még erősebb is. A pozíció/orientáció/multipath dominál, nem az antenna.
+   - Kulcsmegfigyelés: **0 m-en (a router házára téve) MINDKÉT board gyengébb**, mint 2–4 m-en
+     — közeli-tér árnyékolás/elhangolás, nem antenna-hiba. Egy valóban rossz antenna monoton
+     mélyen gyenge lenne, nem javulna 20 dB-t pár méter távolodásra.
+   - **Következmény:** a P3-ban a munkaasztalon látott −82 dBm a router NAGY TÁVOLSÁGA + falak
+     miatt volt, nem az S3 antennájáé. A `rssi_probe` a board VÉTELÉT méri (AP-beacon → RX-lánc),
+     ami ugyanaz a lánc, amivel az ESP-NOW-ot venné → ha ez egészséges, a P3-as node→master
+     gyengeségnek sem az S3 RX-antennája az oka. A valódi ludas a **SuperMini node TX-torzítás**
+     volt teljes poweren (lásd 2. pont, `TX_POWER=34` fixálta). **Külső antennás master-board
+     RF-okból NEM indokolt** — a döntés más szempontokra (fizikai elrendezés, ház) hárul.
 5. **node2 USB-enumeráció instabil (kontakt).** Rádión hibátlan, de az USB-portja kétszer
    is eltűnt (replug elsőre megjavította). Fejlesztésnél számolni kell vele; a boardot
    érdemes lehet cserélni/újraforrasztani.
@@ -146,8 +155,9 @@ a bench során talált veszteségek gyökéroka RF-szintű volt (lásd lent), ne
 
 ## Nyitott / következő lépések
 
-- **C3↔C3 sniffer-kontrollmérés** (env kész: `pio run -e node2rx`) az S3-Zero antenna
-  számszerűsítésére → master-board döntés (külső antenna?).
+- ~~C3↔C3 sniffer-kontrollmérés az S3-Zero antenna számszerűsítésére~~ → **ELVÉGEZVE**
+  másképp: `rssi_probe` (board↔referencia-router RSSI-görbe), lásd a 4. tanulságot. Az
+  antenna-gyanú megdőlt, külső antennás master RF-okból nem indokolt.
 - Megismétlés a **ZTE MF79U stick hotspotjával** (Sz5): DHCP/NAT + a stick 2,4 GHz
   önzavara az igazi célkörnyezet.
 - **Redundancia-sweep (1×/3×/N×)** — az eredeti spec 3. célja; az app-ACK+retry mellett
