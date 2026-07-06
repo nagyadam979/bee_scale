@@ -1,0 +1,13 @@
+# Sz2b RSSI-PROBE · sdkconfig.defaults (a master mintája, mindkét chipre érvényes)
+
+# Konzol a natív USB-Serial-JTAG-on (S3-Zero és C3 SuperMini is bridge nélküli).
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# Flash: mindkét bench-board 4 MB (S3-Zero: S3FH4R2; C3 SuperMini: 4 MB).
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+# A mérőhurok az app_main taskban fut (socketek + snprintf) -> nagyobb main-stack.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144
+
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y

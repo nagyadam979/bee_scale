@@ -4,9 +4,13 @@ master/.pio/
 node/sdkconfig.node1
 node/sdkconfig.node2
 node/sdkconfig.node3
+node/sdkconfig.node2rx
 master/sdkconfig.p1-espnow-only
 master/sdkconfig.p2-sta-idle
 master/sdkconfig.p3-sta-traffic
+rssi_probe/.pio/
+rssi_probe/sdkconfig.s3zero
+rssi_probe/sdkconfig.c3super
 # WiFi hitelesítők — SOHA nem kerül commitba (creds.ini.example a minta).
 master/creds.ini
 # Futási logok (a serial_logger.py kimenete) — az eredmény-összefoglaló a README-be kerül.
