@@ -52,3 +52,5 @@ wireless_scaling/.venv/
 __pycache__/
 *.pyc
 wireless_scaling/enclosure/export/
+
+wireless_scaling/modeling/PCB_layout
