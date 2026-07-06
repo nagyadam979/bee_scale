@@ -48,7 +48,7 @@ Két, az Sz2 után maradt kockázat lezárása a **végleges hardveren** (ESP32-
 | Csomagvesztés gyökéroka | azonosítva vagy a végleges HW-n cáfolva |
 
 ## Nyitott kérdések / kockázatok
-- Nagy flotta (12 node) egyidejű broadcast-**ütközése** — Setup 3-ban skálázandó (jitter/redundancia).
+- Nagyobb flotta (több node) egyidejű broadcast-**ütközése** — Setup 3-ban skálázandó (jitter/redundancia).
 - Ha a D1 elbukik: az ablakos fallback késleltetést visz (a `seq`+PSRAM elnyeli, adatvesztés nélkül).
 - A stick 2.4 GHz hotspotjának önzavara külső antennával (TS-9) csökkenthető — lásd `new_base_components.md`.
 
@@ -162,5 +162,5 @@ a bench során talált veszteségek gyökéroka RF-szintű volt (lásd lent), ne
   önzavara az igazi célkörnyezet.
 - **Redundancia-sweep (1×/3×/N×)** — az eredeti spec 3. célja; az app-ACK+retry mellett
   a tűzz-és-felejts redundancia-méretezés kérdése maradt nyitva (élesben az ACK-os út megy).
-- Nagy flotta (12 node) ütközés-stressz — Sz6 óta változatlanul hátravan.
+- Nagyobb flotta ütközés-stressz (a végleges node-szám egyelőre nyitott) — Sz6 óta változatlanul hátravan.
 - AP-csatornaváltás menet közbeni tesztje (a scan-út elvben fedi; explicit teszt nem volt).

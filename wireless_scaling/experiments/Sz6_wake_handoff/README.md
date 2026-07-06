@@ -7,7 +7,7 @@
 A **megbízható wake→adatátadás protokoll** kidolgozása tisztán az ESP-NOW kommunikációra
 fókuszálva (semmi periféria, semmi fogyasztás-optimalizálás, a mérés szimulált):
 a node felébred, elküldi a "mérést", a master app-szinten visszaigazolja, a node alszik.
-Több node-dal, felskálázható mintával (cél-flotta: ~12 node).
+Több node-dal, felskálázható mintával (a cél-flotta mérete egyelőre nyitott).
 
 **RÖVIDÍTETT bench-ciklus: 12 s deep sleep** (±1 s jitter) — az éles (percek) ciklust
 szimuláló bench a protokoll stabilizálása UTÁN jön.
@@ -122,6 +122,6 @@ pipeline terhelés alatt is veszteségmentes.
 **Nyitott / következő lépések:**
 - Éles-szimuláló bench (percek-órák ciklusidő, linger/log-ismétlés kikapcsolva) — a
   protokoll stabilizálva, ez már csak paraméter.
-- Ütközés-stressz nagy flottával (12 node) — a jitter-dekorreláció 2 node-dal ütközésmentes
+- Ütközés-stressz nagyobb flottával — a jitter-dekorreláció 2 node-dal ütközésmentes
   volt; a retry-út külön igazolt, de a skálázási stressz-teszt még hátravan.
 - A node1 egyszeri miss-e (seq=2, a flash-tooling percében) nem reprodukálódott — figyelendő.

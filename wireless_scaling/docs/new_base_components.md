@@ -47,7 +47,7 @@ Fixed-size struct (`payload_t`), nincs parse/string. Slave és master ugyanazt h
 ## Adattárolás és perzisztencia
 
 ### PSRAM mint tömeg-puffer
-- Becslés ~32 byte/rekord, ~1.5 MB elérhető PSRAM → ~49 000 rekord. 12 node negyedóránként ~1150 rekord/nap → **~40 napnyi** puffer felhő-kimaradás esetén is.
+- Becslés ~32 byte/rekord, ~1.5 MB elérhető PSRAM → ~49 000 rekord. Felső becsléssel ~12 node negyedóránként ~1150 rekord/nap → **~40 napnyi** puffer felhő-kimaradás esetén is (a végleges flotta ennél kisebb — a 12 itt worst-case méretezési plafon, kevesebb node esetén arányosan több napra elég).
 - **Megszorítás:** a PSRAM nem perzisztens — reset/áramszünet törli. Ezt veszi át az EEPROM checkpoint + `seq`-gapdetektálás.
 
 ### EEPROM checkpoint — AT24C256-I2C

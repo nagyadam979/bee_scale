@@ -31,7 +31,7 @@ Háttér / rendszerterv: `../MEMORY.md` (7. szakasz), `../docs/new_base_componen
 | **Setup 1** | 1 node + 1 master, padon | Protokoll-mag: `seq`-dup-szűrés, buffer-clear, egyidejű WiFi/ESP-NOW üzem (D1) |
 | **Setup 2** | 1 node + master, hosszú futás | Folyamatos üzem: csomagvesztés/kézbesítés always-on RX-nél (Sz2b), stabilitás |
 | **Setup 2.5** | 3 node + master (opcionális) | Dup-kezelés + broadcast-ütközés valós forgalomban, kisebb káosz |
-| **Setup 3** | 12 node + master, terepközeli | Skálázódás: broadcast-ütközés, csomagvesztés-arány, redundancia-méretezés |
+| **Setup 3** | több node + master, terepközeli | Skálázódás: broadcast-ütközés, csomagvesztés-arány, redundancia-méretezés (a végleges node-szám egyelőre nyitott) |
 
 ---
 

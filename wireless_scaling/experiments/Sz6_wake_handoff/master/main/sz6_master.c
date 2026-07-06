@@ -18,7 +18,7 @@
  * SKÁLÁZÁS
  *   - Node-tábla node_id szerint (SZ6_MAX_NODES); a peer a src MAC-ből dinamikusan kerül
  *     fel az ESP-NOW peer-listára (ensure_peer). Az ESP-NOW peer-limit (20 titkosítatlan)
- *     bőven elég a tervezett flottának (~12 node).
+ *     bőven elég a tervezett flottának (a végleges node-szám egyelőre nyitott).
  *   - A boot_id-váltás node-resetet jelez -> az adott node seq-követése újraindul.
  *
  * KIMENET (gép-grep-elhető, a bench-kiértékelés alapja)
