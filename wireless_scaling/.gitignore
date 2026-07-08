@@ -3,6 +3,9 @@
 __pycache__/
 *.pyc
 
+# --- PlatformIO build-artifactok (a pio run reprodukálja) ---
+.pio/
+
 # --- Generált CAD export (STL/STEP/PNG/FCStd) — az enclosure.py reprodukálja ---
 modeling/enclosure/export/
 
