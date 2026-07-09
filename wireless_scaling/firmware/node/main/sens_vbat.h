@@ -2,12 +2,10 @@
  * sens_vbat.h — akkufeszültség mérés: NPN-kapcsolt feszültségosztó + ADC1
  * bee_scale / wireless_scaling · 2. fázis · firmware/node
  *
- * A TP4056 OUT+ (akkusín, 4.2..3.0 V) feszültségét egy 100k/100k osztó felezi az ADC1 (GPIO4)
- * bemenetre. Az osztó alsó ágának GND-jét egy NPN (bázis=GPIO7, 10k) kapcsolja: alvásban/mérésen
- * kívül LOW -> ~0 szivárgás; méréskor HIGH -> VBAT_SETTLE_MS beállás (100 nF) -> ADC átlag.
+ * A TP4056 OUT+ (akkusín, 4.2..3.0 V) feszültségét egy 10k/10k osztó felezi az ADC1 (GPIO0)
+ * bemenetre. Az osztó alsó ágának GND-jét egy NPN (bázis=GPIO10, 10k) kapcsolja: alvásban/mérésen
+ * kívül LOW -> ~0 szivárgás; méréskor HIGH -> VBAT_SETTLE_MS beállás -> ADC átlag.
  * A leolvasott mV-t a VBAT_DIVIDER_RATIO-val visszaszorozzuk az akku mV-jára.
- *
- * STÁTUSZ: STUB — az interfész végleges; a valós adc_oneshot + kalibráció a feltöltéskor kerül be.
  */
 #ifndef SENS_VBAT_H
 #define SENS_VBAT_H
@@ -35,5 +33,11 @@ uint16_t vbat_sample_mv(void);
  * A FIELD profil ezt hívja (egyszeri mérés). A payload vbat (uint16_t mV) mezőjébe való.
  */
 uint16_t vbat_read_mv(void);
+
+/*
+ * Deep sleep előtti fogyasztáscsökkentés: ADC unit/kalibráció elengedése és osztó OFF.
+ * Deep sleep után úgyis reboot jön, ezért nem kell visszaépíthető állapotot tartani.
+ */
+void vbat_prepare_sleep(void);
 
 #endif /* SENS_VBAT_H */

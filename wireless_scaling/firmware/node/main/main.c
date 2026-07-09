@@ -6,9 +6,8 @@
  *   1) NVS init (WiFi PHY-kalibrációhoz kell)
  *   2) RTC-állapot (cycle -> seq, boot_id) — node_sleep
  *   3) profil-függő munka:
- *        BENCH: fázis-szekvencer — minden alrendszer KÜLÖN, hosszú, egyenletes szakaszban
- *               aktív (a DMM-en komponensenként lépcső). A szenzorok a WiFi BEKAPCSOLÁSA ELŐTT
- *               mérnek (tiszta, zajmentes táp/ADC).
+ *        BENCH: fázis-szekvencer — baseline, összes szenzor együtt, rádió-idle, ESP-NOW TX.
+ *               A szenzorok a WiFi BEKAPCSOLÁSA ELŐTT mérnek (tiszta, zajmentes táp/ADC).
  *        FIELD: egyszeri gyors mérés (HX711 + DS18B20 + vbat) -> payload -> broadcast.
  *   4) deep sleep NODE_WAKE_PERIOD_SEC-ig — node_sleep
  *
@@ -22,6 +21,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "nvs_flash.h"
+#include "driver/gpio.h"
 
 #include "node_config.h"
 #include "protocol.h"
@@ -69,14 +69,42 @@ static void build_payload(sz2_payload_t *p, const node_wake_state_t *st,
              (unsigned)p->seq, (double)p->weight, (double)p->temp, (unsigned)p->vbat);
 }
 
+static void user_led_set_off(void)
+{
+    gpio_set_level(USER_LED_GPIO, 1);   /* SuperMini kék LED tipikusan aktív-LOW. */
+}
+
+static void user_led_init(void)
+{
+    gpio_hold_dis(USER_LED_GPIO);
+
+    gpio_config_t cfg = {
+        .pin_bit_mask = (1ULL << USER_LED_GPIO),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&cfg));
+    user_led_set_off();
+    ESP_LOGI(TAG, "user_led_init: GPIO%d output, OFF=HIGH, ON=LOW", USER_LED_GPIO);
+}
+
+static void user_led_blink_once(const char *why)
+{
+    ESP_LOGI(TAG, "LED villanas: %s", why);
+    gpio_set_level(USER_LED_GPIO, 0);
+    vTaskDelay(pdMS_TO_TICKS(120));
+    user_led_set_off();
+    vTaskDelay(pdMS_TO_TICKS(120));
+}
+
 #if NODE_PROFILE == NODE_PROFILE_BENCH
 /* ===================== BENCH: fázis-szekvencer ===================== */
 
 typedef enum {
     PH_BASELINE = 0,  /* minden ki: az MCU puszta ébren-alapárama (referencia) */
-    PH_HX711,         /* HX711 power-up + folyamatos olvasás */
-    PH_VBAT,          /* NPN ON + folyamatos ADC (végig bekapcsolt osztó) */
-    PH_DS18B20,       /* folyamatos hőmérséklet-konverzió */
+    PH_SENSORS_ALL,   /* HX711 + VBAT + DS18B20 együtt, egy mérési fázisban */
     PH_WIFI_IDLE,     /* WiFi/ESP-NOW init kész, de NEM küld (rádió-alapáram) */
     PH_ESPNOW_TX,     /* folyamatos broadcast (TX-csúcsok + link-teszt) */
     PH_COUNT
@@ -86,9 +114,7 @@ static const char *phase_name(bench_phase_t ph)
 {
     switch (ph) {
         case PH_BASELINE:  return "BASELINE (minden ki)";
-        case PH_HX711:     return "HX711 (folyamatos olvasas)";
-        case PH_VBAT:      return "VBAT (oszto be, folyamatos ADC)";
-        case PH_DS18B20:   return "DS18B20 (folyamatos konverzio)";
+        case PH_SENSORS_ALL: return "SENSORS_ALL (HX711 + VBAT + DS18B20)";
         case PH_WIFI_IDLE: return "WIFI_IDLE (radio be, nem kuld)";
         case PH_ESPNOW_TX: return "ESPNOW_TX (folyamatos broadcast)";
         default:           return "?";
@@ -99,22 +125,38 @@ static const char *phase_name(bench_phase_t ph)
 static void run_phase_for(uint32_t sample_interval_ms, void (*sample)(const node_wake_state_t *),
                           const node_wake_state_t *st)
 {
-    const uint32_t total_ms = (uint32_t)BENCH_PHASE_SEC * 1000u;
-    uint32_t elapsed = 0;
-    while (elapsed < total_ms) {
+    const int64_t interval_us = (int64_t)sample_interval_ms * 1000;
+    const int64_t end_us = esp_timer_get_time() + (int64_t)BENCH_PHASE_MS * 1000;
+    int64_t next_us = esp_timer_get_time();
+
+    while (esp_timer_get_time() < end_us) {
         if (sample) {
             sample(st);
         }
-        vTaskDelay(pdMS_TO_TICKS(sample_interval_ms));
-        elapsed += sample_interval_ms;
+
+        next_us += interval_us;
+        int64_t delay_us = next_us - esp_timer_get_time();
+        int64_t until_end_us = end_us - esp_timer_get_time();
+        if (delay_us > until_end_us) {
+            delay_us = until_end_us;
+        }
+        if (delay_us > 0) {
+            vTaskDelay(pdMS_TO_TICKS((uint32_t)(delay_us / 1000)));
+        }
     }
 }
 
 /* --- fázis-mintavevő visszahívások (a szekvencer hívja ciklikusan) --- */
 /* A fázis-mintavevők a nyers értéket a logra is kiírják (a DMM-lépcső mellett a mért adat is látszik). */
-static void sample_hx711(const node_wake_state_t *st)  { (void)st; ESP_LOGI(TAG, "HX711 raw=%ld", (long)hx711_read_raw()); }
-static void sample_vbat(const node_wake_state_t *st)   { (void)st; ESP_LOGI(TAG, "vbat=%u mV", (unsigned)vbat_sample_mv()); }
-static void sample_ds18b20(const node_wake_state_t *st){ (void)st; ESP_LOGI(TAG, "temp=%.2f C", (double)ds18b20_read_temp()); }
+static void sample_sensors_all(const node_wake_state_t *st)
+{
+    (void)st;
+    int32_t raw = hx711_read_raw();
+    uint16_t vbat = vbat_sample_mv();
+    float temp = ds18b20_read_temp();
+    ESP_LOGI(TAG, "sensors: HX711 raw=%ld vbat=%u mV temp=%.2f C",
+             (long)raw, (unsigned)vbat, (double)temp);
+}
 
 static void sample_espnow(const node_wake_state_t *st)
 {
@@ -131,32 +173,25 @@ static void sample_espnow(const node_wake_state_t *st)
 
 static void run_bench(const node_wake_state_t *st)
 {
-    ESP_LOGI(TAG, "BENCH profil: %d fazis x %d s ebrenlet, majd %d s alvas.",
-             (int)PH_COUNT, BENCH_PHASE_SEC, NODE_WAKE_PERIOD_SEC);
+    ESP_LOGI(TAG, "BENCH profil: %d fazis x %d ms ebrenlet, majd %d s alvas.",
+             (int)PH_COUNT, BENCH_PHASE_MS, NODE_WAKE_PERIOD_SEC);
 
     for (bench_phase_t ph = 0; ph < PH_COUNT; ph++) {
         ESP_LOGI(TAG, "=== FAZIS %d/%d: %s ===", (int)ph + 1, (int)PH_COUNT, phase_name(ph));
 
         switch (ph) {
             case PH_BASELINE:
+                user_led_set_off();
                 run_phase_for(BENCH_SAMPLE_INTERVAL_MS, NULL, st);
                 break;
 
-            case PH_HX711:
+            case PH_SENSORS_ALL:
                 hx711_power_up();
-                run_phase_for(BENCH_SAMPLE_INTERVAL_MS, sample_hx711, st);
-                hx711_power_down();
-                break;
-
-            case PH_VBAT:
                 vbat_enable();
                 vTaskDelay(pdMS_TO_TICKS(VBAT_SETTLE_MS));   /* egyszeri RC-beallas */
-                run_phase_for(BENCH_SAMPLE_INTERVAL_MS, sample_vbat, st);
+                run_phase_for(BENCH_SAMPLE_INTERVAL_MS, sample_sensors_all, st);
                 vbat_disable();
-                break;
-
-            case PH_DS18B20:
-                run_phase_for(BENCH_SAMPLE_INTERVAL_MS, sample_ds18b20, st);
+                hx711_power_down();
                 break;
 
             case PH_WIFI_IDLE:
@@ -198,6 +233,12 @@ static void run_field(const node_wake_state_t *st)
 
 void app_main(void)
 {
+#if NODE_PROFILE == NODE_PROFILE_SLEEP_FLOOR
+    ESP_LOGI(TAG, "SLEEP_FLOOR profil: HX711 power-down + minimal deep sleep %d s.", NODE_WAKE_PERIOD_SEC);
+    hx711_init();
+    hx711_power_down();
+    node_enter_deep_sleep_minimal(NODE_WAKE_PERIOD_SEC);
+#else
     nvs_init();
 
     node_wake_state_t st;
@@ -210,6 +251,8 @@ void app_main(void)
     hx711_init();
     vbat_init();
     ds18b20_init();
+    user_led_init();
+    user_led_blink_once(st.cold_boot ? "boot" : "timer-wake");
 
 #if NODE_PROFILE == NODE_PROFILE_BENCH
     run_bench(&st);
@@ -218,5 +261,9 @@ void app_main(void)
 #endif
 
     ESP_LOGI(TAG, "Ciklus kesz. Deep sleep %d s.", NODE_WAKE_PERIOD_SEC);
+    user_led_blink_once("deep sleep elott");
+    espnow_tx_deinit();
+    vbat_prepare_sleep();
     node_enter_deep_sleep(NODE_WAKE_PERIOD_SEC);
+#endif
 }

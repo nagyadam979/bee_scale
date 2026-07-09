@@ -30,7 +30,10 @@ static bool s_cali_ok = false;
 
 void vbat_init(void)
 {
-    /* NPN-kapcsoló GPIO: output, alap LOW (osztó lekapcsolva). */
+    gpio_hold_dis(VBAT_SW_GPIO);
+
+    /* NPN-kapcsoló GPIO: output, alap LOW (osztó lekapcsolva). Akkor is így hagyjuk,
+     * ha a VBAT mérés tiltott, mert ez a fogyasztásbarát állapot. */
     gpio_config_t sw_cfg = {
         .pin_bit_mask = (1ULL << VBAT_SW_GPIO),
         .mode = GPIO_MODE_OUTPUT,
@@ -40,6 +43,11 @@ void vbat_init(void)
     };
     ESP_ERROR_CHECK(gpio_config(&sw_cfg));
     gpio_set_level(VBAT_SW_GPIO, 0);
+
+#if !VBAT_MEASURE_ENABLED
+    ESP_LOGW(TAG, "vbat_init: VBAT meres tiltva (oszto le van kotve GPIO0-rol)");
+    return;
+#endif
 
     /* ADC1 oneshot unit + csatorna. */
     adc_oneshot_unit_init_cfg_t unit_cfg = { .unit_id = VBAT_ADC_UNIT };
@@ -70,6 +78,9 @@ void vbat_init(void)
 
 void vbat_enable(void)
 {
+#if !VBAT_MEASURE_ENABLED
+    return;
+#endif
     gpio_set_level(VBAT_SW_GPIO, 1);   /* NPN ON -> osztó él */
 }
 
@@ -80,6 +91,10 @@ void vbat_disable(void)
 
 uint16_t vbat_sample_mv(void)
 {
+#if !VBAT_MEASURE_ENABLED
+    return 0;
+#endif
+
     int64_t acc = 0;
     int n = 0;
     for (int i = 0; i < VBAT_ADC_SAMPLES; i++) {
@@ -112,4 +127,38 @@ uint16_t vbat_read_mv(void)
     uint16_t mv = vbat_sample_mv();
     vbat_disable();
     return mv;
+}
+
+void vbat_prepare_sleep(void)
+{
+    vbat_disable();
+
+#if VBAT_MEASURE_ENABLED
+    if (s_cali_ok && s_cali) {
+        adc_cali_delete_scheme_curve_fitting(s_cali);
+        s_cali = NULL;
+        s_cali_ok = false;
+    }
+
+    if (s_adc) {
+        adc_oneshot_del_unit(s_adc);
+        s_adc = NULL;
+    }
+
+    gpio_config_t adc_cfg = {
+        .pin_bit_mask = (1ULL << VBAT_ADC_GPIO),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&adc_cfg));
+#endif
+
+#if VBAT_MEASURE_ENABLED
+    ESP_LOGI(TAG, "vbat sleep: ADC unit torolve, SW(GPIO%d)=LOW, ADC(GPIO%d)=input/no-pull",
+             VBAT_SW_GPIO, VBAT_ADC_GPIO);
+#else
+    ESP_LOGI(TAG, "vbat sleep: VBAT meres tiltva, SW(GPIO%d)=LOW", VBAT_SW_GPIO);
+#endif
 }

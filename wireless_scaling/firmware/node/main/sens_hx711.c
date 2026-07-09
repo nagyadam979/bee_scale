@@ -3,7 +3,7 @@
  * bee_scale / wireless_scaling · 2. fázis · firmware/node
  *
  * EREDET: a H2 (h2_hx711_power_path.c, DATA-MONITOR mód) és az M1b (m1b_node.c) éles-mért
- *   bit-bang olvasója, a firmware pin-tervére (node_config.h: PD_SCK=GPIO4, DOUT=GPIO3) igazítva.
+ *   bit-bang olvasója, a firmware pin-tervére (node_config.h: PD_SCK=GPIO5, DOUT=GPIO6) igazítva.
  *
  * MŰKÖDÉS
  *   - power_up  : PD_SCK LOW -> a chip aktív, a load cell excitation BE; HX711_SETTLE_MS settle.

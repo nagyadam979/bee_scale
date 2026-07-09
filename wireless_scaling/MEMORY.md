@@ -104,6 +104,14 @@ A méhkaptár-mérleg **vezeték nélküli node** teljes fejlesztése — elektr
 - **Firmware-fix (a BENCH találta):** a `hx711_power_down()` GPIO-holdja eddig csak `hx711_init()`-ben (reboot után) oldódott fel → reboot nélküli power_down→power_up ciklusnál (6. fázis, ESPNOW_TX) a PD_SCK HIGH-on ragadt, a HX711 power-downban maradt, a read timeout 0-t adott. Fix: `gpio_hold_dis()` + `gpio_deep_sleep_hold_dis()` a `hx711_power_up()` elején — flashelve, igazoltan működik.
 - **NYITOTT — következő mérés:** alvás alatt feszültségmérés az osztó alsó 10k-ján (GPIO0–GND): ~0 mV → osztó ártatlan; ~1,8–2 V → NPN nyitva ragadt; köztes → pad-dióda szivárgás. Utána szükség esetén konverter-KIMENETI árammérés. Becsült terepi üzemidő 3,5 Ah-val: 750 µA → **~5–6 hónap**; osztó rendezve (~550 µA) → **~8 hónap**.
 
+**BENCH follow-up — teljes node fogyasztás-debug (`firmware/node`, 2026-07-09):**
+- **Aktuális padló:** normál firmware deep sleepben kb. **930–940 µA**; a `esp32-c3-sleep-floor` minimál profil (HX711 power-down + USB-JTAG pad off, minden más kihagyva) ugyanezt hozza. Ez alapján a 940 µA nagyrészt tápút / SuperMini / TPS63000-M kis terhelésű veszteség padlónak látszik, nem BENCH-fázis mellékhatásnak.
+- **HX711 pin-mismatch:** a valós PD_SCK **GPIO5**, DOUT **GPIO6**. A korábbi GPIO4/GPIO3 konfig mellett a sleep-floor kb. **1,8 mA** lett, mert a HX711 nem ment power-downba. Javítva: `HX711_PD_SCK_GPIO=GPIO5`, `HX711_DOUT_GPIO=GPIO6`.
+- **GPIO0 / VBAT:** a low-side kapcsolt 10k/10k osztó OFF állapotban a GPIO0 mérőcsomópontot VBAT-ra úsztatta; a hardverág le lett kötve. Firmware-ben `VBAT_MEASURE_ENABLED=0`, a payload/log vbat placeholder **0 mV**.
+- **GPIO9 / DS18B20:** a hőmérő olvasás jelenleg tiltott (`DS18B20_ENABLED=0`), de deep sleep előtt GPIO9 explicit **HIGH + hold** (`DS18B20_HOLD_HIGH_IN_SLEEP=1`), hogy a 4,7 kΩ felhúzó ne tudjon LOW padon át ~700 µA-t elfűteni.
+- **Rossz irány kizárva:** az „összes GPIO input/no-pull” próbálkozás kb. **1,7 mA**-re rontott; C3-on deep sleepben a nem holdolt GPIO-k alapból high-Z, ezért csak a külső fogyasztót vezérlő lábakat szabad célzottan kezelni.
+- **Doksi:** részletes jegyzet: `docs/node_power_debug_2026-07-09.md`; GPIO9 boot/fogyasztás jegyzet: `docs/gpio9_ds18b20_boot_test.md`.
+
 ## 9. Mappastruktúra és modul-fájlok
 
 Részletes mappa-leírás + munkamódszer: `CLAUDE.md`.

@@ -23,4 +23,7 @@ void espnow_tx_get_mac(uint8_t mac_out[6]);
 /* A payload elküldése broadcastként `repeat`-szer back-to-back (send-cb-re szerializálva). */
 void espnow_tx_send(const sz2_payload_t *p, int repeat);
 
+/* ESP-NOW + WiFi leállítása deep sleep előtt. Ha nem volt init, no-op. */
+void espnow_tx_deinit(void);
+
 #endif /* ESPNOW_TX_H */

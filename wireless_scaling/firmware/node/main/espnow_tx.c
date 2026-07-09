@@ -141,3 +141,22 @@ void espnow_tx_send(const sz2_payload_t *p, int repeat)
         }
     }
 }
+
+void espnow_tx_deinit(void)
+{
+    if (!s_inited) {
+        return;
+    }
+
+    esp_now_unregister_send_cb();
+    esp_now_deinit();
+    esp_wifi_stop();
+    esp_wifi_deinit();
+
+    if (s_tx_done) {
+        vSemaphoreDelete(s_tx_done);
+        s_tx_done = NULL;
+    }
+    s_inited = false;
+    ESP_LOGI(TAG, "ESP-NOW/WiFi leallitva deep sleep elott");
+}

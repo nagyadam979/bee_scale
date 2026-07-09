@@ -5,8 +5,6 @@
  * A HX711-M bit-bang olvasása (PD_SCK=GPIO5, DOUT=GPIO6). Power-down (PD_SCK HIGH>60us) alatt
  * a load cell excitation lekapcsol -> ~0 áram (H2, éles-mérve). A BENCH-ben a power_up/down
  * külön hívható (fázis-izolált mérés), a FIELD egy read_weight-et hív.
- *
- * STÁTUSZ: STUB — az interfész végleges; a valós bit-bang a H2 hx711_read_raw-ból kerül be.
  */
 #ifndef SENS_HX711_H
 #define SENS_HX711_H

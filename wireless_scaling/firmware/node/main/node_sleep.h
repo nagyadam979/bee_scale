@@ -32,4 +32,10 @@ void node_sleep_begin_cycle(node_wake_state_t *st);
  */
 void node_enter_deep_sleep(uint32_t seconds);
 
+/*
+ * Minimál deep sleep belépés izolációs méréshez: nem állít periféria GPIO-kat,
+ * csak flush -> USB-Serial-JTAG pad off -> timer wake -> deep sleep.
+ */
+void node_enter_deep_sleep_minimal(uint32_t seconds);
+
 #endif /* NODE_SLEEP_H */
