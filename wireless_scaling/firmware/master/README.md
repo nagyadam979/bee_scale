@@ -8,3 +8,8 @@
 | RJ11 eso kapcsolo | GPIO7 |
 | AHT20 + BMP280-M I2C SDA | GPIO8 |
 | AHT20 + BMP280-M I2C SCL | GPIO9 |
+
+DS18B20 szerepek:
+
+- `ds0`: kaptar szonda homerseklet
+- `ds1`: merlegkalibracios onboard homero
