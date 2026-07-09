@@ -18,6 +18,7 @@
  *   a konfig ELŐTT feloldja a holdot.
  */
 #include "sens_hx711.h"
+#include <math.h>
 #include "node_config.h"
 #include "esp_log.h"
 #include "driver/gpio.h"
@@ -78,7 +79,7 @@ void hx711_power_down(void)
     gpio_deep_sleep_hold_en();
 }
 
-int32_t hx711_read_raw(void)
+bool hx711_read_raw_checked(int32_t *raw_out)
 {
     /* Várjuk a DOUT LOW-t (adat kész). Timeout, hogy modul/bekötés nélkül ne ragadjon be. */
     int guard = 0;
@@ -86,7 +87,10 @@ int32_t hx711_read_raw(void)
         esp_rom_delay_us(100);
         if (++guard > 5000) {   /* ~0.5 s */
             ESP_LOGW(TAG, "HX711 DOUT timeout (nem kesz / nincs modul / rossz bekotes?)");
-            return 0;
+            if (raw_out) {
+                *raw_out = 0;
+            }
+            return false;
         }
     }
 
@@ -109,16 +113,43 @@ int32_t hx711_read_raw(void)
     if (value & 0x800000U) {
         value |= 0xFF000000U;
     }
-    return (int32_t)value;
+    if (raw_out) {
+        *raw_out = (int32_t)value;
+    }
+    return true;
+}
+
+int32_t hx711_read_raw(void)
+{
+    int32_t raw = 0;
+    hx711_read_raw_checked(&raw);
+    return raw;
+}
+
+bool hx711_read_weight_checked(float *weight_out)
+{
+    int64_t acc = 0;
+    for (int i = 0; i < HX711_SAMPLES; i++) {
+        int32_t raw = 0;
+        if (!hx711_read_raw_checked(&raw)) {
+            if (weight_out) {
+                *weight_out = NAN;
+            }
+            return false;
+        }
+        acc += raw;
+    }
+    int32_t raw = (int32_t)(acc / HX711_SAMPLES);
+    if (weight_out) {
+        /* Kalibráció még nincs -> a nyers átlagot adjuk vissza float-ként. */
+        *weight_out = (float)raw;
+    }
+    return true;
 }
 
 float hx711_read_weight(void)
 {
-    int64_t acc = 0;
-    for (int i = 0; i < HX711_SAMPLES; i++) {
-        acc += hx711_read_raw();
-    }
-    int32_t raw = (int32_t)(acc / HX711_SAMPLES);
-    /* Kalibráció még nincs -> a nyers átlagot adjuk vissza float-ként (a payload weight mezeje). */
-    return (float)raw;
+    float weight = NAN;
+    hx711_read_weight_checked(&weight);
+    return weight;
 }

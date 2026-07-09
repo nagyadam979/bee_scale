@@ -15,6 +15,7 @@
  * A hangolható paraméterek: node_config.h.
  */
 #include <stdio.h>
+#include <stdbool.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -163,8 +164,12 @@ static void sample_espnow(const node_wake_state_t *st)
     /* Friss mérés -> payload -> broadcast. A HX711-et a leolvasáshoz fel kell hozni (a HX711-fázis
      * végén power-downba került); a vbat_read_mv maga kapcsolja az osztót. A cél a link-terhelés is. */
     hx711_power_up();
-    float weight = hx711_read_weight();
+    float weight = 0.0f;
+    bool hx711_ok = hx711_read_weight_checked(&weight);
     hx711_power_down();
+    if (!hx711_ok) {
+        ESP_LOGW(TAG, "HX711 meres hiba: weight=NAN megy a payloadba");
+    }
 
     sz2_payload_t p;
     build_payload(&p, st, weight, ds18b20_read_temp(), vbat_read_mv());
@@ -217,8 +222,12 @@ static void run_field(const node_wake_state_t *st)
 
     /* Szenzorok a rádió BEKAPCSOLÁSA ELŐTT (tiszta táp/ADC). */
     hx711_power_up();
-    float weight = hx711_read_weight();
+    float weight = 0.0f;
+    bool hx711_ok = hx711_read_weight_checked(&weight);
     hx711_power_down();
+    if (!hx711_ok) {
+        ESP_LOGW(TAG, "HX711 meres hiba: weight=NAN megy a payloadba");
+    }
 
     float temp = ds18b20_read_temp();
     uint16_t vbat = vbat_read_mv();

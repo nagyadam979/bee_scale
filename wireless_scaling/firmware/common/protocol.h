@@ -66,7 +66,7 @@ typedef struct __attribute__((packed)) {
     uint32_t packet_idx;        /* futason beluli index (node: == seq)                  */
     uint32_t total_packets;     /* futas-hossz / diagnosztika (node: szabad)            */
     uint32_t send_timestamp_ms; /* node ms-ora kuldeskor                                */
-    float    weight;            /* docs: nyers/kalibralt terheles                       */
+    float    weight;            /* docs: nyers/kalibralt terheles; NAN = HX711 hiba     */
     float    temp;              /* docs: homerseklet, drift-korrekcio                   */
     uint16_t vbat;              /* docs: elemfeszultseg mV-ban                          */
     uint16_t crc;               /* CRC16-CCITT az osszes elozo byte-on — UTOLSO mezo    */

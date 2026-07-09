@@ -33,6 +33,7 @@
  */
 
 #include <stdio.h>
+#include <math.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -335,6 +336,11 @@ static void consumer_task(void *arg)
                 ESP_LOGI(TAG, "SZ6 RX node=%u seq=%u try=%u kind=%s gap=%u rssi=%d",
                          p->node_id, (unsigned)p->seq, (unsigned)p->packet_idx,
                          is_new ? "NEW" : "DUP", (unsigned)gap, (int)item.rssi);
+                if (!isfinite(p->weight)) {
+                    ESP_LOGW(TAG, "SZ6 SENSOR_WARN node=%u seq=%u sensor=HX711 status=TIMEOUT kind=%s rssi=%d",
+                             p->node_id, (unsigned)p->seq, is_new ? "NEW" : "DUP",
+                             (int)item.rssi);
+                }
             } while (0);
         }
 
