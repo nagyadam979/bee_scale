@@ -68,6 +68,92 @@
               "$other": { ".validate": false }
             }
           }
+        },
+
+        "nodes": {
+          "$node": {
+            "raw": {
+              ".read": "auth != null",
+              ".write": "auth != null && auth.token.email === 'esp32@beescale.local'",
+              ".indexOn": ["ts"],
+
+              "$record": {
+                ".validate": "newData.hasChildren(['ts','rx_ms','unit_id','seq','boot_id','weight_raw','vbat_mv','rssi','gap','src_mac'])",
+                "ts":         { ".validate": "newData.isNumber() && newData.val() > 1700000000" },
+                "rx_ms":      { ".validate": "newData.isNumber()" },
+                "unit_id":    { ".validate": "newData.isNumber()" },
+                "seq":        { ".validate": "newData.isNumber()" },
+                "boot_id":    { ".validate": "newData.isString()" },
+                "weight_raw": { ".validate": "newData.isNumber()" },
+                "temp_c":     { ".validate": "newData.isNumber()" },
+                "vbat_mv":    { ".validate": "newData.isNumber()" },
+                "rssi":       { ".validate": "newData.isNumber()" },
+                "gap":        { ".validate": "newData.isNumber()" },
+                "src_mac":    { ".validate": "newData.isString()" },
+                "$other":     { ".validate": false }
+              }
+            }
+          }
+        },
+
+        "master": {
+          "raw": {
+            ".read": "auth != null",
+            ".write": "auth != null && auth.token.email === 'esp32@beescale.local'",
+            ".indexOn": ["ts"],
+
+            "$record": {
+              ".validate": "newData.hasChildren(['ts','rx_ms','unit_id','seq','rain_tips_total','rain_mm_total','rain_tips_delta'])",
+              "ts":               { ".validate": "newData.isNumber() && newData.val() > 1700000000" },
+              "rx_ms":            { ".validate": "newData.isNumber()" },
+              "unit_id":          { ".validate": "newData.isNumber()" },
+              "seq":              { ".validate": "newData.isNumber()" },
+              "hx711_raw":        { ".validate": "newData.isNumber()" },
+              "ds0_hive_c":       { ".validate": "newData.isNumber()" },
+              "ds1_scale_c":      { ".validate": "newData.isNumber()" },
+              "aht20_t_c":        { ".validate": "newData.isNumber()" },
+              "aht20_rh":         { ".validate": "newData.isNumber()" },
+              "bmp280_t_c":       { ".validate": "newData.isNumber()" },
+              "bmp280_pa":        { ".validate": "newData.isNumber()" },
+              "rain_tips_total":  { ".validate": "newData.isNumber()" },
+              "rain_mm_total":    { ".validate": "newData.isNumber()" },
+              "rain_tips_delta":  { ".validate": "newData.isNumber()" },
+              "$other":           { ".validate": false }
+            }
+          }
+        }
+      }
+    },
+
+    "experiments": {
+      "sz6_overnight": {
+        ".read": "auth != null",
+
+        "nodes": {
+          "$node": {
+            "readings": {
+              ".write": "auth != null && auth.token.email === 'esp32@beescale.local'",
+              ".indexOn": ["ts"],
+
+              "$pushId": {
+                ".validate": "newData.hasChildren(['ts','rx_ms','node_id','seq','boot_id','packet_idx','vbat_mv','weight','temp_c','rssi','kind','gap','src_mac'])",
+                "ts":         { ".validate": "newData.isNumber() && newData.val() > 1700000000" },
+                "rx_ms":      { ".validate": "newData.isNumber()" },
+                "node_id":    { ".validate": "newData.isNumber()" },
+                "seq":        { ".validate": "newData.isNumber()" },
+                "boot_id":    { ".validate": "newData.isString()" },
+                "packet_idx": { ".validate": "newData.isNumber()" },
+                "vbat_mv":    { ".validate": "newData.isNumber()" },
+                "weight":     { ".validate": "newData.isNumber()" },
+                "temp_c":     { ".validate": "newData.isNumber()" },
+                "rssi":       { ".validate": "newData.isNumber()" },
+                "kind":       { ".validate": "newData.val() === 'NEW' || newData.val() === 'DUP'" },
+                "gap":        { ".validate": "newData.isNumber()" },
+                "src_mac":    { ".validate": "newData.isString()" },
+                "$other":     { ".validate": false }
+              }
+            }
+          }
         }
       }
     }
