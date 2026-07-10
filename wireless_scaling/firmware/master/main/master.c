@@ -1103,6 +1103,22 @@ static void node_record_from_payload(master_record_t *rec, const sz2_payload_t *
     rec->temp_c = p->temp;
 }
 
+static const char *hx711_payload_status(float weight)
+{
+    if (!isfinite(weight)) {
+        return "HX711_ERR";
+    }
+    if (fabsf(weight) <= 0.5f) {
+        return "HX711_ZERO_RAW_SUSPECT";
+    }
+    return "HX711_OK";
+}
+
+static const char *ds18b20_payload_status(float temp)
+{
+    return isfinite(temp) ? "DS18B20_OK" : "DS18B20_ERR";
+}
+
 static void print_node_stat(const node_state_t *n, int64_t now_us)
 {
     int rssi_avg = n->rssi_n ? (int)(n->rssi_sum / (int64_t)n->rssi_n) : 0;
@@ -1182,14 +1198,18 @@ static void rx_consumer_task(void *arg)
                           "weight=%.0f(%s) temp=%.2f(%s) vbat=%u",
                      p->node_id, (unsigned)p->seq, is_new ? "NEW" : "DUP",
                      (unsigned)gap, (int)item.rssi, (double)p->weight,
-                     isfinite(p->weight) ? "OK" : "HX711_ERR",
-                     (double)p->temp,
-                     isfinite(p->temp) ? "OK" : "DS18B20_ERR",
+                     hx711_payload_status(p->weight),
+                     (double)p->temp, ds18b20_payload_status(p->temp),
                      (unsigned)p->vbat);
             if (!isfinite(p->weight)) {
                 ESP_LOGW(TAG, "SENSOR_WARN node=%u seq=%u sensor=HX711 status=TIMEOUT kind=%s rssi=%d",
                          p->node_id, (unsigned)p->seq, is_new ? "NEW" : "DUP",
                          (int)item.rssi);
+            } else if (fabsf(p->weight) <= 0.5f) {
+                ESP_LOGW(TAG, "SENSOR_WARN node=%u seq=%u sensor=HX711 status=ZERO_RAW_SUSPECT "
+                              "weight=%.0f kind=%s rssi=%d",
+                         p->node_id, (unsigned)p->seq, (double)p->weight,
+                         is_new ? "NEW" : "DUP", (int)item.rssi);
             }
             if (!isfinite(p->temp)) {
                 ESP_LOGW(TAG, "SENSOR_WARN node=%u seq=%u sensor=DS18B20 status=INVALID kind=%s rssi=%d",

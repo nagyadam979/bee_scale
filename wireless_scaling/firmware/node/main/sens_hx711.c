@@ -152,6 +152,10 @@ bool hx711_read_weight_checked(float *weight_out)
     }
 
     sort_i32(samples, HX711_MEDIAN_SAMPLES);
+    int32_t min = samples[0];
+    int32_t max = samples[HX711_MEDIAN_SAMPLES - 1];
+    int32_t span = max - min;
+
     float weight = 0.0f;
     if ((HX711_MEDIAN_SAMPLES % 2) == 0) {
         int hi = HX711_MEDIAN_SAMPLES / 2;
@@ -159,6 +163,28 @@ bool hx711_read_weight_checked(float *weight_out)
         weight = (float)(((int64_t)samples[lo] + (int64_t)samples[hi]) / 2.0);
     } else {
         weight = (float)samples[HX711_MEDIAN_SAMPLES / 2];
+    }
+
+    ESP_LOGI(TAG, "HX711 samples n=%u min=%ld median=%.0f max=%ld span=%ld",
+             (unsigned)HX711_MEDIAN_SAMPLES, (long)min, (double)weight,
+             (long)max, (long)span);
+
+    if (min == 0 && max == 0) {
+        ESP_LOGW(TAG, "HX711 gyanus: minden nyers minta 0 (DOUT stuck-low / rossz bekotes / nincs ertelmes ADC adat)");
+        if (weight_out) {
+            *weight_out = NAN;
+        }
+        return false;
+    }
+    if (min == -1 && max == -1) {
+        ESP_LOGW(TAG, "HX711 gyanus: minden nyers minta -1 (DOUT stuck-high / busz hiba)");
+        if (weight_out) {
+            *weight_out = NAN;
+        }
+        return false;
+    }
+    if (span == 0) {
+        ESP_LOGW(TAG, "HX711 gyanus: minden nyers minta azonos (%ld)", (long)min);
     }
 
     if (weight_out) {
