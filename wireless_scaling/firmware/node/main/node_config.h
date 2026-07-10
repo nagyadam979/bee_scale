@@ -72,6 +72,18 @@
 #define NODE_SEND_TIMEOUT_MS         50
 #define NODE_NO_MEM_RETRY_MS         2
 #define NODE_DRAIN_MAX_RECORDS       32
+#ifndef NODE_SLEEP_FAIL_JITTER_MAX_SEC
+#define NODE_SLEEP_FAIL_JITTER_MAX_SEC 30
+#endif
+#ifndef NODE_COLD_SYNC_FAIL_SLEEP_SEC
+#define NODE_COLD_SYNC_FAIL_SLEEP_SEC 30
+#endif
+#ifndef NODE_ACK_SLOT_MIN_SEC
+#define NODE_ACK_SLOT_MIN_SEC        5
+#endif
+#ifndef NODE_ACK_SLOT_MAX_EXTRA_SEC
+#define NODE_ACK_SLOT_MAX_EXTRA_SEC  300
+#endif
 
 /* 20 perces periódussal 7 nap = 504 rekord; 512 ad némi tartalékot. */
 #ifndef NODE_PENDING_CAPACITY

@@ -22,6 +22,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_random.h"
 #include "esp_timer.h"
 #include "nvs_flash.h"
 #include "driver/gpio.h"
@@ -103,6 +104,26 @@ static void build_payload(sz2_payload_t *p, const node_wake_state_t *st, uint32_
     ESP_LOGI(TAG, "payload: node=%u seq=%u boot=0x%08X weight=%.0f temp=%.2f vbat=%u mV crc=0x%04X",
              p->node_id, (unsigned)p->seq, (unsigned)p->boot_id,
              (double)p->weight, (double)p->temp, (unsigned)p->vbat, p->crc);
+}
+
+static void build_hello(sz2_hello_t *h, const node_wake_state_t *st)
+{
+    memset(h, 0, sizeof(*h));
+    h->protocol_version = SZ2_PROTO_VERSION;
+    h->packet_type = SZ2_PKT_HELLO;
+    h->node_id = NODE_ID;
+    espnow_tx_get_mac(h->node_mac);
+    h->boot_id = st->boot_id;
+    h->hello_seq = esp_random();
+    h->pending_count = node_buffer_count();
+    h->next_seq = node_buffer_next_seq();
+    h->wake_period_s = NODE_WAKE_PERIOD_SEC;
+    h->flags = st->cold_boot ? 1U : 0U;
+    h->crc = sz2_hello_crc(h);
+    ESP_LOGI(TAG, "HELLO build node=%u hello_seq=%u boot=0x%08X pending=%u next_seq=%u wake=%u flags=0x%X",
+             h->node_id, (unsigned)h->hello_seq, (unsigned)h->boot_id,
+             (unsigned)h->pending_count, (unsigned)h->next_seq,
+             (unsigned)h->wake_period_s, (unsigned)h->flags);
 }
 
 static void user_led_set_off(void)
@@ -304,7 +325,22 @@ static node_measurement_t measure_once(void)
     return m;
 }
 
-static uint32_t drain_pending_records(void)
+static uint32_t fallback_sleep_sec(void)
+{
+    uint32_t jitter = 0;
+    if (NODE_SLEEP_FAIL_JITTER_MAX_SEC > 0) {
+        jitter = esp_random() % (NODE_SLEEP_FAIL_JITTER_MAX_SEC + 1U);
+    }
+    return NODE_WAKE_PERIOD_SEC + jitter;
+}
+
+static bool ack_slot_valid(uint32_t next_slot_s)
+{
+    return next_slot_s >= NODE_ACK_SLOT_MIN_SEC &&
+           next_slot_s <= NODE_WAKE_PERIOD_SEC + NODE_ACK_SLOT_MAX_EXTRA_SEC;
+}
+
+static uint32_t drain_pending_records(uint32_t *next_sleep_sec)
 {
     uint32_t delivered = 0;
     for (; delivered < NODE_DRAIN_MAX_RECORDS; delivered++) {
@@ -337,15 +373,39 @@ static uint32_t drain_pending_records(void)
                      esp_err_to_name(err));
             break;
         }
+        if (next_sleep_sec != NULL && ack_slot_valid(ack.next_slot_offset_s)) {
+            *next_sleep_sec = ack.next_slot_offset_s;
+        } else if (next_sleep_sec != NULL && ack.next_slot_offset_s != 0) {
+            ESP_LOGW(TAG, "ACK next_slot_s figyelmen kivul: %u",
+                     (unsigned)ack.next_slot_offset_s);
+        }
     }
     return delivered;
 }
 
-static void run_field(const node_wake_state_t *st)
+static uint32_t run_field(const node_wake_state_t *st)
 {
     ESP_LOGI(TAG, "FIELD profil: egyszeri meres, majd %d s alvas.", NODE_WAKE_PERIOD_SEC);
+    uint32_t next_sleep_sec = fallback_sleep_sec();
 
-    /* Szenzorok a rádió BEKAPCSOLÁSA ELŐTT (tiszta táp/ADC). */
+    espnow_tx_init();
+    if (st->cold_boot) {
+        sz2_hello_t hello;
+        espnow_tx_ack_result_t sync_ack;
+        build_hello(&hello, st);
+        if (!espnow_tx_sync_hello(&hello, &sync_ack)) {
+            uint32_t retry_s = NODE_COLD_SYNC_FAIL_SLEEP_SEC;
+            ESP_LOGW(TAG, "COLD_SYNC fail: nincs master ACK, rovid retry sleep %u s", (unsigned)retry_s);
+            return retry_s;
+        }
+        if (ack_slot_valid(sync_ack.next_slot_offset_s)) {
+            next_sleep_sec = sync_ack.next_slot_offset_s;
+        }
+        ESP_LOGI(TAG, "COLD_SYNC ok next_sleep_s=%u pending=%u",
+                 (unsigned)next_sleep_sec, (unsigned)node_buffer_count());
+    }
+
+    /* Sikeres cold-boot sync utan, illetve timer-wake ciklusban indul a minta. */
     node_measurement_t m = measure_once();
 
     uint32_t seq = node_buffer_next_seq();
@@ -357,13 +417,13 @@ static void run_field(const node_wake_state_t *st)
                  (unsigned)seq, esp_err_to_name(err));
     }
 
-    /* Radio csak a flash-mentes utan indul. */
-    espnow_tx_init();
     uint32_t before = node_buffer_count();
-    uint32_t delivered = drain_pending_records();
-    ESP_LOGI(TAG, "DRAIN summary before=%u delivered=%u remain=%u cap=%u",
+    uint32_t delivered = drain_pending_records(&next_sleep_sec);
+    ESP_LOGI(TAG, "DRAIN summary before=%u delivered=%u remain=%u cap=%u next_sleep_s=%u source=%s",
              (unsigned)before, (unsigned)delivered, (unsigned)node_buffer_count(),
-             (unsigned)NODE_PENDING_CAPACITY);
+             (unsigned)NODE_PENDING_CAPACITY, (unsigned)next_sleep_sec,
+             delivered > 0 ? "ACK_SLOT" : "FALLBACK");
+    return next_sleep_sec;
 }
 #endif
 
@@ -404,14 +464,15 @@ void app_main(void)
 
 #if NODE_PROFILE == NODE_PROFILE_BENCH
     run_bench(&st);
+    uint32_t sleep_sec = NODE_WAKE_PERIOD_SEC;
 #else
-    run_field(&st);
+    uint32_t sleep_sec = run_field(&st);
 #endif
 
-    ESP_LOGI(TAG, "Ciklus kesz. Deep sleep %d s.", NODE_WAKE_PERIOD_SEC);
+    ESP_LOGI(TAG, "Ciklus kesz. Deep sleep %u s.", (unsigned)sleep_sec);
     user_led_blink_once("deep sleep elott");
     espnow_tx_deinit();
     vbat_prepare_sleep();
-    node_enter_deep_sleep(NODE_WAKE_PERIOD_SEC);
+    node_enter_deep_sleep(sleep_sec);
 #endif
 }

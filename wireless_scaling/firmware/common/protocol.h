@@ -43,9 +43,10 @@ extern "C" {
 /* A protokoll verziója — mindkét oldal ezt írja/várja. */
 #define SZ2_PROTO_VERSION   1
 
-/* packet_type értékek. Az ACK az Sz0-csíra, a tűzz-és-felejts node-ban NEM használt. */
+/* packet_type értékek. */
 #define SZ2_PKT_DATA        1   /* node -> master: mérés-payload (sz2_payload_t)   */
 #define SZ2_PKT_ACK         2   /* master -> node: visszaigazolás (sz2_ack_t), Sz3 */
+#define SZ2_PKT_HELLO       3   /* node -> master: cold-boot join/sync kérés       */
 
 /*
  * Mérés-payload: node -> master. PACKED, fixed-size.
@@ -93,8 +94,27 @@ typedef struct __attribute__((packed)) {
     uint8_t  retry_policy;            /* retransmit-stategia (Sz3 donti el)             */
 } sz2_ack_t;
 
+/*
+ * HELLO: node -> master cold boot / teljes reset után. Nem mérési rekord, hanem explicit
+ * join/sync kézfogás, hogy a node még backlog drain előtt megkapja a slot paramétereket.
+ */
+typedef struct __attribute__((packed)) {
+    uint8_t  protocol_version;  /* = SZ2_PROTO_VERSION                                  */
+    uint8_t  packet_type;       /* = SZ2_PKT_HELLO                                      */
+    uint8_t  node_id;           /* docs: unit_id — melyik node                          */
+    uint8_t  node_mac[6];       /* a node saját STA MAC-je                              */
+    uint32_t boot_id;           /* bootonkent valtozo azonosito                         */
+    uint32_t hello_seq;         /* handshake korrelacios azonosito                      */
+    uint32_t pending_count;     /* flashben varakozo rekordok szama                     */
+    uint32_t next_seq;          /* kovetkezo uj meresi seq                              */
+    uint32_t wake_period_s;     /* node altal ismert alap periodus                      */
+    uint16_t flags;             /* bit0: cold boot                                      */
+    uint16_t crc;               /* CRC16-CCITT az osszes elozo byte-on — UTOLSO mezo    */
+} sz2_hello_t;
+
 SZ2_STATIC_ASSERT(sizeof(sz2_payload_t) == 41, "sz2_payload_t wire meret valtozott");
 SZ2_STATIC_ASSERT(sizeof(sz2_ack_t) == 20, "sz2_ack_t wire meret valtozott");
+SZ2_STATIC_ASSERT(sizeof(sz2_hello_t) == 33, "sz2_hello_t wire meret valtozott");
 
 /*
  * CRC16-CCITT (poly 0x1021, init 0xFFFF, nincs reflektalas, nincs xorout). Inline, hogy
@@ -123,6 +143,11 @@ static inline uint16_t sz2_crc16(const uint8_t *p, size_t len)
 static inline uint16_t sz2_payload_crc(const sz2_payload_t *p)
 {
     return sz2_crc16((const uint8_t *)p, sizeof(sz2_payload_t) - sizeof(uint16_t));
+}
+
+static inline uint16_t sz2_hello_crc(const sz2_hello_t *p)
+{
+    return sz2_crc16((const uint8_t *)p, sizeof(sz2_hello_t) - sizeof(uint16_t));
 }
 
 #ifdef __cplusplus

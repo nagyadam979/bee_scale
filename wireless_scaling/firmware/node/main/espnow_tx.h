@@ -18,6 +18,9 @@
 typedef struct {
     uint32_t ack_last_seq;
     uint32_t clear_buffer_until_seq;
+    int32_t clock_correction_s;
+    uint32_t next_slot_offset_s;
+    uint8_t retry_policy;
     uint8_t master_mac[6];
     uint32_t attempts;
     char dest_mode;
@@ -34,6 +37,9 @@ void espnow_tx_send(const sz2_payload_t *p, int repeat);
 
 /* App-ACK-os átadás. true csak master ACK után; a MAC send-cb önmagában nem siker. */
 bool espnow_tx_send_with_ack(const sz2_payload_t *p, espnow_tx_ack_result_t *result);
+
+/* Cold-boot HELLO/SYNC kézfogás. true csak master ACK/SYNC után. */
+bool espnow_tx_sync_hello(const sz2_hello_t *hello, espnow_tx_ack_result_t *result);
 
 /* ESP-NOW + WiFi leállítása deep sleep előtt. Ha nem volt init, no-op. */
 void espnow_tx_deinit(void);

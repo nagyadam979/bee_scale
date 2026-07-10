@@ -59,6 +59,21 @@
 #ifndef MASTER_CLOUD_MODE
 #define MASTER_CLOUD_MODE 0
 #endif
+#ifndef MASTER_FIREBASE_HIVE_PATH_SUFFIX
+#define MASTER_FIREBASE_HIVE_PATH_SUFFIX ""
+#endif
+#ifndef MASTER_FIREBASE_ROOT_PATH
+#define MASTER_FIREBASE_ROOT_PATH ""
+#endif
+#ifndef MASTER_CLOUD_UPLOAD_MASTER
+#define MASTER_CLOUD_UPLOAD_MASTER 1
+#endif
+#ifndef MASTER_FIREBASE_TARGET_HIVE_ID
+#define MASTER_FIREBASE_TARGET_HIVE_ID MASTER_FIREBASE_HIVE_ID
+#endif
+#ifndef MASTER_CLOUD_HIVE2_SCHEMA
+#define MASTER_CLOUD_HIVE2_SCHEMA 0
+#endif
 
 #define MASTER_UNIT_ID                 0
 #define MASTER_SAMPLE_PERIOD_SEC       1200
@@ -110,8 +125,17 @@
 #define MASTER_MAX_NODES               16
 #define MASTER_SEND_TIMEOUT_MS         50
 #define MASTER_NO_MEM_RETRY_MS         2
-#define MASTER_ADVERT_SLEEP_S          12
 #define MASTER_STAT_PERIOD_MS          10000
+
+#ifndef MASTER_NODE_PERIOD_SEC
+#define MASTER_NODE_PERIOD_SEC         1200
+#endif
+#ifndef MASTER_NODE_SLOT_SPACING_SEC
+#define MASTER_NODE_SLOT_SPACING_SEC   20
+#endif
+#ifndef MASTER_NODE_SLOT_GUARD_SEC
+#define MASTER_NODE_SLOT_GUARD_SEC     3
+#endif
 
 #define MASTER_RECONN_BACKOFF_MIN_MS   1000
 #define MASTER_RECONN_BACKOFF_MAX_MS   32000
@@ -183,6 +207,7 @@ typedef struct __attribute__((packed)) {
     float bmp280_t_c;
     float bmp280_pa;
     float rain_mm_total;
+    float rain_mm_delta;
 } master_record_t;
 
 typedef struct __attribute__((packed)) {
@@ -196,6 +221,7 @@ typedef struct __attribute__((packed)) {
 
 typedef struct {
     sz2_payload_t payload;
+    sz2_hello_t hello;
     uint8_t src_mac[6];
     int8_t rssi;
     uint16_t len;
@@ -320,6 +346,7 @@ static void nvs_init_all(void)
     if (nvs_get_u32(s_rain_nvs, "tips", &s_rain_tip_count) == ESP_ERR_NVS_NOT_FOUND) {
         s_rain_tip_count = 0;
     }
+    s_rain_last_reported = s_rain_tip_count;
 }
 
 static void rain_store_count(void)
@@ -1010,14 +1037,36 @@ static void recv_cb(const esp_now_recv_info_t *info, const uint8_t *data, int le
     item.len = (uint16_t)len;
     if (len == (int)sizeof(sz2_payload_t)) {
         memcpy(&item.payload, data, sizeof(sz2_payload_t));
+    } else if (len == (int)sizeof(sz2_hello_t)) {
+        memcpy(&item.hello, data, sizeof(sz2_hello_t));
     } else {
         memset(&item.payload, 0, sizeof(item.payload));
+        memset(&item.hello, 0, sizeof(item.hello));
     }
     memcpy(item.src_mac, info->src_addr, 6);
     item.rssi = (info->rx_ctrl != NULL) ? (int8_t)info->rx_ctrl->rssi : 0;
     if (xQueueSend(s_rx_queue, &item, 0) != pdTRUE) {
         s_q_dropped++;
     }
+}
+
+static uint32_t next_node_slot_offset_s(uint8_t node_id)
+{
+    uint32_t period = MASTER_NODE_PERIOD_SEC;
+    uint32_t spacing = MASTER_NODE_SLOT_SPACING_SEC;
+    if (period == 0) period = 1200;
+    if (spacing == 0) spacing = 1;
+
+    uint32_t target = ((uint32_t)node_id * spacing) % period;
+    if (target == 0) target = spacing < period ? spacing : 0;
+
+    uint32_t now_s = (uint32_t)(esp_timer_get_time() / 1000000);
+    uint32_t phase = now_s % period;
+    uint32_t target_abs = target;
+    if (target_abs <= phase + MASTER_NODE_SLOT_GUARD_SEC) {
+        target_abs += period;
+    }
+    return target_abs - phase;
 }
 
 static bool send_ack(const uint8_t *dest, uint8_t node_id, uint32_t seq)
@@ -1029,13 +1078,15 @@ static bool send_ack(const uint8_t *dest, uint8_t node_id, uint32_t seq)
     ack.node_id = node_id;
     ack.ack_last_seq = seq;
     ack.clear_buffer_until_seq = seq;
-    ack.next_slot_offset_s = MASTER_ADVERT_SLEEP_S;
+    ack.next_slot_offset_s = next_node_slot_offset_s(node_id);
 
     ensure_peer(dest);
     for (;;) {
         esp_err_t err = esp_now_send(dest, (const uint8_t *)&ack, sizeof(ack));
         if (err == ESP_OK) {
             xSemaphoreTake(s_tx_done, pdMS_TO_TICKS(MASTER_SEND_TIMEOUT_MS));
+            ESP_LOGI(TAG, "ACK node=%u seq=%u next_slot_s=%u",
+                     node_id, (unsigned)seq, (unsigned)ack.next_slot_offset_s);
             return true;
         }
         if (err == ESP_ERR_ESPNOW_NO_MEM) {
@@ -1044,6 +1095,36 @@ static bool send_ack(const uint8_t *dest, uint8_t node_id, uint32_t seq)
         }
         ESP_LOGW(TAG, "ACK send failed node=%u seq=%u: %s",
                  node_id, (unsigned)seq, esp_err_to_name(err));
+        return false;
+    }
+}
+
+static bool send_sync_ack(const uint8_t *dest, uint8_t node_id, uint32_t hello_seq)
+{
+    sz2_ack_t ack;
+    memset(&ack, 0, sizeof(ack));
+    ack.protocol_version = SZ2_PROTO_VERSION;
+    ack.packet_type = SZ2_PKT_ACK;
+    ack.node_id = node_id;
+    ack.ack_last_seq = hello_seq;
+    ack.clear_buffer_until_seq = 0;
+    ack.next_slot_offset_s = next_node_slot_offset_s(node_id);
+
+    ensure_peer(dest);
+    for (;;) {
+        esp_err_t err = esp_now_send(dest, (const uint8_t *)&ack, sizeof(ack));
+        if (err == ESP_OK) {
+            xSemaphoreTake(s_tx_done, pdMS_TO_TICKS(MASTER_SEND_TIMEOUT_MS));
+            ESP_LOGI(TAG, "SYNC_ACK node=%u hello_seq=%u next_slot_s=%u",
+                     node_id, (unsigned)hello_seq, (unsigned)ack.next_slot_offset_s);
+            return true;
+        }
+        if (err == ESP_ERR_ESPNOW_NO_MEM) {
+            vTaskDelay(pdMS_TO_TICKS(MASTER_NO_MEM_RETRY_MS));
+            continue;
+        }
+        ESP_LOGW(TAG, "SYNC_ACK send failed node=%u hello_seq=%u: %s",
+                 node_id, (unsigned)hello_seq, esp_err_to_name(err));
         return false;
     }
 }
@@ -1068,9 +1149,23 @@ static node_state_t *node_get(uint8_t node_id, const uint8_t *mac)
     return NULL;
 }
 
+static bool cloud_record_enabled(const master_record_t *rec)
+{
+#if MASTER_CLOUD_MODE && !MASTER_CLOUD_UPLOAD_MASTER
+    return rec->type != REC_TYPE_MASTER;
+#else
+    (void)rec;
+    return true;
+#endif
+}
+
 static void cloud_enqueue_record(const master_record_t *rec)
 {
 #if MASTER_CLOUD_MODE
+    if (!cloud_record_enabled(rec)) {
+        ESP_LOGI(TAG, "CLOUD_SKIP type=%u unit=%u seq=%u", rec->type, rec->unit_id, (unsigned)rec->seq);
+        return;
+    }
     if (xQueueSend(s_cloud_queue, rec, 0) != pdTRUE) {
         s_cloud_drop++;
         backup_enqueue(rec);
@@ -1140,6 +1235,46 @@ static void rx_consumer_task(void *arg)
     for (;;) {
         bool got = xQueueReceive(s_rx_queue, &item, pdMS_TO_TICKS(500)) == pdTRUE;
         if (got) {
+            if (item.len == (uint16_t)sizeof(sz2_hello_t)) {
+                sz2_hello_t *h = &item.hello;
+                if (h->protocol_version != SZ2_PROTO_VERSION || h->packet_type != SZ2_PKT_HELLO) {
+                    s_diag_ver_bad++;
+                    continue;
+                }
+                node_state_t *n = node_get(h->node_id, item.src_mac);
+                if (n == NULL) continue;
+                if (sz2_hello_crc(h) != h->crc) {
+                    n->crc_err++;
+                    continue;
+                }
+
+                if (n->rx_valid == 0) {
+                    n->boot_id = h->boot_id;
+                } else if (h->boot_id != n->boot_id) {
+                    n->boot_id = h->boot_id;
+                    n->have_seq = false;
+                    n->resets++;
+                }
+                if (memcmp(n->mac, item.src_mac, 6) != 0) {
+                    memcpy(n->mac, item.src_mac, 6);
+                }
+                n->last_rx_us = esp_timer_get_time();
+                if (item.rssi < n->rssi_min) n->rssi_min = item.rssi;
+                if (item.rssi > n->rssi_max) n->rssi_max = item.rssi;
+                n->rssi_sum += item.rssi;
+                n->rssi_n++;
+
+                uint32_t fail_before = s_ack_status_fail;
+                if (send_sync_ack(item.src_mac, h->node_id, h->hello_seq)) {
+                    n->ack_sent++;
+                    if (s_ack_status_fail != fail_before) n->ack_txfail++;
+                }
+                ESP_LOGI(TAG, "HELLO node=%u hello_seq=%u boot=0x%08X pending=%u next_seq=%u wake=%u flags=0x%X rssi=%d",
+                         h->node_id, (unsigned)h->hello_seq, (unsigned)h->boot_id,
+                         (unsigned)h->pending_count, (unsigned)h->next_seq,
+                         (unsigned)h->wake_period_s, (unsigned)h->flags, (int)item.rssi);
+                continue;
+            }
             if (item.len != (uint16_t)sizeof(sz2_payload_t)) {
                 s_diag_len_bad++;
                 continue;
@@ -1362,7 +1497,7 @@ static esp_err_t http_event_cb(esp_http_client_event_t *evt)
 }
 
 static bool http_json(const char *url, const char *body, esp_http_client_method_t method,
-                      char *resp, int resp_cap, int *status_out)
+                      const char *bearer_token, char *resp, int resp_cap, int *status_out)
 {
     http_resp_buf_t rb = {.buf = resp, .cap = resp_cap, .len = 0};
     if (resp_cap > 0) resp[0] = '\0';
@@ -1372,14 +1507,26 @@ static bool http_json(const char *url, const char *body, esp_http_client_method_
         .crt_bundle_attach = esp_crt_bundle_attach,
         .event_handler = http_event_cb,
         .user_data = &rb,
+        .buffer_size = 4096,
+        .buffer_size_tx = 4096,
     };
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     if (client == NULL) return false;
     esp_http_client_set_method(client, method);
     esp_http_client_set_header(client, "Content-Type", "application/json");
+    if (bearer_token != NULL && bearer_token[0] != '\0') {
+        char auth_header[2200];
+        int n = snprintf(auth_header, sizeof(auth_header), "Bearer %s", bearer_token);
+        if (n <= 0 || n >= (int)sizeof(auth_header)) {
+            esp_http_client_cleanup(client);
+            return false;
+        }
+        esp_http_client_set_header(client, "Authorization", auth_header);
+    }
     esp_http_client_set_post_field(client, body, strlen(body));
     esp_err_t err = esp_http_client_perform(client);
-    int status = (err == ESP_OK) ? esp_http_client_get_status_code(client) : -1;
+    int status = esp_http_client_get_status_code(client);
+    if (status == 0 && err != ESP_OK) status = -1;
     if (status_out) *status_out = status;
     esp_http_client_cleanup(client);
     return err == ESP_OK && status >= 200 && status < 300;
@@ -1407,7 +1554,7 @@ static bool firebase_auth_refresh(void)
 
     char resp[4096];
     int status = 0;
-    if (!http_json(url, body, HTTP_METHOD_POST, resp, sizeof(resp), &status)) {
+    if (!http_json(url, body, HTTP_METHOD_POST, NULL, resp, sizeof(resp), &status)) {
         ESP_LOGW(TAG, "Firebase auth failed status=%d", status);
         return false;
     }
@@ -1470,9 +1617,10 @@ static bool build_record_json(const master_record_t *rec, char *body, int body_c
         }
     } else {
         n = json_add(body, body_cap, n,
-                     ",\"rain_tips_total\":%u,\"rain_mm_total\":%.4f,\"rain_tips_delta\":%u",
+                     ",\"rain_tips_total\":%u,\"rain_mm_total\":%.4f,"
+                     "\"rain_tips_delta\":%u,\"rain_mm_delta\":%.4f",
                      (unsigned)rec->rain_tips_total, (double)rec->rain_mm_total,
-                     (unsigned)rec->rain_tips_delta);
+                     (unsigned)rec->rain_tips_delta, (double)rec->rain_mm_delta);
         if (rec->valid_mask & REC_VALID_HX711) {
             n = json_add(body, body_cap, n, ",\"hx711_raw\":%ld", (long)rec->hx711_raw);
         }
@@ -1495,32 +1643,192 @@ static bool build_record_json(const master_record_t *rec, char *body, int body_c
     return n > 0;
 }
 
+static bool build_experiment_node_json(const master_record_t *rec, char *body, int body_cap)
+{
+    uint32_t ts = rec->ts ? rec->ts : current_epoch_s();
+    if (ts == 0 || rec->type != REC_TYPE_NODE) return false;
+    if (!(rec->valid_mask & REC_VALID_HX711) || !(rec->valid_mask & REC_VALID_TEMP)) return false;
+
+    int n = json_add(body, body_cap, 0,
+                     "{\"ts\":%u,\"rx_ms\":%u,\"node_id\":%u,\"seq\":%u,"
+                     "\"boot_id\":\"0x%08X\",\"packet_idx\":0,\"vbat_mv\":%u,"
+                     "\"weight\":%ld,\"temp_c\":%.3f,\"rssi\":%d,"
+                     "\"kind\":\"NEW\",\"gap\":%u,"
+                     "\"src_mac\":\"%02X:%02X:%02X:%02X:%02X:%02X\"}",
+                     (unsigned)ts, (unsigned)rec->rx_ms, rec->unit_id,
+                     (unsigned)rec->seq, (unsigned)rec->boot_id,
+                     (unsigned)rec->vbat_mv, (long)rec->weight_raw,
+                     (double)rec->temp_c, (int)rec->rssi, (unsigned)rec->gap,
+                     rec->src_mac[0], rec->src_mac[1], rec->src_mac[2],
+                     rec->src_mac[3], rec->src_mac[4], rec->src_mac[5]);
+    return n > 0;
+}
+
+static bool build_hive2_node_json(const master_record_t *rec, char *body, int body_cap)
+{
+    uint32_t ts = rec->ts ? rec->ts : current_epoch_s();
+    if (ts == 0 || rec->type != REC_TYPE_NODE) return false;
+    if (!(rec->valid_mask & REC_VALID_HX711)) return false;
+
+    int n = json_add(body, body_cap, 0, "{\"ts\":%u,\"node_id\":%u,\"weight_raw\":%ld",
+                     (unsigned)ts, rec->unit_id, (long)rec->weight_raw);
+    if (rec->valid_mask & REC_VALID_TEMP) {
+        n = json_add(body, body_cap, n, ",\"temp_c\":%.3f", (double)rec->temp_c);
+    }
+    if (rec->vbat_mv > 0) {
+        n = json_add(body, body_cap, n, ",\"vbat_mv\":%u", (unsigned)rec->vbat_mv);
+    }
+    n = json_add(body, body_cap, n, "}");
+    return n > 0;
+}
+
+static bool build_hive2_master_rod_json(const master_record_t *rec, char *body, int body_cap)
+{
+    uint32_t ts = rec->ts ? rec->ts : current_epoch_s();
+    if (ts == 0 || !(rec->valid_mask & REC_VALID_HX711)) return false;
+    int n = json_add(body, body_cap, 0, "{\"ts\":%u,\"weight_raw\":%ld}",
+                     (unsigned)ts, (long)rec->hx711_raw);
+    return n > 0;
+}
+
+static bool build_hive2_master_env_json(const master_record_t *rec, char *body, int body_cap)
+{
+    uint32_t ts = rec->ts ? rec->ts : current_epoch_s();
+    if (ts == 0) return false;
+
+    int n = json_add(body, body_cap, 0, "{\"ts\":%u,\"rain_mm\":%.4f",
+                     (unsigned)ts, (double)rec->rain_mm_delta);
+    if (rec->valid_mask & REC_VALID_AHT) {
+        n = json_add(body, body_cap, n, ",\"air_t_c\":%.3f,\"air_rh\":%.3f",
+                     (double)rec->aht20_t_c, (double)rec->aht20_rh);
+    }
+    if (rec->valid_mask & REC_VALID_BMP) {
+        n = json_add(body, body_cap, n, ",\"bmp_t_c\":%.3f,\"pressure_pa\":%.1f",
+                     (double)rec->bmp280_t_c, (double)rec->bmp280_pa);
+    }
+    n = json_add(body, body_cap, n, "}");
+    return n > 0;
+}
+
+static bool build_hive2_master_temp_json(const master_record_t *rec, char *body, int body_cap)
+{
+    uint32_t ts = rec->ts ? rec->ts : current_epoch_s();
+    if (ts == 0) return false;
+    if (!(rec->valid_mask & REC_VALID_DS0) && !(rec->valid_mask & REC_VALID_DS1)) return false;
+
+    int n = json_add(body, body_cap, 0, "{\"ts\":%u", (unsigned)ts);
+    if (rec->valid_mask & REC_VALID_DS0) {
+        n = json_add(body, body_cap, n, ",\"hive_c\":%.3f", (double)rec->ds0_hive_c);
+    }
+    if (rec->valid_mask & REC_VALID_DS1) {
+        n = json_add(body, body_cap, n, ",\"scale_c\":%.3f", (double)rec->ds1_scale_c);
+    }
+    n = json_add(body, body_cap, n, "}");
+    return n > 0;
+}
+
+static bool cloud_put_json_path(const char *path, const char *body, int *status_out)
+{
+    char url[2700];
+    int u = snprintf(url, sizeof(url), "%s/%s.json?auth=%s",
+                     MASTER_FIREBASE_DATABASE_URL, path, s_firebase_token);
+    if (u <= 0 || u >= (int)sizeof(url)) return false;
+
+    char resp[256];
+    return http_json(url, body, HTTP_METHOD_PUT, NULL, resp, sizeof(resp), status_out);
+}
+
+static bool __attribute__((unused)) cloud_post_hive2_record_once(const master_record_t *rec)
+{
+    char path[256];
+    char body[1024];
+    int status = 0;
+    bool attempted = false;
+    bool ok_all = true;
+
+    if (rec->type == REC_TYPE_NODE) {
+        if (!build_hive2_node_json(rec, body, sizeof(body))) return false;
+        int p = snprintf(path, sizeof(path),
+                         "hives/%s/rods/node_%u/readings/%08X_%u",
+                         MASTER_FIREBASE_TARGET_HIVE_ID, rec->unit_id,
+                         (unsigned)rec->boot_id, (unsigned)rec->seq);
+        if (p <= 0 || p >= (int)sizeof(path)) return false;
+        attempted = true;
+        ok_all = cloud_put_json_path(path, body, &status);
+    } else {
+        if (build_hive2_master_rod_json(rec, body, sizeof(body))) {
+            int p = snprintf(path, sizeof(path), "hives/%s/rods/master/readings/master_%u",
+                             MASTER_FIREBASE_TARGET_HIVE_ID, (unsigned)rec->seq);
+            if (p <= 0 || p >= (int)sizeof(path)) return false;
+            attempted = true;
+            ok_all = cloud_put_json_path(path, body, &status) && ok_all;
+        }
+        if (build_hive2_master_env_json(rec, body, sizeof(body))) {
+            int p = snprintf(path, sizeof(path), "hives/%s/env/readings/master_%u",
+                             MASTER_FIREBASE_TARGET_HIVE_ID, (unsigned)rec->seq);
+            if (p <= 0 || p >= (int)sizeof(path)) return false;
+            attempted = true;
+            ok_all = cloud_put_json_path(path, body, &status) && ok_all;
+        }
+        if (build_hive2_master_temp_json(rec, body, sizeof(body))) {
+            int p = snprintf(path, sizeof(path), "hives/%s/temp/readings/master_%u",
+                             MASTER_FIREBASE_TARGET_HIVE_ID, (unsigned)rec->seq);
+            if (p <= 0 || p >= (int)sizeof(path)) return false;
+            attempted = true;
+            ok_all = cloud_put_json_path(path, body, &status) && ok_all;
+        }
+    }
+
+    if (!ok_all) ESP_LOGW(TAG, "cloud PUT failed status=%d type=%u unit=%u seq=%u",
+                          status, rec->type, rec->unit_id, (unsigned)rec->seq);
+    return attempted && ok_all;
+}
+
 static bool cloud_post_record_once(const master_record_t *rec)
 {
     if (!s_wifi_ip) return false;
     if (!firebase_token_valid() && !firebase_auth_refresh()) return false;
 
+#if MASTER_CLOUD_HIVE2_SCHEMA
+    if (MASTER_FIREBASE_ROOT_PATH[0] == '\0') {
+        return cloud_post_hive2_record_once(rec);
+    }
+#endif
+
     char url[2700];
     int u;
-    if (rec->type == REC_TYPE_NODE) {
+    bool experiment_path = MASTER_FIREBASE_ROOT_PATH[0] != '\0';
+    if (experiment_path) {
+        if (rec->type != REC_TYPE_NODE) return false;
         u = snprintf(url, sizeof(url),
-                     "%s/hives/%s/nodes/node_%u/raw/%08X_%u.json?auth=%s",
-                     MASTER_FIREBASE_DATABASE_URL, MASTER_FIREBASE_HIVE_ID,
+                     "%s/%s/nodes/node_%u/readings/%08X_%u.json?auth=%s",
+                     MASTER_FIREBASE_DATABASE_URL, MASTER_FIREBASE_ROOT_PATH,
                      rec->unit_id, (unsigned)rec->boot_id, (unsigned)rec->seq,
+                     s_firebase_token);
+    } else if (rec->type == REC_TYPE_NODE) {
+        u = snprintf(url, sizeof(url),
+                     "%s/hives/%s%s/nodes/node_%u/raw/%08X_%u.json?auth=%s",
+                     MASTER_FIREBASE_DATABASE_URL, MASTER_FIREBASE_HIVE_ID,
+                     MASTER_FIREBASE_HIVE_PATH_SUFFIX, rec->unit_id,
+                     (unsigned)rec->boot_id, (unsigned)rec->seq,
                      s_firebase_token);
     } else {
         u = snprintf(url, sizeof(url),
-                     "%s/hives/%s/master/raw/master_%u.json?auth=%s",
+                     "%s/hives/%s%s/master/raw/master_%u.json?auth=%s",
                      MASTER_FIREBASE_DATABASE_URL, MASTER_FIREBASE_HIVE_ID,
-                     (unsigned)rec->seq, s_firebase_token);
+                     MASTER_FIREBASE_HIVE_PATH_SUFFIX, (unsigned)rec->seq,
+                     s_firebase_token);
     }
     if (u <= 0 || u >= (int)sizeof(url)) return false;
 
     char body[1024];
-    if (!build_record_json(rec, body, sizeof(body))) return false;
+    bool body_ok = experiment_path ?
+                   build_experiment_node_json(rec, body, sizeof(body)) :
+                   build_record_json(rec, body, sizeof(body));
+    if (!body_ok) return false;
     char resp[256];
     int status = 0;
-    bool ok = http_json(url, body, HTTP_METHOD_PUT, resp, sizeof(resp), &status);
+    bool ok = http_json(url, body, HTTP_METHOD_PUT, NULL, resp, sizeof(resp), &status);
     if (!ok) ESP_LOGW(TAG, "cloud PUT failed status=%d type=%u unit=%u seq=%u",
                       status, rec->type, rec->unit_id, (unsigned)rec->seq);
     return ok;
@@ -1528,6 +1836,8 @@ static bool cloud_post_record_once(const master_record_t *rec)
 
 static bool cloud_post_record_with_retries(const master_record_t *rec)
 {
+    if (!cloud_record_enabled(rec)) return true;
+
     uint32_t backoff = MASTER_CLOUD_RETRY_BASE_MS;
     for (int attempt = 1; attempt <= MASTER_CLOUD_MAX_ATTEMPTS; attempt++) {
         if (cloud_post_record_once(rec)) {
@@ -1738,17 +2048,20 @@ static void master_measure_task(void *arg)
         rec.rain_tips_total = rain_total;
         rec.rain_tips_delta = rain_delta;
         rec.rain_mm_total = rain_mm_total;
+        rec.rain_mm_delta = (float)rain_delta * RAIN_MM_PER_TIP;
 
         nvs_set_u32(s_master_nvs, "seq", s_master_seq);
         nvs_commit(s_master_nvs);
 
         ESP_LOGI(TAG, "MASTER_SAMPLE seq=%u valid=0x%02X hx711_raw=%ld ds0=%.3f ds1=%.3f "
-                      "aht_t=%.3f aht_rh=%.3f bmp_t=%.3f bmp_pa=%.1f rain_tips=%u delta=%u",
+                      "aht_t=%.3f aht_rh=%.3f bmp_t=%.3f bmp_pa=%.1f "
+                      "rain_tips=%u delta=%u rain_mm_delta=%.4f",
                  (unsigned)rec.seq, rec.valid_mask, (long)rec.hx711_raw,
                  (double)rec.ds0_hive_c, (double)rec.ds1_scale_c,
                  (double)rec.aht20_t_c, (double)rec.aht20_rh,
                  (double)rec.bmp280_t_c, (double)rec.bmp280_pa,
-                 (unsigned)rec.rain_tips_total, (unsigned)rec.rain_tips_delta);
+                 (unsigned)rec.rain_tips_total, (unsigned)rec.rain_tips_delta,
+                 (double)rec.rain_mm_delta);
 
         cloud_enqueue_record(&rec);
         vTaskDelay(pdMS_TO_TICKS(MASTER_SAMPLE_PERIOD_SEC * 1000UL));
@@ -1760,6 +2073,16 @@ void app_main(void)
     ESP_LOGI(TAG, "=== bee_scale MASTER v1 === mode=%s cloud=%d expected_ch=%u",
              MASTER_TEST_MODE ? "TEST" : "PROD", MASTER_CLOUD_MODE,
              (unsigned)MASTER_ESPNOW_CHANNEL);
+#if MASTER_CLOUD_MODE
+    if (MASTER_FIREBASE_ROOT_PATH[0] != '\0') {
+        ESP_LOGI(TAG, "cloud target root=%s master_upload=%d",
+                 MASTER_FIREBASE_ROOT_PATH, MASTER_CLOUD_UPLOAD_MASTER);
+    } else {
+        ESP_LOGI(TAG, "cloud target hive=%s path_suffix=%s master_upload=%d hive2_schema=%d",
+                 MASTER_FIREBASE_TARGET_HIVE_ID, MASTER_FIREBASE_HIVE_PATH_SUFFIX,
+                 MASTER_CLOUD_UPLOAD_MASTER, MASTER_CLOUD_HIVE2_SCHEMA);
+    }
+#endif
     ESP_LOGI(TAG, "pins HX711 SCK=%d DOUT=%d DS=%d RAIN=%d I2C SDA=%d SCL=%d",
              HX711_SCK_GPIO, HX711_DOUT_GPIO, DS18B20_GPIO, RAIN_GPIO,
              I2C_SDA_GPIO, I2C_SCL_GPIO);
@@ -1791,7 +2114,7 @@ void app_main(void)
     xTaskCreatePinnedToCore(master_measure_task, "master_sample", 8192, NULL, 3, NULL, 1);
 #if MASTER_CLOUD_MODE
     xTaskCreatePinnedToCore(reconnect_task, "wifi_reconn", 4096, NULL, 4, NULL, 0);
-    xTaskCreatePinnedToCore(cloud_task, "cloud", 8192, NULL, 3, NULL, 0);
+    xTaskCreatePinnedToCore(cloud_task, "cloud", 24576, NULL, 3, NULL, 0);
 #endif
 
     ESP_LOGI(TAG, "master ready");

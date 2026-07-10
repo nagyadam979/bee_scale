@@ -184,7 +184,7 @@ void espnow_tx_get_mac(uint8_t mac_out[6])
     }
 }
 
-static bool send_serialized(const uint8_t *dest, const sz2_payload_t *p)
+static bool send_bytes_serialized(const uint8_t *dest, const void *data, size_t len)
 {
     if (!ensure_peer(dest)) {
         return false;
@@ -192,7 +192,7 @@ static bool send_serialized(const uint8_t *dest, const sz2_payload_t *p)
 
     for (;;) {
         drain_sem(s_tx_done);
-        esp_err_t err = esp_now_send(dest, (const uint8_t *)p, sizeof(*p));
+        esp_err_t err = esp_now_send(dest, (const uint8_t *)data, len);
         if (err == ESP_OK) {
             xSemaphoreTake(s_tx_done, pdMS_TO_TICKS(NODE_SEND_TIMEOUT_MS));
             return true;
@@ -214,7 +214,7 @@ void espnow_tx_send(const sz2_payload_t *p, int repeat)
     }
 
     for (int rep = 0; rep < repeat; rep++) {
-        send_serialized(BROADCAST_MAC, p);
+        send_bytes_serialized(BROADCAST_MAC, p, sizeof(*p));
     }
 }
 
@@ -262,19 +262,23 @@ bool espnow_tx_send_with_ack(const sz2_payload_t *p, espnow_tx_ack_result_t *res
         drain_sem(s_ack_sem);
 
         uint32_t fail_before = s_tx_status_fail;
-        bool sent = send_serialized(dest, &tx);
+        bool sent = send_bytes_serialized(dest, &tx, sizeof(tx));
         if (sent && xSemaphoreTake(s_ack_sem, pdMS_TO_TICKS(NODE_ACK_TIMEOUT_MS)) == pdTRUE) {
             learn_master_mac(s_ack_src);
             if (result) {
                 result->ack_last_seq = s_ack.ack_last_seq;
                 result->clear_buffer_until_seq = s_ack.clear_buffer_until_seq;
+                result->clock_correction_s = s_ack.clock_correction_s;
+                result->next_slot_offset_s = s_ack.next_slot_offset_s;
+                result->retry_policy = s_ack.retry_policy;
                 memcpy(result->master_mac, s_ack_src, ESP_NOW_ETH_ALEN);
                 result->attempts = attempt;
                 result->dest_mode = dest_mode;
             }
-            ESP_LOGI(TAG, "ACK OK node=%u seq=%u attempt=%u dest=%c clear_until=%u txfail_delta=%u",
+            ESP_LOGI(TAG, "ACK OK node=%u seq=%u attempt=%u dest=%c clear_until=%u next_slot_s=%u txfail_delta=%u",
                      tx.node_id, (unsigned)tx.seq, (unsigned)attempt, dest_mode,
                      (unsigned)s_ack.clear_buffer_until_seq,
+                     (unsigned)s_ack.next_slot_offset_s,
                      (unsigned)(s_tx_status_fail - fail_before));
             return true;
         }
@@ -287,6 +291,58 @@ bool espnow_tx_send_with_ack(const sz2_payload_t *p, espnow_tx_ack_result_t *res
 
     ESP_LOGW(TAG, "ACK FAIL node=%u seq=%u attempts=%u tx_status_fail=%u",
              p->node_id, (unsigned)p->seq, (unsigned)NODE_ACK_MAX_ATTEMPTS,
+             (unsigned)s_tx_status_fail);
+    return false;
+}
+
+bool espnow_tx_sync_hello(const sz2_hello_t *hello, espnow_tx_ack_result_t *result)
+{
+    if (result) {
+        memset(result, 0, sizeof(*result));
+        result->dest_mode = '?';
+    }
+    if (!s_inited) {
+        ESP_LOGW(TAG, "HELLO init elott hivva, kihagyva");
+        return false;
+    }
+
+    for (uint32_t attempt = 1; attempt <= NODE_ACK_MAX_ATTEMPTS; attempt++) {
+        sz2_hello_t tx = *hello;
+        tx.crc = sz2_hello_crc(&tx);
+
+        s_ack_wait_node = tx.node_id;
+        s_ack_wait_seq = tx.hello_seq;
+        drain_sem(s_ack_sem);
+
+        uint32_t fail_before = s_tx_status_fail;
+        bool sent = send_bytes_serialized(BROADCAST_MAC, &tx, sizeof(tx));
+        if (sent && xSemaphoreTake(s_ack_sem, pdMS_TO_TICKS(NODE_ACK_TIMEOUT_MS)) == pdTRUE) {
+            learn_master_mac(s_ack_src);
+            if (result) {
+                result->ack_last_seq = s_ack.ack_last_seq;
+                result->clear_buffer_until_seq = s_ack.clear_buffer_until_seq;
+                result->clock_correction_s = s_ack.clock_correction_s;
+                result->next_slot_offset_s = s_ack.next_slot_offset_s;
+                result->retry_policy = s_ack.retry_policy;
+                memcpy(result->master_mac, s_ack_src, ESP_NOW_ETH_ALEN);
+                result->attempts = attempt;
+                result->dest_mode = 'B';
+            }
+            ESP_LOGI(TAG, "HELLO ACK OK node=%u hello_seq=%u attempt=%u next_slot_s=%u txfail_delta=%u",
+                     tx.node_id, (unsigned)tx.hello_seq, (unsigned)attempt,
+                     (unsigned)s_ack.next_slot_offset_s,
+                     (unsigned)(s_tx_status_fail - fail_before));
+            return true;
+        }
+
+        if (attempt < NODE_ACK_MAX_ATTEMPTS) {
+            vTaskDelay(pdMS_TO_TICKS(rand_between(NODE_RETRY_JITTER_MIN_MS,
+                                                  NODE_RETRY_JITTER_MAX_MS)));
+        }
+    }
+
+    ESP_LOGW(TAG, "HELLO ACK FAIL node=%u hello_seq=%u attempts=%u tx_status_fail=%u",
+             hello->node_id, (unsigned)hello->hello_seq, (unsigned)NODE_ACK_MAX_ATTEMPTS,
              (unsigned)s_tx_status_fail);
     return false;
 }
