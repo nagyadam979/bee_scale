@@ -443,6 +443,15 @@ static uint32_t run_field(const node_wake_state_t *st)
 
     uint32_t before = node_buffer_count();
     uint32_t delivered = drain_pending_records(&next_sleep_sec);
+
+    /* Tele queue-nál az enqueue fentebb elhasalt; ha a drain most helyet szabadított
+     * fel, a friss minta még megmenthető (a seq a headet mozgató drain után is s_next). */
+    if (err == ESP_ERR_NO_MEM && node_buffer_count() < NODE_PENDING_CAPACITY) {
+        err = node_buffer_enqueue(&p);
+        ESP_LOGI(TAG, "enqueue retry drain utan seq=%u: %s",
+                 (unsigned)seq, esp_err_to_name(err));
+    }
+
     ESP_LOGI(TAG, "DRAIN summary before=%u delivered=%u remain=%u cap=%u next_sleep_s=%u source=%s",
              (unsigned)before, (unsigned)delivered, (unsigned)node_buffer_count(),
              (unsigned)NODE_PENDING_CAPACITY, (unsigned)next_sleep_sec,

@@ -189,7 +189,9 @@ static bool send_bytes_serialized(const uint8_t *dest, const void *data, size_t 
         return false;
     }
 
-    for (;;) {
+    /* Korlátos NO_MEM retry: ha a WiFi stack TX queue-ja tartósan beragad, a node
+     * feladja és alszik, nem pörög ébren végtelen hurokban (akkumerülés). */
+    for (int attempt = 0; attempt < NODE_NO_MEM_MAX_RETRY; attempt++) {
         drain_sem(s_tx_done);
         esp_err_t err = esp_now_send(dest, (const uint8_t *)data, len);
         if (err == ESP_OK) {
@@ -203,6 +205,9 @@ static bool send_bytes_serialized(const uint8_t *dest, const void *data, size_t 
         ESP_LOGW(TAG, "esp_now_send hiba: %s", esp_err_to_name(err));
         return false;
     }
+    ESP_LOGW(TAG, "esp_now_send: tartos NO_MEM, feladva %d probalkozas utan",
+             NODE_NO_MEM_MAX_RETRY);
+    return false;
 }
 
 void espnow_tx_send(const sz2_payload_t *p, int repeat)
