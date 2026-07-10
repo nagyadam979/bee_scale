@@ -30,6 +30,11 @@ static bool s_cali_ok = false;
 
 void vbat_init(void)
 {
+#if !VBAT_MEASURE_ENABLED
+    ESP_LOGW(TAG, "vbat_init: VBAT meres tiltva, ADC/SW pinek erintetlenek");
+    return;
+#endif
+
     gpio_hold_dis(VBAT_SW_GPIO);
 
     /* NPN-kapcsoló GPIO: output, alap LOW (osztó lekapcsolva). Akkor is így hagyjuk,
@@ -43,11 +48,6 @@ void vbat_init(void)
     };
     ESP_ERROR_CHECK(gpio_config(&sw_cfg));
     gpio_set_level(VBAT_SW_GPIO, 0);
-
-#if !VBAT_MEASURE_ENABLED
-    ESP_LOGW(TAG, "vbat_init: VBAT meres tiltva (oszto le van kotve GPIO0-rol)");
-    return;
-#endif
 
     /* ADC1 oneshot unit + csatorna. */
     adc_oneshot_unit_init_cfg_t unit_cfg = { .unit_id = VBAT_ADC_UNIT };
@@ -86,6 +86,9 @@ void vbat_enable(void)
 
 void vbat_disable(void)
 {
+#if !VBAT_MEASURE_ENABLED
+    return;
+#endif
     gpio_set_level(VBAT_SW_GPIO, 0);   /* NPN OFF -> ~0 szivárgás */
 }
 
@@ -131,9 +134,13 @@ uint16_t vbat_read_mv(void)
 
 void vbat_prepare_sleep(void)
 {
+#if !VBAT_MEASURE_ENABLED
+    ESP_LOGI(TAG, "vbat sleep: VBAT meres tiltva, ADC/SW pinek erintetlenek");
+    return;
+#endif
+
     vbat_disable();
 
-#if VBAT_MEASURE_ENABLED
     if (s_cali_ok && s_cali) {
         adc_cali_delete_scheme_curve_fitting(s_cali);
         s_cali = NULL;
@@ -153,12 +160,7 @@ void vbat_prepare_sleep(void)
         .intr_type = GPIO_INTR_DISABLE,
     };
     ESP_ERROR_CHECK(gpio_config(&adc_cfg));
-#endif
 
-#if VBAT_MEASURE_ENABLED
     ESP_LOGI(TAG, "vbat sleep: ADC unit torolve, SW(GPIO%d)=LOW, ADC(GPIO%d)=input/no-pull",
              VBAT_SW_GPIO, VBAT_ADC_GPIO);
-#else
-    ESP_LOGI(TAG, "vbat sleep: VBAT meres tiltva, SW(GPIO%d)=LOW", VBAT_SW_GPIO);
-#endif
 }

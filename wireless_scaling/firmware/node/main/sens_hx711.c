@@ -126,23 +126,44 @@ int32_t hx711_read_raw(void)
     return raw;
 }
 
+static void sort_i32(int32_t *values, int n)
+{
+    for (int i = 1; i < n; i++) {
+        int32_t key = values[i];
+        int j = i - 1;
+        while (j >= 0 && values[j] > key) {
+            values[j + 1] = values[j];
+            j--;
+        }
+        values[j + 1] = key;
+    }
+}
+
 bool hx711_read_weight_checked(float *weight_out)
 {
-    int64_t acc = 0;
-    for (int i = 0; i < HX711_SAMPLES; i++) {
-        int32_t raw = 0;
-        if (!hx711_read_raw_checked(&raw)) {
+    int32_t samples[HX711_MEDIAN_SAMPLES];
+    for (int i = 0; i < HX711_MEDIAN_SAMPLES; i++) {
+        if (!hx711_read_raw_checked(&samples[i])) {
             if (weight_out) {
                 *weight_out = NAN;
             }
             return false;
         }
-        acc += raw;
     }
-    int32_t raw = (int32_t)(acc / HX711_SAMPLES);
+
+    sort_i32(samples, HX711_MEDIAN_SAMPLES);
+    float weight = 0.0f;
+    if ((HX711_MEDIAN_SAMPLES % 2) == 0) {
+        int hi = HX711_MEDIAN_SAMPLES / 2;
+        int lo = hi - 1;
+        weight = (float)(((int64_t)samples[lo] + (int64_t)samples[hi]) / 2.0);
+    } else {
+        weight = (float)samples[HX711_MEDIAN_SAMPLES / 2];
+    }
+
     if (weight_out) {
-        /* Kalibráció még nincs -> a nyers átlagot adjuk vissza float-ként. */
-        *weight_out = (float)raw;
+        /* Kalibráció még nincs -> a nyers mediánt adjuk vissza float-ként. */
+        *weight_out = weight;
     }
     return true;
 }

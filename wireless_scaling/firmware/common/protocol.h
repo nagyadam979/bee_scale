@@ -31,6 +31,12 @@
 #include <stddef.h>
 
 #ifdef __cplusplus
+#define SZ2_STATIC_ASSERT static_assert
+#else
+#define SZ2_STATIC_ASSERT _Static_assert
+#endif
+
+#ifdef __cplusplus
 extern "C" {
 #endif
 
@@ -67,8 +73,8 @@ typedef struct __attribute__((packed)) {
     uint32_t total_packets;     /* futas-hossz / diagnosztika (node: szabad)            */
     uint32_t send_timestamp_ms; /* node ms-ora kuldeskor                                */
     float    weight;            /* docs: nyers/kalibralt terheles; NAN = HX711 hiba     */
-    float    temp;              /* docs: homerseklet, drift-korrekcio                   */
-    uint16_t vbat;              /* docs: elemfeszultseg mV-ban                          */
+    float    temp;              /* docs: homerseklet; NAN = nincs/hibas DS18B20         */
+    uint16_t vbat;              /* docs: elemfeszultseg mV-ban; 0 = nincs/tiltott VBAT  */
     uint16_t crc;               /* CRC16-CCITT az osszes elozo byte-on — UTOLSO mezo    */
 } sz2_payload_t;
 
@@ -86,6 +92,9 @@ typedef struct __attribute__((packed)) {
     uint32_t next_slot_offset_s;      /* a kovetkezo ebredesi slot eltolasa             */
     uint8_t  retry_policy;            /* retransmit-stategia (Sz3 donti el)             */
 } sz2_ack_t;
+
+SZ2_STATIC_ASSERT(sizeof(sz2_payload_t) == 41, "sz2_payload_t wire meret valtozott");
+SZ2_STATIC_ASSERT(sizeof(sz2_ack_t) == 20, "sz2_ack_t wire meret valtozott");
 
 /*
  * CRC16-CCITT (poly 0x1021, init 0xFFFF, nincs reflektalas, nincs xorout). Inline, hogy
@@ -119,5 +128,7 @@ static inline uint16_t sz2_payload_crc(const sz2_payload_t *p)
 #ifdef __cplusplus
 }
 #endif
+
+#undef SZ2_STATIC_ASSERT
 
 #endif /* PROTOCOL_H */

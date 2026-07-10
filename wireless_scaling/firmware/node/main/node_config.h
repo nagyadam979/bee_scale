@@ -30,19 +30,60 @@
 /* ===================== NODE azonosító / rádió ===================== */
 
 /* A node azonosítója (docs: unit_id). Több node esetén EGYEDI. */
+#ifndef NODE_ID
 #define NODE_ID              1
+#endif
 
-/* WiFi/ESP-NOW csatorna. EGYEZZEN a master/AP csatornájával! (1..13)
- * AMS-TP-2.4GHz a tesztkörnyezetben: ch9. */
-#define NODE_WIFI_CHANNEL    9
+/* WiFi/ESP-NOW csatorna. A master STA kapcsolata miatt az AP/router fixen ch6. */
+#ifndef NODE_WIFI_CHANNEL
+#define NODE_WIFI_CHANNEL    6
+#endif
 
-/* Egy payloadot ennyiszer küld el back-to-back — olcsó broadcast-redundancia (Sz2/M1 minta). */
+#ifndef NODE_TEST_MODE
+#define NODE_TEST_MODE       0
+#endif
+
+/*
+ * Hideginditas/power-cycle utani szervizablak. Csak nem timer-wakeup bootnal fut:
+ * a node 20 s-ig ebren marad WiFi nelkul, HX711 power-downban, hogy az USB port
+ * stabilan lathato legyen firmware feltolteshez/diagnosztikahoz.
+ */
+#ifndef NODE_POWERUP_SERVICE_WINDOW_SEC
+#define NODE_POWERUP_SERVICE_WINDOW_SEC 20
+#endif
+
+/* Max TX power 0.25 dBm egységben. 84 = default 21 dBm; node2-nél 34 = 8.5 dBm. */
+#ifndef NODE_TX_POWER
+#define NODE_TX_POWER        84
+#endif
+
+/* BENCH broadcast ismétlés; FIELD módban az app-ACK-os út dönt a sikerességről. */
+#ifndef NODE_TX_REPEAT
 #define NODE_TX_REPEAT       3
+#endif
+
+/* FIELD megbízható átadás: Sz6 alapján app-ACK, jitter és oldest-first drain. */
+#define NODE_ACK_MAX_ATTEMPTS        5
+#define NODE_ACK_TIMEOUT_MS          120
+#define NODE_UNICAST_ATTEMPTS        2
+#define NODE_RETRY_JITTER_MIN_MS     20
+#define NODE_RETRY_JITTER_MAX_MS     120
+#define NODE_PRE_TX_JITTER_MAX_MS    150
+#define NODE_SEND_TIMEOUT_MS         50
+#define NODE_NO_MEM_RETRY_MS         2
+#define NODE_DRAIN_MAX_RECORDS       32
+
+/* 20 perces periódussal 7 nap = 504 rekord; 512 ad némi tartalékot. */
+#ifndef NODE_PENDING_CAPACITY
+#define NODE_PENDING_CAPACITY        512
+#endif
 
 /* ===================== IDŐZÍTÉS — profilfüggő ===================== */
 #if NODE_PROFILE == NODE_PROFILE_BENCH
   /* Alvási idő két ébrenlét közt (s). */
+  #ifndef NODE_WAKE_PERIOD_SEC
   #define NODE_WAKE_PERIOD_SEC   60
+  #endif
   /* Egy BENCH-fázis hossza (s) — ennyi ideig aktív az adott mérési blokk, hogy a DMM tisztán mérje.
    * Gyors körméréshez: 4 fázis × 2.5 s = 10 s ébrenlét. */
   #define BENCH_PHASE_MS         2500
@@ -52,10 +93,14 @@
   #define BENCH_SAMPLE_INTERVAL_MS 1000
 #elif NODE_PROFILE == NODE_PROFILE_FIELD
   /* Éles alvási periódus (s). ~20 perc (a végleges érték a 2-node kísérletből jön). */
+  #ifndef NODE_WAKE_PERIOD_SEC
   #define NODE_WAKE_PERIOD_SEC   1200
+  #endif
 #else /* NODE_PROFILE_SLEEP_FLOOR */
   /* Mérési izoláció: minimál firmware, csak deep sleep floor. */
+  #ifndef NODE_WAKE_PERIOD_SEC
   #define NODE_WAKE_PERIOD_SEC   60
+  #endif
 #endif
 
 /* ===================== PIN-TERV (ESP32-C3 SuperMini) ===================== */
@@ -74,7 +119,10 @@
  *
  * 2026-07-09: a low-side kapcsolt osztó GPIO0-ról le lett kötve, mert OFF állapotban a
  * mérőcsomópont VBAT-ra úszott. A VBAT mérés ezért firmware-ből tiltva van. */
-#define VBAT_MEASURE_ENABLED 0
+#ifndef NODE_VBAT_ENABLED
+#define NODE_VBAT_ENABLED    0
+#endif
+#define VBAT_MEASURE_ENABLED NODE_VBAT_ENABLED
 #define VBAT_ADC_GPIO        GPIO_NUM_0   /* ADC1 bemenet (info; a driver a csatornát használja) */
 #define VBAT_ADC_UNIT        ADC_UNIT_1   /* ADC1 — WiFi mellett is megbízható (ADC2 nem!) */
 #define VBAT_ADC_CHANNEL     ADC_CHANNEL_0/* GPIO0 == ADC1 csatorna 0 a C3-on */
@@ -83,9 +131,12 @@
 
 /* DS18B20 1-Wire. A GPIO9 alvásban explicit HIGH + hold, hogy a 4.7k felhúzó
  * ne tudjon LOW-ra hajtott padon át ~700 uA-t elfűteni. */
-#define DS18B20_ENABLED      0
+#ifndef DS18B20_ENABLED
+#define DS18B20_ENABLED      1
+#endif
 #define DS18B20_HOLD_HIGH_IN_SLEEP 1
 #define DS18B20_GPIO         GPIO_NUM_9
+#define DS18B20_CONVERSION_MS 750
 
 /* Beépített kék user LED (a mérés alatt kikapcsolva tartjuk; tipikusan aktív-alacsony). */
 #define USER_LED_GPIO        GPIO_NUM_8
@@ -110,8 +161,10 @@
 #define VBAT_KEEP_DIVIDER_ON_IN_SLEEP  0
 
 /* ===================== HX711 paraméterek ===================== */
-/* Hány nyers mintát átlagoljunk egy súly-leolvasáshoz. */
-#define HX711_SAMPLES        8
+/* Hány nyers mintából készüljön a medián-alapú súly-leolvasás. */
+#define HX711_MEDIAN_SAMPLES 12
+/* Régi BENCH API-kompatibilitás: ugyanazt a mintaszámot használja. */
+#define HX711_SAMPLES        HX711_MEDIAN_SAMPLES
 /* Power-up után ennyit várunk az első stabil konverzióra (ms). */
 #define HX711_SETTLE_MS      50
 

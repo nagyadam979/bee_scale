@@ -64,6 +64,22 @@
 #define MASTER_SAMPLE_PERIOD_SEC       1200
 #define MASTER_VALID_EPOCH_MIN         1700000000UL
 
+#ifndef MASTER_ESPNOW_CHANNEL
+#define MASTER_ESPNOW_CHANNEL          6
+#endif
+#ifndef MASTER_TEST_MODE
+#define MASTER_TEST_MODE               0
+#endif
+#ifndef MASTER_WIFI_SCAN_DIAG
+#define MASTER_WIFI_SCAN_DIAG          0
+#endif
+#ifndef MASTER_SCAN_MAX_APS
+#define MASTER_SCAN_MAX_APS            32
+#endif
+#ifndef MASTER_TEST_SSID
+#define MASTER_TEST_SSID               ""
+#endif
+
 #define HX711_SCK_GPIO                 GPIO_NUM_2
 #define HX711_DOUT_GPIO                GPIO_NUM_4
 #define DS18B20_GPIO                   GPIO_NUM_5
@@ -200,6 +216,10 @@ typedef struct {
     uint32_t ack_sent;
     uint32_t ack_txfail;
     uint32_t resets;
+    int32_t rssi_min;
+    int32_t rssi_max;
+    int64_t rssi_sum;
+    uint32_t rssi_n;
     int64_t last_rx_us;
 } node_state_t;
 
@@ -947,14 +967,23 @@ static void ensure_peer(const uint8_t *mac)
         peer.channel = 0;
         peer.ifidx = WIFI_IF_STA;
         peer.encrypt = false;
-        if (esp_now_add_peer(&peer) != ESP_OK) return;
+        esp_err_t err = esp_now_add_peer(&peer);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "add_peer failed %02X:%02X:%02X:%02X:%02X:%02X: %s",
+                     mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
+                     esp_err_to_name(err));
+            return;
+        }
         esp_now_rate_config_t rc = {
             .phymode = WIFI_PHY_MODE_11B,
             .rate = WIFI_PHY_RATE_1M_L,
             .ersu = false,
             .dcm = false,
         };
-        esp_now_set_peer_rate_config(mac, &rc);
+        err = esp_now_set_peer_rate_config(mac, &rc);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "peer rate config failed: %s", esp_err_to_name(err));
+        }
     }
 }
 
@@ -1013,6 +1042,8 @@ static bool send_ack(const uint8_t *dest, uint8_t node_id, uint32_t seq)
             vTaskDelay(pdMS_TO_TICKS(MASTER_NO_MEM_RETRY_MS));
             continue;
         }
+        ESP_LOGW(TAG, "ACK send failed node=%u seq=%u: %s",
+                 node_id, (unsigned)seq, esp_err_to_name(err));
         return false;
     }
 }
@@ -1029,6 +1060,8 @@ static node_state_t *node_get(uint8_t node_id, const uint8_t *mac)
             n->in_use = true;
             n->node_id = node_id;
             memcpy(n->mac, mac, 6);
+            n->rssi_min = 127;
+            n->rssi_max = -128;
             return n;
         }
     }
@@ -1053,7 +1086,8 @@ static void node_record_from_payload(master_record_t *rec, const sz2_payload_t *
     memset(rec, 0, sizeof(*rec));
     rec->type = REC_TYPE_NODE;
     rec->unit_id = p->node_id;
-    rec->valid_mask = REC_VALID_HX711;
+    rec->valid_mask = 0;
+    if (isfinite(p->weight)) rec->valid_mask |= REC_VALID_HX711;
     if (isfinite(p->temp)) rec->valid_mask |= REC_VALID_TEMP;
     rec->rssi = item->rssi;
     memcpy(rec->src_mac, item->src_mac, sizeof(rec->src_mac));
@@ -1063,8 +1097,22 @@ static void node_record_from_payload(master_record_t *rec, const sz2_payload_t *
     rec->ts = current_epoch_s();
     rec->vbat_mv = p->vbat;
     rec->gap = gap;
-    rec->weight_raw = (int32_t)lrintf(p->weight);
+    if (rec->valid_mask & REC_VALID_HX711) {
+        rec->weight_raw = (int32_t)lrintf(p->weight);
+    }
     rec->temp_c = p->temp;
+}
+
+static void print_node_stat(const node_state_t *n, int64_t now_us)
+{
+    int rssi_avg = n->rssi_n ? (int)(n->rssi_sum / (int64_t)n->rssi_n) : 0;
+    int age_s = n->last_rx_us ? (int)((now_us - n->last_rx_us) / 1000000) : -1;
+    ESP_LOGI(TAG, "NSTAT node=%u last_seq=%u new=%u dup=%u miss=%u crc=%u "
+                  "ack=%u ackfail=%u resets=%u rssi_avg=%d rssi_min=%ld rssi_max=%ld age_s=%d",
+             n->node_id, (unsigned)n->last_seq, (unsigned)n->rx_new, (unsigned)n->rx_dup,
+             (unsigned)n->miss_cum, (unsigned)n->crc_err, (unsigned)n->ack_sent,
+             (unsigned)n->ack_txfail, (unsigned)n->resets, rssi_avg,
+             (long)n->rssi_min, (long)n->rssi_max, age_s);
 }
 
 static void rx_consumer_task(void *arg)
@@ -1105,6 +1153,10 @@ static void rx_consumer_task(void *arg)
 
             n->rx_valid++;
             n->last_rx_us = esp_timer_get_time();
+            if (item.rssi < n->rssi_min) n->rssi_min = item.rssi;
+            if (item.rssi > n->rssi_max) n->rssi_max = item.rssi;
+            n->rssi_sum += item.rssi;
+            n->rssi_n++;
             uint32_t gap = 0;
             bool is_new = false;
             if (!n->have_seq) {
@@ -1126,9 +1178,24 @@ static void rx_consumer_task(void *arg)
                 if (s_ack_status_fail != fail_before) n->ack_txfail++;
             }
 
-            ESP_LOGI(TAG, "RX node=%u seq=%u kind=%s gap=%u rssi=%d weight_raw=%.0f temp=%.2f",
+            ESP_LOGI(TAG, "RX node=%u seq=%u kind=%s gap=%u rssi=%d "
+                          "weight=%.0f(%s) temp=%.2f(%s) vbat=%u",
                      p->node_id, (unsigned)p->seq, is_new ? "NEW" : "DUP",
-                     (unsigned)gap, (int)item.rssi, (double)p->weight, (double)p->temp);
+                     (unsigned)gap, (int)item.rssi, (double)p->weight,
+                     isfinite(p->weight) ? "OK" : "HX711_ERR",
+                     (double)p->temp,
+                     isfinite(p->temp) ? "OK" : "DS18B20_ERR",
+                     (unsigned)p->vbat);
+            if (!isfinite(p->weight)) {
+                ESP_LOGW(TAG, "SENSOR_WARN node=%u seq=%u sensor=HX711 status=TIMEOUT kind=%s rssi=%d",
+                         p->node_id, (unsigned)p->seq, is_new ? "NEW" : "DUP",
+                         (int)item.rssi);
+            }
+            if (!isfinite(p->temp)) {
+                ESP_LOGW(TAG, "SENSOR_WARN node=%u seq=%u sensor=DS18B20 status=INVALID kind=%s rssi=%d",
+                         p->node_id, (unsigned)p->seq, is_new ? "NEW" : "DUP",
+                         (int)item.rssi);
+            }
 
             if (is_new) {
                 master_record_t rec;
@@ -1143,23 +1210,115 @@ static void rx_consumer_task(void *arg)
             uint8_t ch = 0;
             wifi_second_chan_t sec = WIFI_SECOND_CHAN_NONE;
             esp_wifi_get_channel(&ch, &sec);
+            for (int i = 0; i < MASTER_MAX_NODES; i++) {
+                if (s_nodes[i].in_use) {
+                    print_node_stat(&s_nodes[i], now_us);
+                }
+            }
 #if MASTER_CLOUD_MODE
             const char *wifi_state = s_wifi_ip ? "IP" : (s_wifi_assoc ? "ASSOC" : "DOWN");
 #else
             const char *wifi_state = "OFF";
 #endif
             ESP_LOGI(TAG, "MSTAT uptime_s=%u rxcb=%u q_drop=%u len_bad=%u ver_bad=%u "
-                          "wifi=%s ch=%u cloud_ok=%u cloud_fail=%u cloud_drop=%u "
+                          "wifi=%s ch=%u expected_ch=%u cloud_ok=%u cloud_fail=%u cloud_drop=%u "
                           "backup_pending=%u backup_enq=%u backup_up=%u backup_bad=%u",
                      (unsigned)(now_us / 1000000), (unsigned)s_diag_recv_cb,
                      (unsigned)s_q_dropped, (unsigned)s_diag_len_bad,
                      (unsigned)s_diag_ver_bad, wifi_state, (unsigned)ch,
+                     (unsigned)MASTER_ESPNOW_CHANNEL,
                      (unsigned)s_cloud_ok, (unsigned)s_cloud_fail, (unsigned)s_cloud_drop,
                      (unsigned)backup_count_unlocked(), (unsigned)s_backup_enqueued,
                      (unsigned)s_backup_uploaded, (unsigned)s_backup_bad);
         }
     }
 }
+
+static void check_wifi_channel(const char *where)
+{
+    uint8_t ch = 0;
+    wifi_second_chan_t sec = WIFI_SECOND_CHAN_NONE;
+    esp_err_t err = esp_wifi_get_channel(&ch, &sec);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "CHANNEL_CHECK where=%s failed=%s expected=%u",
+                 where, esp_err_to_name(err), (unsigned)MASTER_ESPNOW_CHANNEL);
+        return;
+    }
+    if (ch != MASTER_ESPNOW_CHANNEL) {
+        ESP_LOGE(TAG, "CHANNEL_MISMATCH where=%s actual=%u expected=%u cloud=%d",
+                 where, (unsigned)ch, (unsigned)MASTER_ESPNOW_CHANNEL, MASTER_CLOUD_MODE);
+    } else {
+        ESP_LOGI(TAG, "CHANNEL_OK where=%s actual=%u expected=%u",
+                 where, (unsigned)ch, (unsigned)MASTER_ESPNOW_CHANNEL);
+    }
+}
+
+#if MASTER_WIFI_SCAN_DIAG
+static void wifi_scan_diag_once(void)
+{
+    wifi_scan_config_t scan_cfg = {
+        .ssid = NULL,
+        .bssid = NULL,
+        .channel = 0,
+        .show_hidden = true,
+        .scan_type = WIFI_SCAN_TYPE_ACTIVE,
+    };
+    const char *target = MASTER_TEST_SSID;
+    ESP_LOGI(TAG, "TEST_SCAN start target_ssid=%s max_aps=%u",
+             target[0] ? target : "*", (unsigned)MASTER_SCAN_MAX_APS);
+
+    esp_err_t err = esp_wifi_scan_start(&scan_cfg, true);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "TEST_SCAN failed start err=%s", esp_err_to_name(err));
+        return;
+    }
+
+    uint16_t ap_total = 0;
+    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_wifi_scan_get_ap_num(&ap_total));
+
+    uint16_t ap_count = ap_total;
+    if (ap_count > MASTER_SCAN_MAX_APS) {
+        ap_count = MASTER_SCAN_MAX_APS;
+    }
+
+    wifi_ap_record_t *aps = NULL;
+    if (ap_count > 0) {
+        aps = calloc(ap_count, sizeof(*aps));
+        if (aps == NULL) {
+            ESP_LOGE(TAG, "TEST_SCAN no_mem count=%u bytes=%u",
+                     (unsigned)ap_count, (unsigned)(ap_count * sizeof(*aps)));
+            return;
+        }
+    }
+
+    err = esp_wifi_scan_get_ap_records(&ap_count, aps);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "TEST_SCAN failed records err=%s total=%u",
+                 esp_err_to_name(err), (unsigned)ap_total);
+        free(aps);
+        return;
+    }
+
+    bool target_found = false;
+    ESP_LOGI(TAG, "TEST_SCAN result total=%u printed=%u expected_esnow_ch=%u",
+             (unsigned)ap_total, (unsigned)ap_count, (unsigned)MASTER_ESPNOW_CHANNEL);
+    for (uint16_t i = 0; i < ap_count; i++) {
+        const bool match = target[0] && strcmp((const char *)aps[i].ssid, target) == 0;
+        target_found = target_found || match;
+        ESP_LOGI(TAG, "TEST_AP %02u ssid=\"%s\" bssid=%02X:%02X:%02X:%02X:%02X:%02X "
+                      "ch=%u rssi=%d auth=%u%s",
+                 (unsigned)i, (const char *)aps[i].ssid,
+                 aps[i].bssid[0], aps[i].bssid[1], aps[i].bssid[2],
+                 aps[i].bssid[3], aps[i].bssid[4], aps[i].bssid[5],
+                 (unsigned)aps[i].primary, (int)aps[i].rssi,
+                 (unsigned)aps[i].authmode, match ? " MATCH" : "");
+    }
+    free(aps);
+    if (target[0] && !target_found) {
+        ESP_LOGW(TAG, "TEST_SCAN target_not_found ssid=\"%s\"", target);
+    }
+}
+#endif
 
 #if MASTER_CLOUD_MODE
 typedef struct {
@@ -1273,13 +1432,19 @@ static bool build_record_json(const master_record_t *rec, char *body, int body_c
                      (unsigned)ts, (unsigned)rec->rx_ms, rec->unit_id, (unsigned)rec->seq);
     if (rec->type == REC_TYPE_NODE) {
         n = json_add(body, body_cap, n,
-                     ",\"boot_id\":\"0x%08X\",\"weight_raw\":%ld,\"vbat_mv\":%u,"
+                     ",\"boot_id\":\"0x%08X\",\"vbat_mv\":%u,"
                      "\"rssi\":%d,\"gap\":%u,"
                      "\"src_mac\":\"%02X:%02X:%02X:%02X:%02X:%02X\"",
-                     (unsigned)rec->boot_id, (long)rec->weight_raw, (unsigned)rec->vbat_mv,
+                     (unsigned)rec->boot_id, (unsigned)rec->vbat_mv,
                      (int)rec->rssi, (unsigned)rec->gap,
                      rec->src_mac[0], rec->src_mac[1], rec->src_mac[2],
                      rec->src_mac[3], rec->src_mac[4], rec->src_mac[5]);
+        if (rec->valid_mask & REC_VALID_HX711) {
+            n = json_add(body, body_cap, n, ",\"weight_raw\":%ld,\"hx711_ok\":true",
+                         (long)rec->weight_raw);
+        } else {
+            n = json_add(body, body_cap, n, ",\"hx711_ok\":false");
+        }
         if (rec->valid_mask & REC_VALID_TEMP) {
             n = json_add(body, body_cap, n, ",\"temp_c\":%.3f", (double)rec->temp_c);
         }
@@ -1400,6 +1565,10 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
         const wifi_event_sta_connected_t *ev = (const wifi_event_sta_connected_t *)data;
         s_wifi_assoc = true;
         ESP_LOGI(TAG, "WIFI CONNECTED ssid=%s ch=%u", (const char *)ev->ssid, (unsigned)ev->channel);
+        if (ev->channel != MASTER_ESPNOW_CHANNEL) {
+            ESP_LOGE(TAG, "CHANNEL_MISMATCH where=STA_CONNECTED actual=%u expected=%u",
+                     (unsigned)ev->channel, (unsigned)MASTER_ESPNOW_CHANNEL);
+        }
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         s_wifi_assoc = false;
         s_wifi_ip = false;
@@ -1416,6 +1585,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
         esp_wifi_get_channel(&ch, &sec);
         ESP_LOGI(TAG, "WIFI GOT_IP ip=" IPSTR " gw=" IPSTR " ch=%u",
                  IP2STR(&ev->ip_info.ip), IP2STR(&ev->ip_info.gw), (unsigned)ch);
+        check_wifi_channel("GOT_IP");
     }
 }
 
@@ -1464,6 +1634,16 @@ static void wifi_espnow_init(void)
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
     ESP_ERROR_CHECK(esp_wifi_set_protocol(WIFI_IF_STA,
         WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N));
+#if MASTER_WIFI_SCAN_DIAG
+    wifi_scan_diag_once();
+#endif
+#if !MASTER_CLOUD_MODE
+    ESP_ERROR_CHECK(esp_wifi_set_channel(MASTER_ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE));
+    check_wifi_channel("wifi_espnow_init");
+#else
+    ESP_LOGI(TAG, "cloud STA mode: AP/router csatorna diktal, expected_ch=%u",
+             (unsigned)MASTER_ESPNOW_CHANNEL);
+#endif
 
     ESP_ERROR_CHECK(esp_now_init());
     ESP_ERROR_CHECK(esp_now_register_recv_cb(recv_cb));
@@ -1473,9 +1653,13 @@ static void wifi_espnow_init(void)
     ensure_peer(bc);
 
     uint8_t mac[6] = {0};
+    uint8_t ch = 0;
+    wifi_second_chan_t sec = WIFI_SECOND_CHAN_NONE;
     esp_wifi_get_mac(WIFI_IF_STA, mac);
-    ESP_LOGI(TAG, "master MAC=%02X:%02X:%02X:%02X:%02X:%02X cloud=%d",
-             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], MASTER_CLOUD_MODE);
+    esp_wifi_get_channel(&ch, &sec);
+    ESP_LOGI(TAG, "master MAC=%02X:%02X:%02X:%02X:%02X:%02X cloud=%d ch=%u expected_ch=%u",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], MASTER_CLOUD_MODE,
+             (unsigned)ch, (unsigned)MASTER_ESPNOW_CHANNEL);
 }
 
 static void master_measure_task(void *arg)
@@ -1553,7 +1737,9 @@ static void master_measure_task(void *arg)
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "=== bee_scale MASTER v1 ===");
+    ESP_LOGI(TAG, "=== bee_scale MASTER v1 === mode=%s cloud=%d expected_ch=%u",
+             MASTER_TEST_MODE ? "TEST" : "PROD", MASTER_CLOUD_MODE,
+             (unsigned)MASTER_ESPNOW_CHANNEL);
     ESP_LOGI(TAG, "pins HX711 SCK=%d DOUT=%d DS=%d RAIN=%d I2C SDA=%d SCL=%d",
              HX711_SCK_GPIO, HX711_DOUT_GPIO, DS18B20_GPIO, RAIN_GPIO,
              I2C_SDA_GPIO, I2C_SCL_GPIO);

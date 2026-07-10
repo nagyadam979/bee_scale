@@ -5,6 +5,8 @@ __pycache__/
 
 # --- PlatformIO build-artifactok (a pio run reprodukálja) ---
 .pio/
+firmware/master/sdkconfig.*
+firmware/node/sdkconfig.*
 
 # --- Helyi firmware credentialok / webhook URL-ek ---
 experiments/Sz6_wake_handoff/master/main/cloud_config.h

@@ -7,6 +7,7 @@ idf_component_register(
     SRCS
         "main.c"
         "node_sleep.c"
+        "node_buffer.c"
         "espnow_tx.c"
         "sens_hx711.c"
         "sens_vbat.c"

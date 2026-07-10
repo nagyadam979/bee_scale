@@ -3,19 +3,21 @@
  * bee_scale / wireless_scaling · 2. fázis · firmware/node
  *
  * A C3-on a deep sleep = teljes reboot, így app_main() minden ébredéskor újraindul. A menete:
- *   1) NVS init (WiFi PHY-kalibrációhoz kell)
- *   2) RTC-állapot (cycle -> seq, boot_id) — node_sleep
- *   3) profil-függő munka:
+ *   1) RTC-állapot (cycle -> seq, boot_id) — node_sleep
+ *   2) hidegindításkor rövid szervizablak USB flash/diagnosztikához
+ *   3) NVS init + flash pending queue
+ *   4) profil-függő munka:
  *        BENCH: fázis-szekvencer — baseline, összes szenzor együtt, rádió-idle, ESP-NOW TX.
  *               A szenzorok a WiFi BEKAPCSOLÁSA ELŐTT mérnek (tiszta, zajmentes táp/ADC).
  *        FIELD: egyszeri gyors mérés (HX711 + DS18B20 + vbat) -> payload -> broadcast.
- *   4) deep sleep NODE_WAKE_PERIOD_SEC-ig — node_sleep
+ *   5) deep sleep NODE_WAKE_PERIOD_SEC-ig — node_sleep
  *
  * A main CSAK vezényel; a driver-logika a modulokban van (sens_*, espnow_tx, node_sleep).
  * A hangolható paraméterek: node_config.h.
  */
 #include <stdio.h>
 #include <stdbool.h>
+#include <math.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -27,6 +29,7 @@
 #include "node_config.h"
 #include "protocol.h"
 #include "node_sleep.h"
+#include "node_buffer.h"
 #include "espnow_tx.h"
 #include "sens_hx711.h"
 #include "sens_vbat.h"
@@ -46,8 +49,39 @@ static void nvs_init(void)
     }
 }
 
+static void run_powerup_service_window(const node_wake_state_t *st)
+{
+#if NODE_POWERUP_SERVICE_WINDOW_SEC > 0
+    if (!st->cold_boot) {
+        return;
+    }
+
+    ESP_LOGW(TAG, "POWERUP_SERVICE_WINDOW start sec=%u reason=cold_boot "
+                  "usb_flash_window=1 wifi=OFF",
+             (unsigned)NODE_POWERUP_SERVICE_WINDOW_SEC);
+
+    hx711_init();
+    hx711_power_down();
+
+    uint32_t remaining = NODE_POWERUP_SERVICE_WINDOW_SEC;
+    while (remaining > 0) {
+        uint32_t step = remaining > 5U ? 5U : remaining;
+        vTaskDelay(pdMS_TO_TICKS(step * 1000U));
+        remaining -= step;
+        if (remaining > 0) {
+            ESP_LOGI(TAG, "POWERUP_SERVICE_WINDOW remaining_s=%u",
+                     (unsigned)remaining);
+        }
+    }
+
+    ESP_LOGI(TAG, "POWERUP_SERVICE_WINDOW done");
+#else
+    (void)st;
+#endif
+}
+
 /* Payload feltöltése a KÖZÖS wire-szerződés szerint (protocol.h). A CRC-t utolsóként számoljuk. */
-static void build_payload(sz2_payload_t *p, const node_wake_state_t *st,
+static void build_payload(sz2_payload_t *p, const node_wake_state_t *st, uint32_t seq,
                           float weight, float temp, uint16_t vbat)
 {
     memset(p, 0, sizeof(*p));
@@ -56,8 +90,8 @@ static void build_payload(sz2_payload_t *p, const node_wake_state_t *st,
     p->node_id          = NODE_ID;
     espnow_tx_get_mac(p->node_mac);
     p->boot_id          = st->boot_id;
-    p->seq              = st->cycle;
-    p->packet_idx       = st->cycle;
+    p->seq              = seq;
+    p->packet_idx       = seq;
     p->total_packets    = 0;   /* éles üzemben nincs fix futás-hossz; diagnosztikára szabad */
     p->send_timestamp_ms = (uint32_t)(esp_timer_get_time() / 1000);
     p->weight           = weight;
@@ -66,8 +100,9 @@ static void build_payload(sz2_payload_t *p, const node_wake_state_t *st,
     p->crc              = sz2_payload_crc(p);
 
     /* A mért adat láthatóvá tétele a soros logon (temp NAN, ha nincs bekötve hőmérő). */
-    ESP_LOGI(TAG, "payload: seq=%u weight=%.0f temp=%.2f vbat=%u mV",
-             (unsigned)p->seq, (double)p->weight, (double)p->temp, (unsigned)p->vbat);
+    ESP_LOGI(TAG, "payload: node=%u seq=%u boot=0x%08X weight=%.0f temp=%.2f vbat=%u mV crc=0x%04X",
+             p->node_id, (unsigned)p->seq, (unsigned)p->boot_id,
+             (double)p->weight, (double)p->temp, (unsigned)p->vbat, p->crc);
 }
 
 static void user_led_set_off(void)
@@ -172,7 +207,7 @@ static void sample_espnow(const node_wake_state_t *st)
     }
 
     sz2_payload_t p;
-    build_payload(&p, st, weight, ds18b20_read_temp(), vbat_read_mv());
+    build_payload(&p, st, st->cycle, weight, ds18b20_read_temp(), vbat_read_mv());
     espnow_tx_send(&p, NODE_TX_REPEAT);
 }
 
@@ -216,45 +251,144 @@ static void run_bench(const node_wake_state_t *st)
 #else
 /* ===================== FIELD: egyszeri mérés ===================== */
 
+typedef struct {
+    float weight;
+    float temp;
+    uint16_t vbat;
+    bool hx711_ok;
+    bool ds18b20_started;
+    uint32_t measure_ms;
+} node_measurement_t;
+
+static node_measurement_t measure_once(void)
+{
+    node_measurement_t m = {
+        .weight = NAN,
+        .temp = NAN,
+        .vbat = 0,
+        .hx711_ok = false,
+        .ds18b20_started = false,
+        .measure_ms = 0,
+    };
+    int64_t t0 = esp_timer_get_time();
+
+    m.ds18b20_started = ds18b20_start_conversion();
+
+    hx711_power_up();
+    m.hx711_ok = hx711_read_weight_checked(&m.weight);
+    hx711_power_down();
+    if (!m.hx711_ok) {
+        ESP_LOGW(TAG, "HX711 meres hiba: weight=NAN megy a payloadba");
+    }
+
+    m.vbat = vbat_read_mv();
+
+    if (m.ds18b20_started) {
+        int64_t elapsed_ms = (esp_timer_get_time() - t0) / 1000;
+        if (elapsed_ms < DS18B20_CONVERSION_MS) {
+            vTaskDelay(pdMS_TO_TICKS((uint32_t)(DS18B20_CONVERSION_MS - elapsed_ms)));
+        }
+        m.temp = ds18b20_read_temp_after_conversion();
+    }
+
+    m.measure_ms = (uint32_t)((esp_timer_get_time() - t0) / 1000);
+    ESP_LOGI(TAG, "MEASURE ms=%u hx711=%s ds18b20=%s weight=%.0f temp=%.2f vbat=%u",
+             (unsigned)m.measure_ms, m.hx711_ok ? "OK" : "ERR",
+             m.ds18b20_started ? "STARTED" : "ERR",
+             (double)m.weight, (double)m.temp, (unsigned)m.vbat);
+    return m;
+}
+
+static uint32_t drain_pending_records(void)
+{
+    uint32_t delivered = 0;
+    for (; delivered < NODE_DRAIN_MAX_RECORDS; delivered++) {
+        sz2_payload_t pending;
+        esp_err_t err = node_buffer_peek_oldest(&pending);
+        if (err == ESP_ERR_NVS_NOT_FOUND) {
+            break;
+        }
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "pending peek hiba: %s", esp_err_to_name(err));
+            break;
+        }
+
+        espnow_tx_ack_result_t ack;
+        bool ok = espnow_tx_send_with_ack(&pending, &ack);
+        if (!ok) {
+            ESP_LOGW(TAG, "DRAIN stop: nincs ACK seq=%u remain=%u",
+                     (unsigned)pending.seq, (unsigned)node_buffer_count());
+            break;
+        }
+        if ((int32_t)(ack.clear_buffer_until_seq - pending.seq) < 0) {
+            ESP_LOGE(TAG, "ACK clear_until visszafele: seq=%u clear=%u",
+                     (unsigned)pending.seq, (unsigned)ack.clear_buffer_until_seq);
+            break;
+        }
+        err = node_buffer_clear_until(ack.clear_buffer_until_seq);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "pending clear hiba seq=%u clear=%u: %s",
+                     (unsigned)pending.seq, (unsigned)ack.clear_buffer_until_seq,
+                     esp_err_to_name(err));
+            break;
+        }
+    }
+    return delivered;
+}
+
 static void run_field(const node_wake_state_t *st)
 {
     ESP_LOGI(TAG, "FIELD profil: egyszeri meres, majd %d s alvas.", NODE_WAKE_PERIOD_SEC);
 
     /* Szenzorok a rádió BEKAPCSOLÁSA ELŐTT (tiszta táp/ADC). */
-    hx711_power_up();
-    float weight = 0.0f;
-    bool hx711_ok = hx711_read_weight_checked(&weight);
-    hx711_power_down();
-    if (!hx711_ok) {
-        ESP_LOGW(TAG, "HX711 meres hiba: weight=NAN megy a payloadba");
+    node_measurement_t m = measure_once();
+
+    uint32_t seq = node_buffer_next_seq();
+    sz2_payload_t p;
+    build_payload(&p, st, seq, m.weight, m.temp, m.vbat);
+    esp_err_t err = node_buffer_enqueue(&p);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "uj minta NEM mentheto flashbe seq=%u: %s",
+                 (unsigned)seq, esp_err_to_name(err));
     }
 
-    float temp = ds18b20_read_temp();
-    uint16_t vbat = vbat_read_mv();
-
-    /* Payload + broadcast. */
-    sz2_payload_t p;
+    /* Radio csak a flash-mentes utan indul. */
     espnow_tx_init();
-    build_payload(&p, st, weight, temp, vbat);
-    espnow_tx_send(&p, NODE_TX_REPEAT);
+    uint32_t before = node_buffer_count();
+    uint32_t delivered = drain_pending_records();
+    ESP_LOGI(TAG, "DRAIN summary before=%u delivered=%u remain=%u cap=%u",
+             (unsigned)before, (unsigned)delivered, (unsigned)node_buffer_count(),
+             (unsigned)NODE_PENDING_CAPACITY);
 }
 #endif
 
 void app_main(void)
 {
 #if NODE_PROFILE == NODE_PROFILE_SLEEP_FLOOR
+    node_wake_state_t st;
+    node_sleep_begin_cycle(&st);
+    ESP_LOGI(TAG, "=== bee_scale NODE === mode=%s id=%d ch=%u sleep=%d cycle=%u boot=0x%08X %s",
+             NODE_TEST_MODE ? "TEST" : "PROD",
+             NODE_ID, (unsigned)NODE_WIFI_CHANNEL, NODE_WAKE_PERIOD_SEC,
+             (unsigned)st.cycle, (unsigned)st.boot_id,
+             st.cold_boot ? "(hideg indulas)" : "(timer-wake)");
+    run_powerup_service_window(&st);
     ESP_LOGI(TAG, "SLEEP_FLOOR profil: HX711 power-down + minimal deep sleep %d s.", NODE_WAKE_PERIOD_SEC);
     hx711_init();
     hx711_power_down();
     node_enter_deep_sleep_minimal(NODE_WAKE_PERIOD_SEC);
 #else
-    nvs_init();
-
     node_wake_state_t st;
     node_sleep_begin_cycle(&st);
-    ESP_LOGI(TAG, "=== bee_scale NODE === id=%d cycle=%u boot=0x%08X %s",
-             NODE_ID, (unsigned)st.cycle, (unsigned)st.boot_id,
+    ESP_LOGI(TAG, "=== bee_scale NODE === mode=%s id=%d ch=%u sleep=%d cycle=%u boot=0x%08X %s",
+             NODE_TEST_MODE ? "TEST" : "PROD",
+             NODE_ID, (unsigned)NODE_WIFI_CHANNEL, NODE_WAKE_PERIOD_SEC,
+             (unsigned)st.cycle, (unsigned)st.boot_id,
              st.cold_boot ? "(hideg indulas)" : "(timer-wake)");
+    run_powerup_service_window(&st);
+
+    nvs_init();
+    ESP_ERROR_CHECK(node_buffer_init());
 
     /* Szenzorok GPIO/perifériák init — a driver-modulok maguk konfigolnak. */
     hx711_init();

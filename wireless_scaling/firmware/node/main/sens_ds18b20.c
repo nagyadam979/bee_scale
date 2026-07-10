@@ -133,20 +133,27 @@ void ds18b20_init(void)
              DS18B20_GPIO, ow_reset() ? "igen" : "nincs");
 }
 
-float ds18b20_read_temp(void)
+bool ds18b20_start_conversion(void)
 {
 #if !DS18B20_ENABLED
-    return NAN;
+    return false;
 #endif
 
     if (!ow_reset()) {
         ESP_LOGW(TAG, "DS18B20 nincs jelen a buszon");
-        return NAN;
+        return false;
     }
 
     ow_write_byte(0xCC);   /* Skip ROM: egy szenzor a node-on. */
     ow_write_byte(0x44);   /* Convert T. */
-    vTaskDelay(pdMS_TO_TICKS(750));
+    return true;
+}
+
+float ds18b20_read_temp_after_conversion(void)
+{
+#if !DS18B20_ENABLED
+    return NAN;
+#endif
 
     if (!ow_reset()) {
         ESP_LOGW(TAG, "DS18B20 eltunt konverzio utan");
@@ -169,4 +176,13 @@ float ds18b20_read_temp(void)
 
     int16_t raw = (int16_t)((uint16_t)sp[0] | ((uint16_t)sp[1] << 8));
     return (float)raw / 16.0f;
+}
+
+float ds18b20_read_temp(void)
+{
+    if (!ds18b20_start_conversion()) {
+        return NAN;
+    }
+    vTaskDelay(pdMS_TO_TICKS(DS18B20_CONVERSION_MS));
+    return ds18b20_read_temp_after_conversion();
 }

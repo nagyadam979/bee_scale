@@ -45,6 +45,7 @@ static void prepare_peripheral_gpios_for_sleep(void)
      * Ezért nem piszkáljuk tömegesen az összes lábat: csak a külső fogyasztót vezérlő
      * kimeneteket tesszük determinisztikus állapotba.
      */
+#if VBAT_MEASURE_ENABLED
     gpio_config_t vbat_cfg = {
         .pin_bit_mask = (1ULL << VBAT_SW_GPIO),
         .mode = GPIO_MODE_OUTPUT,
@@ -57,6 +58,8 @@ static void prepare_peripheral_gpios_for_sleep(void)
     ESP_ERROR_CHECK(gpio_set_level(VBAT_SW_GPIO, 1));   /* NPN ON -> GPIO0 = VBAT/2, nincs ADC túlfesz */
 #else
     ESP_ERROR_CHECK(gpio_set_level(VBAT_SW_GPIO, 0));   /* NPN OFF -> osztó le, de GPIO0 VBAT-ra úszhat */
+#endif
+    gpio_hold_en(VBAT_SW_GPIO);
 #endif
 
     /* A LED lábat nem holdoljuk: boardfüggő polaritás/kötés miatt a tartott szint mA-t vihet. */
@@ -92,7 +95,6 @@ static void prepare_peripheral_gpios_for_sleep(void)
     ESP_ERROR_CHECK(gpio_config(&onewire_cfg));
 #endif
 
-    gpio_hold_en(VBAT_SW_GPIO);
     gpio_deep_sleep_hold_en();
 }
 
