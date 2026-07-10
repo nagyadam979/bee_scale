@@ -431,7 +431,10 @@ Kulcs logok, amelyeket a kovetkezo agent keressen:
 
 ## Nyitott, nem blokkolt tovabbfejlesztesek
 
-- Explicit DS18B20 ROM -> `hive_c`/`scale_c` mapping.
+- ~~Explicit DS18B20 ROM -> `hive_c`/`scale_c` mapping~~ — az infrastruktura KESZ
+  (`DS18B20_ROM_HIVE`/`DS18B20_ROM_SCALE` define vagy `-D` build flag, ures = regi
+  index-sorrend fallback). Elesiteskor a logolt ROM kodokat kell beirni; a boot log
+  `DS<n> ROM=... role=...` formaban mutatja az aktualis hozzarendelest.
 - Kovetkezo wire protokollverzioban 64 bites epoch es a legacy mezonevek tisztazasa.
 - A test terv 512 rekordos full-queue dontese: jelenleg fail-closed, az uj minta nem irhato; ezt
   csak termekkocel alapjan szabad drop-oldestre valtoztatni.

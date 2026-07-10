@@ -114,6 +114,16 @@
 #define HX711_READY_TIMEOUT_MS         700
 #define DS18B20_MAX_SENSORS            4
 #define DS18B20_EXPECTED_COUNT         2
+/* Explicit ROM -> szerep mapping. Élesítéskor a "DS<n> ROM=..." logból azonosított
+ * 16 NAGYBETŰS hex karakter kerüljön ide (vagy -D build flaggel felülírható).
+ * Üres string = fallback a rendezett ROM-sorrendre (index 0 -> hive_c,
+ * index 1 -> scale_c) — szondacserénél a szerepek felcserélődhetnek! */
+#ifndef DS18B20_ROM_HIVE
+#define DS18B20_ROM_HIVE               ""
+#endif
+#ifndef DS18B20_ROM_SCALE
+#define DS18B20_ROM_SCALE              ""
+#endif
 
 #define RAIN_SAMPLE_PERIOD_MS          10
 #define RAIN_DEBOUNCE_MS               20
@@ -1122,14 +1132,46 @@ static int ds18b20_search(ds18b20_sensor_t *out, int max_count)
     return found;
 }
 
+static void ds18b20_apply_role_mapping(void)
+{
+    static const char *const role_rom[DS18B20_EXPECTED_COUNT] = {
+        DS18B20_ROM_HIVE,  /* index 0 -> hive_c */
+        DS18B20_ROM_SCALE, /* index 1 -> scale_c */
+    };
+    for (int r = 0; r < DS18B20_EXPECTED_COUNT && r < s_ds18b20_count; r++) {
+        if (role_rom[r][0] == '\0') continue;
+        int found = -1;
+        for (int i = 0; i < s_ds18b20_count; i++) {
+            char hex[17];
+            rom_to_hex(s_ds18b20[i].rom, hex);
+            if (strcmp(hex, role_rom[r]) == 0) {
+                found = i;
+                break;
+            }
+        }
+        if (found < 0) {
+            ESP_LOGW(TAG, "DS18B20 role=%d ROM=%s nincs a buszon; index-sorrend fallback",
+                     r, role_rom[r]);
+            continue;
+        }
+        if (found != r) {
+            ds18b20_sensor_t tmp = s_ds18b20[r];
+            s_ds18b20[r] = s_ds18b20[found];
+            s_ds18b20[found] = tmp;
+        }
+    }
+}
+
 static void ds18b20_refresh_search(void)
 {
     s_ds18b20_count = ds18b20_search(s_ds18b20, DS18B20_MAX_SENSORS);
+    ds18b20_apply_role_mapping();
     ESP_LOGI(TAG, "DS18B20 found=%d expected=%d", s_ds18b20_count, DS18B20_EXPECTED_COUNT);
     for (int i = 0; i < s_ds18b20_count; i++) {
         char rom[17];
         rom_to_hex(s_ds18b20[i].rom, rom);
-        ESP_LOGI(TAG, "DS%d ROM=%s", i, rom);
+        ESP_LOGI(TAG, "DS%d ROM=%s role=%s", i, rom,
+                 i == 0 ? "hive_c" : (i == 1 ? "scale_c" : "extra"));
     }
 }
 
