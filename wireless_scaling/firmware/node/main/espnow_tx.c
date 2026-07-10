@@ -15,7 +15,6 @@
 #include "esp_event.h"
 #include "esp_mac.h"
 #include "esp_random.h"
-#include "esp_timer.h"
 #include "esp_idf_version.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -254,7 +253,6 @@ bool espnow_tx_send_with_ack(const sz2_payload_t *p, espnow_tx_ack_result_t *res
 
         sz2_payload_t tx = *p;
         tx.packet_idx = attempt;
-        tx.send_timestamp_ms = (uint32_t)(esp_timer_get_time() / 1000);
         tx.crc = sz2_payload_crc(&tx);
 
         s_ack_wait_node = tx.node_id;
@@ -262,8 +260,10 @@ bool espnow_tx_send_with_ack(const sz2_payload_t *p, espnow_tx_ack_result_t *res
         drain_sem(s_ack_sem);
 
         uint32_t fail_before = s_tx_status_fail;
+        uint32_t ack_timeout_ms = attempt == 1U ? NODE_DATA_FIRST_ACK_TIMEOUT_MS
+                                               : NODE_ACK_TIMEOUT_MS;
         bool sent = send_bytes_serialized(dest, &tx, sizeof(tx));
-        if (sent && xSemaphoreTake(s_ack_sem, pdMS_TO_TICKS(NODE_ACK_TIMEOUT_MS)) == pdTRUE) {
+        if (sent && xSemaphoreTake(s_ack_sem, pdMS_TO_TICKS(ack_timeout_ms)) == pdTRUE) {
             learn_master_mac(s_ack_src);
             if (result) {
                 result->ack_last_seq = s_ack.ack_last_seq;
@@ -275,8 +275,9 @@ bool espnow_tx_send_with_ack(const sz2_payload_t *p, espnow_tx_ack_result_t *res
                 result->attempts = attempt;
                 result->dest_mode = dest_mode;
             }
-            ESP_LOGI(TAG, "ACK OK node=%u seq=%u attempt=%u dest=%c clear_until=%u next_slot_s=%u txfail_delta=%u",
+            ESP_LOGI(TAG, "ACK OK node=%u seq=%u attempt=%u dest=%c wait_ms=%u clear_until=%u next_slot_s=%u txfail_delta=%u",
                      tx.node_id, (unsigned)tx.seq, (unsigned)attempt, dest_mode,
+                     (unsigned)ack_timeout_ms,
                      (unsigned)s_ack.clear_buffer_until_seq,
                      (unsigned)s_ack.next_slot_offset_s,
                      (unsigned)(s_tx_status_fail - fail_before));
@@ -289,8 +290,9 @@ bool espnow_tx_send_with_ack(const sz2_payload_t *p, espnow_tx_ack_result_t *res
         }
     }
 
-    ESP_LOGW(TAG, "ACK FAIL node=%u seq=%u attempts=%u tx_status_fail=%u",
+    ESP_LOGW(TAG, "ACK FAIL node=%u seq=%u attempts=%u first_wait_ms=%u retry_wait_ms=%u tx_status_fail=%u",
              p->node_id, (unsigned)p->seq, (unsigned)NODE_ACK_MAX_ATTEMPTS,
+             (unsigned)NODE_DATA_FIRST_ACK_TIMEOUT_MS, (unsigned)NODE_ACK_TIMEOUT_MS,
              (unsigned)s_tx_status_fail);
     return false;
 }

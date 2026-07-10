@@ -60,7 +60,8 @@ extern "C" {
  *   - packet_idx /
  *     total_packets    : futás-index / futás-hossz (a node-ban: packet_idx == seq, a
  *                        total_packets a diagnosztika/BENCH-futás jelölésére szabad).
- *   - send_timestamp_ms: a node ms-órája küldéskor (átviteli idő / sorrend diagnosztika).
+ *   - send_timestamp_ms: legacy wire-név; a mérés Unix epoch ideje másodpercben, 0 ha a node
+ *                        még nem kapott érvényes master-időt. A név/layout kompatibilitásból marad.
  *   - crc              : CRC16-CCITT az ELŐZŐ byte-okon. MINDIG az utolsó mező.
  */
 typedef struct __attribute__((packed)) {
@@ -72,7 +73,7 @@ typedef struct __attribute__((packed)) {
     uint32_t seq;               /* szekvencia — hianyzo/dup csomag detektalas           */
     uint32_t packet_idx;        /* futason beluli index (node: == seq)                  */
     uint32_t total_packets;     /* futas-hossz / diagnosztika (node: szabad)            */
-    uint32_t send_timestamp_ms; /* node ms-ora kuldeskor                                */
+    uint32_t send_timestamp_ms; /* legacy nev: sample Unix epoch masodperc; 0=ismeretlen */
     float    weight;            /* docs: nyers/kalibralt terheles; NAN = HX711 hiba     */
     float    temp;              /* docs: homerseklet; NAN = nincs/hibas DS18B20         */
     uint16_t vbat;              /* docs: elemfeszultseg mV-ban; 0 = nincs/tiltott VBAT  */
@@ -89,7 +90,7 @@ typedef struct __attribute__((packed)) {
     uint8_t  node_id;                 /* melyik node-nak szol                           */
     uint32_t ack_last_seq;            /* az utolso hibatlanul vett seq                  */
     uint32_t clear_buffer_until_seq;  /* a node eddig torolheti a buffert               */
-    int32_t  clock_correction_s;      /* ora-korrekcio masodpercben (elojeles)          */
+    int32_t  clock_correction_s;      /* legacy nev: master aktualis Unix epoch; 0=nem ismert */
     uint32_t next_slot_offset_s;      /* a kovetkezo ebredesi slot eltolasa             */
     uint8_t  retry_policy;            /* retransmit-stategia (Sz3 donti el)             */
 } sz2_ack_t;

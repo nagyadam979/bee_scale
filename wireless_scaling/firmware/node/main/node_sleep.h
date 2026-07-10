@@ -1,11 +1,10 @@
 /*
- * node_sleep.h — deep-sleep ciklus + RTC-megőrzött állapot (cycle / boot_id)
+ * node_sleep.h — deep-sleep ciklus + RTC-megőrzött állapot
  * bee_scale / wireless_scaling · 2. fázis · firmware/node
  *
  * A C3-on a deep sleep = teljes reboot (app_main újraindul), de az RTC_DATA_ATTR memória
- * túléli a timer-wakeöt. Ez a modul kezeli az abszolút ébredés-számlálót (cycle -> seq) és a
- * bootonkénti boot_id-t (reset-detektálás a masteren), valamint a fogyasztásbarát alvásba lépést
- * (log flush + USB-Serial-JTAG pad lekapcsolás + timer-wakeup). [M1 node-minta, éles-mérve.]
+ * túléli a timer-wakeöt. Ez a modul kezeli az ébredés-számlálót, a boot_id-t, a mastertől
+ * szinkronizált epoch-becslést és a fogyasztásbarát alvásba lépést.
  */
 #ifndef NODE_SLEEP_H
 #define NODE_SLEEP_H
@@ -25,6 +24,16 @@ typedef struct {
  * hideg indulás (cycle=0, új boot_id). Kitölti az *st-t.
  */
 void node_sleep_begin_cycle(node_wake_state_t *st);
+
+/*
+ * Az aktuális idő becsült Unix epoch másodperce. A becslés a legutóbbi master ACK epochjából,
+ * az aktív időből és timer-wake esetén az előzőleg kért deep-sleep időből készül. Ha a node ezen
+ * a bootláncon még nem kapott érvényes master időt, 0.
+ */
+uint32_t node_sleep_estimated_epoch_s(void);
+
+/* Master ACK-ból érkező aktuális Unix epoch rögzítése. Hamis, ha az érték nem érvényes epoch. */
+bool node_sleep_sync_epoch(uint32_t epoch_s);
 
 /*
  * Fogyasztásbarát deep sleepbe lép `seconds` másodpercre: log flush -> USB-JTAG pad off ->

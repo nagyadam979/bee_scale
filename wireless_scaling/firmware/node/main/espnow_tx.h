@@ -29,7 +29,7 @@ typedef struct {
 /* WiFi (STA) + ESP-NOW inicializálás a PHY-fixszel, broadcast peer felvétele. NVS-t feltételez. */
 void espnow_tx_init(void);
 
-/* A node saját STA MAC-je (a payload node_mac mezőjéhez). init UTÁN hívható. */
+/* A node saját STA MAC-je (a payload node_mac mezőjéhez); WiFi init előtt is hívható. */
 void espnow_tx_get_mac(uint8_t mac_out[6]);
 
 /* A payload elküldése broadcastként `repeat`-szer back-to-back (send-cb-re szerializálva). */

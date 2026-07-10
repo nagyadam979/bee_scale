@@ -64,7 +64,9 @@
 
 /* FIELD megbízható átadás: Sz6 alapján app-ACK, jitter és oldest-first drain. */
 #define NODE_ACK_MAX_ATTEMPTS        5
-#define NODE_ACK_TIMEOUT_MS          120
+/* Az elso DATA ACK a master tartos flash-menteset is megvarja; retry/HELLO mar gyors lehet. */
+#define NODE_DATA_FIRST_ACK_TIMEOUT_MS 2000
+#define NODE_ACK_TIMEOUT_MS            120
 #define NODE_UNICAST_ATTEMPTS        2
 #define NODE_RETRY_JITTER_MIN_MS     20
 #define NODE_RETRY_JITTER_MAX_MS     120
@@ -129,8 +131,9 @@
  * Foglalt: GPIO4(SCK), GPIO3(DT), GPIO2 strapping -> vbat ADC = GPIO0 (ADC1_CH0), fizikailag
  * elérhető. A NPN-kapcsoló (digitális) az elérhető 5..10 oldalon (GPIO10).
  *
- * 2026-07-09: a low-side kapcsolt osztó GPIO0-ról le lett kötve, mert OFF állapotban a
- * mérőcsomópont VBAT-ra úszott. A VBAT mérés ezért firmware-ből tiltva van. */
+ * 2026-07-09: csak a node1 low-side kapcsolt osztója lett lekötve a GPIO0-ról, ezért a node1
+ * env NODE_VBAT_ENABLED=0. A node2/node3 osztója működik és az env-ekben engedélyezett.
+ * Az itt maradó 0 az ismeretlen/egyedi env-ek biztonságos alapértéke. */
 #ifndef NODE_VBAT_ENABLED
 #define NODE_VBAT_ENABLED    0
 #endif

@@ -121,7 +121,6 @@
 #define RAIN_MM_PER_TIP                0.2794f
 
 #define MASTER_RX_QUEUE_LEN            64
-#define MASTER_CLOUD_QUEUE_LEN         64
 #define MASTER_MAX_NODES               16
 #define MASTER_SEND_TIMEOUT_MS         50
 #define MASTER_NO_MEM_RETRY_MS         2
@@ -148,7 +147,11 @@
 
 #define BACKUP_SLOT_SIZE               256
 #define BACKUP_SECTOR_SIZE             4096
-#define BACKUP_MAGIC                   0x42534D31UL
+#define BACKUP_MAGIC_V1                0x42534D31UL
+#define BACKUP_MAGIC_V2                0x42534D32UL
+#define BACKUP_FORMAT_VERSION          2U
+#define BACKUP_INDEX_MAGIC             0x42495832UL
+#define BACKUP_INDEX_VERSION           2U
 
 #define REC_TYPE_NODE                  1
 #define REC_TYPE_MASTER                2
@@ -211,13 +214,86 @@ typedef struct __attribute__((packed)) {
 } master_record_t;
 
 typedef struct __attribute__((packed)) {
+    uint8_t type;
+    uint8_t unit_id;
+    uint8_t valid_mask;
+    int8_t rssi;
+    uint8_t src_mac[6];
+    uint32_t seq;
+    uint32_t boot_id;
+    uint32_t rx_ms;
+    uint32_t ts;
+    uint32_t vbat_mv;
+    uint32_t gap;
+    uint32_t rain_tips_total;
+    uint32_t rain_tips_delta;
+    int32_t weight_raw;
+    int32_t hx711_raw;
+    float temp_c;
+    float ds0_hive_c;
+    float ds1_scale_c;
+    float aht20_t_c;
+    float aht20_rh;
+    float bmp280_t_c;
+    float bmp280_pa;
+    float rain_mm_total;
+} master_record_v1_t;
+
+typedef struct __attribute__((packed)) {
     uint32_t magic;
     uint32_t write_seq;
     uint32_t crc32;
-    uint32_t reserved;
+    uint32_t format_version;
     master_record_t rec;
     uint8_t pad[BACKUP_SLOT_SIZE - 16 - sizeof(master_record_t)];
 } backup_slot_t;
+
+typedef struct __attribute__((packed)) {
+    uint32_t magic;
+    uint32_t write_seq;
+    uint32_t crc32;
+    uint32_t format_version;
+    uint8_t payload[BACKUP_SLOT_SIZE - 16];
+} backup_raw_slot_t;
+
+typedef struct __attribute__((packed)) {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t head;
+    uint32_t tail;
+    uint32_t write_seq;
+    uint32_t master_seq;
+    uint32_t rain_reported;
+    uint32_t crc32;
+} backup_index_t;
+
+typedef struct __attribute__((packed)) {
+    uint32_t head;
+    uint32_t tail;
+    uint32_t write_seq;
+    uint32_t crc32;
+} backup_index_legacy_t;
+
+typedef enum {
+    CLOUD_RESULT_OK,
+    CLOUD_RESULT_SKIP,
+    CLOUD_RESULT_RETRY,
+} cloud_result_t;
+
+typedef enum {
+    RECORD_STORE_DURABLE,
+    RECORD_STORE_SKIPPED,
+    RECORD_STORE_FAILED,
+} record_store_result_t;
+
+_Static_assert(sizeof(master_record_t) == sizeof(master_record_v1_t) + sizeof(float),
+               "master_record V1 migration layout changed");
+_Static_assert(sizeof(master_record_v1_t) == 82, "unexpected pre-d99 record size");
+_Static_assert(sizeof(master_record_t) == 86, "unexpected current record size");
+_Static_assert(sizeof(backup_slot_t) == BACKUP_SLOT_SIZE, "backup slot size changed");
+_Static_assert(sizeof(backup_raw_slot_t) == BACKUP_SLOT_SIZE, "raw backup slot size changed");
+_Static_assert(sizeof(backup_index_t) == 32, "backup index size changed");
+_Static_assert(sizeof(backup_index_legacy_t) == 16, "legacy backup index size changed");
 
 typedef struct {
     sz2_payload_t payload;
@@ -232,6 +308,7 @@ typedef struct {
     uint8_t node_id;
     uint8_t mac[6];
     uint32_t boot_id;
+    bool have_boot_id;
     bool have_seq;
     uint32_t last_seq;
     uint32_t rx_valid;
@@ -250,7 +327,6 @@ typedef struct {
 } node_state_t;
 
 static QueueHandle_t s_rx_queue;
-static QueueHandle_t s_cloud_queue;
 static SemaphoreHandle_t s_tx_done;
 static SemaphoreHandle_t s_rain_mutex;
 static SemaphoreHandle_t s_backup_mutex;
@@ -284,10 +360,12 @@ static volatile uint32_t s_diag_ver_bad;
 static volatile uint32_t s_ack_status_fail;
 static volatile uint32_t s_cloud_ok;
 static volatile uint32_t s_cloud_fail;
+static volatile uint32_t s_cloud_skip;
 static volatile uint32_t s_cloud_drop;
 static volatile uint32_t s_backup_enqueued;
 static volatile uint32_t s_backup_uploaded;
 static volatile uint32_t s_backup_bad;
+static volatile uint32_t s_backup_full;
 
 #if MASTER_CLOUD_MODE
 static volatile bool s_wifi_assoc;
@@ -326,6 +404,11 @@ static uint32_t millis_u32(void)
     return (uint32_t)(esp_timer_get_time() / 1000);
 }
 
+static int64_t millis_i64(void)
+{
+    return esp_timer_get_time() / 1000;
+}
+
 static void nvs_init_all(void)
 {
     esp_err_t err = nvs_flash_init();
@@ -340,28 +423,87 @@ static void nvs_init_all(void)
     ESP_ERROR_CHECK(nvs_open("rain", NVS_READWRITE, &s_rain_nvs));
     ESP_ERROR_CHECK(nvs_open("backup", NVS_READWRITE, &s_backup_nvs));
 
-    if (nvs_get_u32(s_master_nvs, "seq", &s_master_seq) == ESP_ERR_NVS_NOT_FOUND) {
+    err = nvs_get_u32(s_master_nvs, "seq", &s_master_seq);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
         s_master_seq = 0;
+    } else {
+        ESP_ERROR_CHECK(err);
     }
-    if (nvs_get_u32(s_rain_nvs, "tips", &s_rain_tip_count) == ESP_ERR_NVS_NOT_FOUND) {
+    err = nvs_get_u32(s_rain_nvs, "tips", &s_rain_tip_count);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
         s_rain_tip_count = 0;
+    } else {
+        ESP_ERROR_CHECK(err);
     }
-    s_rain_last_reported = s_rain_tip_count;
+    err = nvs_get_u32(s_rain_nvs, "reported", &s_rain_last_reported);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        s_rain_last_reported = s_rain_tip_count;
+        ESP_ERROR_CHECK(nvs_set_u32(s_rain_nvs, "reported", s_rain_last_reported));
+        ESP_ERROR_CHECK(nvs_commit(s_rain_nvs));
+    } else {
+        ESP_ERROR_CHECK(err);
+        if (s_rain_last_reported > s_rain_tip_count) {
+            ESP_LOGW(TAG, "rain cursor ahead of counter; restoring tips reported=%u tips=%u",
+                     (unsigned)s_rain_last_reported, (unsigned)s_rain_tip_count);
+            s_rain_tip_count = s_rain_last_reported;
+            ESP_ERROR_CHECK(nvs_set_u32(s_rain_nvs, "tips", s_rain_tip_count));
+            ESP_ERROR_CHECK(nvs_commit(s_rain_nvs));
+        }
+    }
 }
 
-static void rain_store_count(void)
+static bool rain_store_count(void)
 {
-    if (nvs_set_u32(s_rain_nvs, "tips", s_rain_tip_count) == ESP_OK) {
-        nvs_commit(s_rain_nvs);
+    esp_err_t err = nvs_set_u32(s_rain_nvs, "tips", s_rain_tip_count);
+    if (err == ESP_OK) err = nvs_commit(s_rain_nvs);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "rain tip persist failed: %s", esp_err_to_name(err));
+        return false;
     }
+    return true;
 }
 
-static void backup_store_index(void)
+static void rain_apply_durable_cursor(uint32_t reported)
 {
-    nvs_set_u32(s_backup_nvs, "head", s_backup_head);
-    nvs_set_u32(s_backup_nvs, "tail", s_backup_tail);
-    nvs_set_u32(s_backup_nvs, "wseq", s_backup_write_seq);
-    nvs_commit(s_backup_nvs);
+    xSemaphoreTake(s_rain_mutex, portMAX_DELAY);
+    if (reported > s_rain_tip_count) {
+        s_rain_tip_count = reported;
+        (void)rain_store_count();
+    }
+    s_rain_last_reported = reported;
+    xSemaphoreGive(s_rain_mutex);
+}
+
+static uint32_t __attribute__((unused)) rain_get_durable_cursor(void)
+{
+    xSemaphoreTake(s_rain_mutex, portMAX_DELAY);
+    uint32_t reported = s_rain_last_reported;
+    xSemaphoreGive(s_rain_mutex);
+    return reported;
+}
+
+static bool backup_store_index_values(uint32_t head, uint32_t tail, uint32_t write_seq,
+                                      uint32_t master_seq, uint32_t rain_reported)
+{
+    backup_index_t index = {
+        .magic = BACKUP_INDEX_MAGIC,
+        .version = BACKUP_INDEX_VERSION,
+        .head = head,
+        .tail = tail,
+        .write_seq = write_seq,
+        .master_seq = master_seq,
+        .rain_reported = rain_reported,
+        .crc32 = 0,
+    };
+    index.crc32 = crc32_update(0, (const uint8_t *)&index,
+                               sizeof(index) - sizeof(index.crc32));
+    esp_err_t err = nvs_set_blob(s_backup_nvs, "state2", &index, sizeof(index));
+    if (err == ESP_OK) err = nvs_commit(s_backup_nvs);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "backup index persist failed: %s", esp_err_to_name(err));
+        return false;
+    }
+    return true;
 }
 
 static uint32_t backup_count_unlocked(void)
@@ -370,6 +512,14 @@ static uint32_t backup_count_unlocked(void)
         return s_backup_head - s_backup_tail;
     }
     return s_backup_slot_count - s_backup_tail + s_backup_head;
+}
+
+static uint32_t master_next_seq(void)
+{
+    xSemaphoreTake(s_backup_mutex, portMAX_DELAY);
+    uint32_t seq = s_master_seq + 1;
+    xSemaphoreGive(s_backup_mutex);
+    return seq;
 }
 
 static void backup_init(void)
@@ -381,71 +531,275 @@ static void backup_init(void)
     }
     s_backup_slot_count = s_backup_part->size / BACKUP_SLOT_SIZE;
 
-    if (nvs_get_u32(s_backup_nvs, "head", &s_backup_head) == ESP_ERR_NVS_NOT_FOUND) {
+    backup_index_t index = {0};
+    size_t index_len = sizeof(index);
+    esp_err_t err = nvs_get_blob(s_backup_nvs, "state2", &index, &index_len);
+    bool valid_index = err == ESP_OK && index_len == sizeof(index) &&
+                       index.magic == BACKUP_INDEX_MAGIC &&
+                       index.version == BACKUP_INDEX_VERSION &&
+                       index.crc32 == crc32_update(0, (const uint8_t *)&index,
+                                                  sizeof(index) - sizeof(index.crc32));
+    bool migrate_index = false;
+    if (valid_index) {
+        s_backup_head = index.head;
+        s_backup_tail = index.tail;
+        s_backup_write_seq = index.write_seq;
+        s_master_seq = index.master_seq;
+        s_rain_last_reported = index.rain_reported;
+    } else if (err == ESP_OK && index_len == sizeof(backup_index_legacy_t)) {
+        const backup_index_legacy_t *legacy = (const backup_index_legacy_t *)&index;
+        valid_index = legacy->crc32 ==
+                      crc32_update(0, (const uint8_t *)legacy,
+                                   sizeof(*legacy) - sizeof(legacy->crc32));
+        if (valid_index) {
+            s_backup_head = legacy->head;
+            s_backup_tail = legacy->tail;
+            s_backup_write_seq = legacy->write_seq;
+            migrate_index = true;
+        }
+    } else if (err == ESP_ERR_NVS_NOT_FOUND) {
+        esp_err_t head_err = nvs_get_u32(s_backup_nvs, "head", &s_backup_head);
+        esp_err_t tail_err = nvs_get_u32(s_backup_nvs, "tail", &s_backup_tail);
+        esp_err_t seq_err = nvs_get_u32(s_backup_nvs, "wseq", &s_backup_write_seq);
+        if (head_err == ESP_ERR_NVS_NOT_FOUND) s_backup_head = 0;
+        else if (head_err != ESP_OK) valid_index = false;
+        if (tail_err == ESP_ERR_NVS_NOT_FOUND) s_backup_tail = 0;
+        else if (tail_err != ESP_OK) valid_index = false;
+        if (seq_err == ESP_ERR_NVS_NOT_FOUND) s_backup_write_seq = 0;
+        else if (seq_err != ESP_OK) valid_index = false;
+        valid_index = head_err == ESP_OK || head_err == ESP_ERR_NVS_NOT_FOUND;
+        valid_index = valid_index && (tail_err == ESP_OK || tail_err == ESP_ERR_NVS_NOT_FOUND);
+        valid_index = valid_index && (seq_err == ESP_OK || seq_err == ESP_ERR_NVS_NOT_FOUND);
+        migrate_index = valid_index;
+    }
+    if (!valid_index || s_backup_head >= s_backup_slot_count ||
+        s_backup_tail >= s_backup_slot_count) {
+        ESP_LOGE(TAG, "backup index invalid; durable backlog disabled");
+        s_backup_part = NULL;
+        s_backup_slot_count = 0;
         s_backup_head = 0;
-    }
-    if (nvs_get_u32(s_backup_nvs, "tail", &s_backup_tail) == ESP_ERR_NVS_NOT_FOUND) {
         s_backup_tail = 0;
+        return;
     }
-    if (nvs_get_u32(s_backup_nvs, "wseq", &s_backup_write_seq) == ESP_ERR_NVS_NOT_FOUND) {
-        s_backup_write_seq = 0;
+    if (migrate_index &&
+        !backup_store_index_values(s_backup_head, s_backup_tail, s_backup_write_seq,
+                                   s_master_seq, s_rain_last_reported)) {
+        ESP_LOGE(TAG, "backup index migration failed; durable backlog disabled");
+        s_backup_part = NULL;
+        s_backup_slot_count = 0;
+        return;
     }
-    if (s_backup_head >= s_backup_slot_count || s_backup_tail >= s_backup_slot_count) {
-        s_backup_head = 0;
-        s_backup_tail = 0;
-        s_backup_write_seq = 0;
-        backup_store_index();
-    }
+    rain_apply_durable_cursor(s_rain_last_reported);
     ESP_LOGI(TAG, "backup partition size=%u slots=%u pending=%u",
              (unsigned)s_backup_part->size, (unsigned)s_backup_slot_count,
              (unsigned)backup_count_unlocked());
 }
 
 #if MASTER_CLOUD_MODE
-static bool backup_enqueue(const master_record_t *rec)
+static bool backup_slot_decode(const backup_raw_slot_t *slot, master_record_t *rec,
+                               bool log_migration)
+{
+    if (slot->magic == BACKUP_MAGIC_V2 &&
+        slot->format_version == BACKUP_FORMAT_VERSION &&
+        slot->crc32 == crc32_update(0, slot->payload, sizeof(master_record_t))) {
+        memcpy(rec, slot->payload, sizeof(*rec));
+        return true;
+    }
+    if (slot->magic != BACKUP_MAGIC_V1) return false;
+    if (slot->crc32 == crc32_update(0, slot->payload, sizeof(master_record_t))) {
+        memcpy(rec, slot->payload, sizeof(*rec));
+        return true;
+    }
+    if (slot->crc32 == crc32_update(0, slot->payload, sizeof(master_record_v1_t))) {
+        memset(rec, 0, sizeof(*rec));
+        memcpy(rec, slot->payload, sizeof(master_record_v1_t));
+        rec->rain_mm_delta = (float)rec->rain_tips_delta * RAIN_MM_PER_TIP;
+        if (log_migration) {
+            ESP_LOGI(TAG, "backup V1 record migrated write_seq=%u",
+                     (unsigned)slot->write_seq);
+        }
+        return true;
+    }
+    return false;
+}
+
+static bool backup_slot_erased(const backup_raw_slot_t *slot)
+{
+    const uint8_t *bytes = (const uint8_t *)slot;
+    for (size_t i = 0; i < sizeof(*slot); i++) {
+        if (bytes[i] != 0xFF) return false;
+    }
+    return true;
+}
+
+static bool backup_prepare_head_unlocked(const master_record_t *incoming,
+                                         bool *incoming_already_durable)
+{
+    *incoming_already_durable = false;
+    const uint32_t slots_per_sector = BACKUP_SECTOR_SIZE / BACKUP_SLOT_SIZE;
+    for (;;) {
+        uint32_t next = (s_backup_head + 1) % s_backup_slot_count;
+        if (next == s_backup_tail) {
+            s_backup_full++;
+            ESP_LOGE(TAG, "backup ring full; refusing type=%u unit=%u seq=%u",
+                     incoming->type, incoming->unit_id, (unsigned)incoming->seq);
+            return false;
+        }
+
+        backup_raw_slot_t existing;
+        esp_err_t err = esp_partition_read(s_backup_part,
+                                           s_backup_head * BACKUP_SLOT_SIZE,
+                                           &existing, sizeof(existing));
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "backup head read failed: %s", esp_err_to_name(err));
+            return false;
+        }
+        if (backup_slot_erased(&existing)) {
+            if ((s_backup_head % slots_per_sector) == 0) {
+                uint32_t sector = s_backup_head / slots_per_sector;
+                uint32_t tail_sector = s_backup_tail / slots_per_sector;
+                if (s_backup_tail != s_backup_head && tail_sector == sector) {
+                    s_backup_full++;
+                    ESP_LOGE(TAG, "backup erase boundary reached unread sector; refusing type=%u unit=%u seq=%u",
+                             incoming->type, incoming->unit_id, (unsigned)incoming->seq);
+                    return false;
+                }
+                err = esp_partition_erase_range(s_backup_part,
+                                                sector * BACKUP_SECTOR_SIZE,
+                                                BACKUP_SECTOR_SIZE);
+                if (err != ESP_OK) {
+                    ESP_LOGW(TAG, "backup erase failed: %s", esp_err_to_name(err));
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        master_record_t recovered;
+        bool valid = backup_slot_decode(&existing, &recovered, false);
+        bool recovered_expected = valid && existing.write_seq == s_backup_write_seq + 1;
+        if (!recovered_expected) {
+            if (s_backup_tail != s_backup_head) {
+                ESP_LOGE(TAG, "occupied unexpected backup head=%u while queue pending; refusing write",
+                         (unsigned)s_backup_head);
+                return false;
+            }
+            uint32_t sector = s_backup_head / slots_per_sector;
+            err = esp_partition_erase_range(s_backup_part,
+                                            sector * BACKUP_SECTOR_SIZE,
+                                            BACKUP_SECTOR_SIZE);
+            if (err != ESP_OK) {
+                ESP_LOGW(TAG, "backup damaged-sector erase failed: %s",
+                         esp_err_to_name(err));
+                return false;
+            }
+            ESP_LOGW(TAG, "erased unexpected/partial backup head=%u after queue drained",
+                     (unsigned)s_backup_head);
+            return true;
+        }
+
+        uint32_t recovered_write_seq = s_backup_write_seq;
+        uint32_t recovered_master_seq = s_master_seq;
+        uint32_t recovered_rain_reported = rain_get_durable_cursor();
+        recovered_write_seq = existing.write_seq;
+        ESP_LOGW(TAG, "recovered unindexed backup slot=%u write_seq=%u",
+                 (unsigned)s_backup_head, (unsigned)existing.write_seq);
+        if (recovered.type == REC_TYPE_MASTER) {
+            if (recovered.seq > recovered_master_seq) {
+                recovered_master_seq = recovered.seq;
+            }
+            if (recovered.rain_tips_total > recovered_rain_reported) {
+                recovered_rain_reported = recovered.rain_tips_total;
+            }
+        }
+
+        uint32_t recovered_head = next;
+        bool stored = backup_store_index_values(recovered_head, s_backup_tail,
+                                                recovered_write_seq,
+                                                recovered_master_seq,
+                                                recovered_rain_reported);
+        if (!stored) return false;
+        s_backup_head = recovered_head;
+        s_backup_write_seq = recovered_write_seq;
+        s_master_seq = recovered_master_seq;
+        rain_apply_durable_cursor(recovered_rain_reported);
+        s_backup_enqueued++;
+        if (incoming->type == REC_TYPE_NODE &&
+            recovered.type == incoming->type &&
+            recovered.unit_id == incoming->unit_id && recovered.seq == incoming->seq &&
+            recovered.boot_id == incoming->boot_id) {
+            *incoming_already_durable = true;
+            return true;
+        }
+    }
+}
+
+static bool backup_enqueue(master_record_t *rec)
 {
     if (s_backup_part == NULL || s_backup_slot_count == 0) {
         return false;
     }
     xSemaphoreTake(s_backup_mutex, portMAX_DELAY);
+    bool already_durable = false;
+    if (!backup_prepare_head_unlocked(rec, &already_durable)) {
+        xSemaphoreGive(s_backup_mutex);
+        return false;
+    }
+    if (already_durable) {
+        xSemaphoreGive(s_backup_mutex);
+        return true;
+    }
 
-    const uint32_t slots_per_sector = BACKUP_SECTOR_SIZE / BACKUP_SLOT_SIZE;
+    if (rec->type == REC_TYPE_MASTER) {
+        uint32_t rain_reported = rain_get_durable_cursor();
+        if (rec->rain_tips_total < rain_reported) {
+            rec->rain_tips_total = rain_reported;
+            rec->rain_mm_total = (float)rain_reported * RAIN_MM_PER_TIP;
+        }
+        rec->seq = s_master_seq + 1;
+        rec->rain_tips_delta = rec->rain_tips_total - rain_reported;
+        rec->rain_mm_delta = (float)rec->rain_tips_delta * RAIN_MM_PER_TIP;
+    }
+
     uint32_t next = (s_backup_head + 1) % s_backup_slot_count;
-    if (next == s_backup_tail) {
-        s_backup_tail = (s_backup_tail + 1) % s_backup_slot_count;
-    }
-
-    if ((s_backup_head % slots_per_sector) == 0) {
-        uint32_t sector = s_backup_head / slots_per_sector;
-        uint32_t tail_sector = s_backup_tail / slots_per_sector;
-        if (s_backup_tail != s_backup_head && tail_sector == sector) {
-            s_backup_tail = ((sector + 1) * slots_per_sector) % s_backup_slot_count;
-        }
-        esp_err_t err = esp_partition_erase_range(s_backup_part, sector * BACKUP_SECTOR_SIZE,
-                                                  BACKUP_SECTOR_SIZE);
-        if (err != ESP_OK) {
-            ESP_LOGW(TAG, "backup erase failed: %s", esp_err_to_name(err));
-            xSemaphoreGive(s_backup_mutex);
-            return false;
-        }
-    }
-
     backup_slot_t slot;
     memset(&slot, 0xFF, sizeof(slot));
-    slot.magic = BACKUP_MAGIC;
-    slot.write_seq = ++s_backup_write_seq;
-    slot.reserved = 0;
+    uint32_t next_write_seq = s_backup_write_seq + 1;
+    slot.magic = BACKUP_MAGIC_V2;
+    slot.write_seq = next_write_seq;
+    slot.format_version = BACKUP_FORMAT_VERSION;
     memcpy(&slot.rec, rec, sizeof(slot.rec));
     slot.crc32 = crc32_update(0, (const uint8_t *)&slot.rec, sizeof(slot.rec));
 
     esp_err_t err = esp_partition_write(s_backup_part, s_backup_head * BACKUP_SLOT_SIZE,
                                         &slot, sizeof(slot));
     if (err == ESP_OK) {
-        s_backup_head = next;
-        backup_store_index();
-        s_backup_enqueued++;
+        backup_slot_t verify;
+        err = esp_partition_read(s_backup_part, s_backup_head * BACKUP_SLOT_SIZE,
+                                 &verify, sizeof(verify));
+        if (err == ESP_OK && memcmp(&verify, &slot, sizeof(slot)) != 0) {
+            err = ESP_ERR_INVALID_CRC;
+        }
+    }
+    if (err == ESP_OK) {
+        uint32_t next_master_seq = s_master_seq;
+        uint32_t next_rain_reported = rain_get_durable_cursor();
+        if (rec->type == REC_TYPE_MASTER) {
+            next_master_seq = rec->seq;
+            next_rain_reported = rec->rain_tips_total;
+        }
+        if (backup_store_index_values(next, s_backup_tail, next_write_seq,
+                                      next_master_seq, next_rain_reported)) {
+            s_backup_head = next;
+            s_backup_write_seq = next_write_seq;
+            s_master_seq = next_master_seq;
+            rain_apply_durable_cursor(next_rain_reported);
+            s_backup_enqueued++;
+        } else {
+            err = ESP_FAIL;
+        }
     } else {
-        ESP_LOGW(TAG, "backup write failed: %s", esp_err_to_name(err));
+        ESP_LOGW(TAG, "backup write/readback failed: %s", esp_err_to_name(err));
     }
 
     xSemaphoreGive(s_backup_mutex);
@@ -459,33 +813,42 @@ static bool backup_peek(master_record_t *rec)
     }
     xSemaphoreTake(s_backup_mutex, portMAX_DELAY);
 
-    backup_slot_t slot;
+    backup_raw_slot_t slot;
     esp_err_t err = esp_partition_read(s_backup_part, s_backup_tail * BACKUP_SLOT_SIZE,
                                        &slot, sizeof(slot));
-    if (err != ESP_OK || slot.magic != BACKUP_MAGIC ||
-        slot.crc32 != crc32_update(0, (const uint8_t *)&slot.rec, sizeof(slot.rec))) {
+    bool valid = err == ESP_OK && backup_slot_decode(&slot, rec, true);
+    if (!valid) {
         s_backup_bad++;
-        s_backup_tail = (s_backup_tail + 1) % s_backup_slot_count;
-        backup_store_index();
+        uint32_t next_tail = (s_backup_tail + 1) % s_backup_slot_count;
+        uint32_t rain_reported = rain_get_durable_cursor();
+        if (backup_store_index_values(s_backup_head, next_tail, s_backup_write_seq,
+                                      s_master_seq, rain_reported)) {
+            s_backup_tail = next_tail;
+        }
         xSemaphoreGive(s_backup_mutex);
         return false;
     }
 
-    memcpy(rec, &slot.rec, sizeof(*rec));
     xSemaphoreGive(s_backup_mutex);
     return true;
 }
 
-static void backup_pop(void)
+static bool backup_pop(void)
 {
     if (s_backup_part == NULL || s_backup_head == s_backup_tail) {
-        return;
+        return false;
     }
     xSemaphoreTake(s_backup_mutex, portMAX_DELAY);
-    s_backup_tail = (s_backup_tail + 1) % s_backup_slot_count;
-    backup_store_index();
-    s_backup_uploaded++;
+    uint32_t next_tail = (s_backup_tail + 1) % s_backup_slot_count;
+    uint32_t rain_reported = rain_get_durable_cursor();
+    bool stored = backup_store_index_values(s_backup_head, next_tail, s_backup_write_seq,
+                                            s_master_seq, rain_reported);
+    if (stored) {
+        s_backup_tail = next_tail;
+        s_backup_uploaded++;
+    }
     xSemaphoreGive(s_backup_mutex);
+    return stored;
 }
 #endif
 
@@ -765,12 +1128,23 @@ static bool ds18b20_read_all(float temps[DS18B20_MAX_SENSORS])
         ow_write_byte(0xBE);
         uint8_t sp[9];
         for (int b = 0; b < 9; b++) sp[b] = ow_read_byte();
-        if (crc8_maxim(sp, 8) != sp[8]) {
+        bool all_zero = true;
+        bool all_ff = true;
+        for (int b = 0; b < 9; b++) {
+            all_zero = all_zero && sp[b] == 0x00;
+            all_ff = all_ff && sp[b] == 0xFF;
+        }
+        if (all_zero || all_ff || crc8_maxim(sp, 8) != sp[8]) {
             all_ok = false;
             continue;
         }
         int16_t raw = (int16_t)((uint16_t)sp[0] | ((uint16_t)sp[1] << 8));
-        temps[i] = (float)raw / 16.0f;
+        float temp_c = (float)raw / 16.0f;
+        if (temp_c < -55.0f || temp_c > 125.0f) {
+            all_ok = false;
+            continue;
+        }
+        temps[i] = temp_c;
     }
     return all_ok;
 }
@@ -948,11 +1322,11 @@ static void rain_task(void *arg)
     int raw_level = gpio_get_level(RAIN_GPIO);
     int stable_level = raw_level;
     int candidate_level = raw_level;
-    int64_t candidate_since_ms = millis_u32();
+    int64_t candidate_since_ms = millis_i64();
     int64_t last_tip_ms = -RAIN_LOCKOUT_MS;
 
     for (;;) {
-        int64_t ms = millis_u32();
+        int64_t ms = millis_i64();
         raw_level = gpio_get_level(RAIN_GPIO);
         if (raw_level != candidate_level) {
             candidate_level = raw_level;
@@ -964,7 +1338,7 @@ static void rain_task(void *arg)
             if (old_stable == 1 && stable_level == 0 && (ms - last_tip_ms) >= RAIN_LOCKOUT_MS) {
                 xSemaphoreTake(s_rain_mutex, portMAX_DELAY);
                 s_rain_tip_count++;
-                rain_store_count();
+                (void)rain_store_count();
                 uint32_t tips = s_rain_tip_count;
                 xSemaphoreGive(s_rain_mutex);
                 last_tip_ms = ms;
@@ -981,7 +1355,6 @@ static void rain_snapshot(uint32_t *total, uint32_t *delta, float *mm_total)
     xSemaphoreTake(s_rain_mutex, portMAX_DELAY);
     *total = s_rain_tip_count;
     *delta = s_rain_tip_count - s_rain_last_reported;
-    s_rain_last_reported = s_rain_tip_count;
     *mm_total = (float)s_rain_tip_count * RAIN_MM_PER_TIP;
     xSemaphoreGive(s_rain_mutex);
 }
@@ -1078,6 +1451,7 @@ static bool send_ack(const uint8_t *dest, uint8_t node_id, uint32_t seq)
     ack.node_id = node_id;
     ack.ack_last_seq = seq;
     ack.clear_buffer_until_seq = seq;
+    ack.clock_correction_s = (int32_t)current_epoch_s();
     ack.next_slot_offset_s = next_node_slot_offset_s(node_id);
 
     ensure_peer(dest);
@@ -1108,6 +1482,7 @@ static bool send_sync_ack(const uint8_t *dest, uint8_t node_id, uint32_t hello_s
     ack.node_id = node_id;
     ack.ack_last_seq = hello_seq;
     ack.clear_buffer_until_seq = 0;
+    ack.clock_correction_s = (int32_t)current_epoch_s();
     ack.next_slot_offset_s = next_node_slot_offset_s(node_id);
 
     ensure_peer(dest);
@@ -1149,7 +1524,7 @@ static node_state_t *node_get(uint8_t node_id, const uint8_t *mac)
     return NULL;
 }
 
-static bool cloud_record_enabled(const master_record_t *rec)
+static bool __attribute__((unused)) cloud_record_enabled(const master_record_t *rec)
 {
 #if MASTER_CLOUD_MODE && !MASTER_CLOUD_UPLOAD_MASTER
     return rec->type != REC_TYPE_MASTER;
@@ -1159,19 +1534,23 @@ static bool cloud_record_enabled(const master_record_t *rec)
 #endif
 }
 
-static void cloud_enqueue_record(const master_record_t *rec)
+static record_store_result_t cloud_enqueue_record(master_record_t *rec)
 {
 #if MASTER_CLOUD_MODE
     if (!cloud_record_enabled(rec)) {
         ESP_LOGI(TAG, "CLOUD_SKIP type=%u unit=%u seq=%u", rec->type, rec->unit_id, (unsigned)rec->seq);
-        return;
+        return RECORD_STORE_SKIPPED;
     }
-    if (xQueueSend(s_cloud_queue, rec, 0) != pdTRUE) {
+    if (!backup_enqueue(rec)) {
         s_cloud_drop++;
-        backup_enqueue(rec);
+        ESP_LOGE(TAG, "DURABLE_ENQUEUE_FAILED type=%u unit=%u seq=%u",
+                 rec->type, rec->unit_id, (unsigned)rec->seq);
+        return RECORD_STORE_FAILED;
     }
+    return RECORD_STORE_DURABLE;
 #else
     ESP_LOGI(TAG, "CLOUD_OFF type=%u unit=%u seq=%u", rec->type, rec->unit_id, (unsigned)rec->seq);
+    return RECORD_STORE_SKIPPED;
 #endif
 }
 
@@ -1189,7 +1568,8 @@ static void node_record_from_payload(master_record_t *rec, const sz2_payload_t *
     rec->seq = p->seq;
     rec->boot_id = p->boot_id;
     rec->rx_ms = millis_u32();
-    rec->ts = current_epoch_s();
+    rec->ts = p->send_timestamp_ms >= MASTER_VALID_EPOCH_MIN ?
+              p->send_timestamp_ms : current_epoch_s();
     rec->vbat_mv = p->vbat;
     rec->gap = gap;
     if (rec->valid_mask & REC_VALID_HX711) {
@@ -1248,8 +1628,9 @@ static void rx_consumer_task(void *arg)
                     continue;
                 }
 
-                if (n->rx_valid == 0) {
+                if (!n->have_boot_id) {
                     n->boot_id = h->boot_id;
+                    n->have_boot_id = true;
                 } else if (h->boot_id != n->boot_id) {
                     n->boot_id = h->boot_id;
                     n->have_seq = false;
@@ -1291,13 +1672,6 @@ static void rx_consumer_task(void *arg)
                 continue;
             }
 
-            if (n->rx_valid == 0) {
-                n->boot_id = p->boot_id;
-            } else if (p->boot_id != n->boot_id) {
-                n->boot_id = p->boot_id;
-                n->have_seq = false;
-                n->resets++;
-            }
             if (memcmp(n->mac, item.src_mac, 6) != 0) {
                 memcpy(n->mac, item.src_mac, 6);
             }
@@ -1309,24 +1683,43 @@ static void rx_consumer_task(void *arg)
             n->rssi_sum += item.rssi;
             n->rssi_n++;
             uint32_t gap = 0;
-            bool is_new = false;
-            if (!n->have_seq) {
-                is_new = true;
-                n->have_seq = true;
-                n->last_seq = p->seq;
-            } else if (p->seq > n->last_seq) {
-                is_new = true;
+            bool boot_changed = n->have_boot_id && p->boot_id != n->boot_id;
+            bool is_new = boot_changed || !n->have_seq || p->seq > n->last_seq;
+            if (is_new && !boot_changed && n->have_seq) {
                 gap = p->seq - n->last_seq - 1;
-                n->miss_cum += gap;
-                n->last_seq = p->seq;
             }
-            if (is_new) n->rx_new++;
-            else n->rx_dup++;
 
-            uint32_t fail_before = s_ack_status_fail;
-            if (send_ack(item.src_mac, p->node_id, p->seq)) {
-                n->ack_sent++;
-                if (s_ack_status_fail != fail_before) n->ack_txfail++;
+            bool accepted = true;
+            if (is_new) {
+                master_record_t rec;
+                node_record_from_payload(&rec, p, &item, gap);
+                record_store_result_t store_result = cloud_enqueue_record(&rec);
+                accepted = store_result != RECORD_STORE_FAILED;
+                if (accepted) {
+                    if (!n->have_boot_id) {
+                        n->have_boot_id = true;
+                    } else if (boot_changed) {
+                        n->resets++;
+                    }
+                    n->boot_id = p->boot_id;
+                    n->have_seq = true;
+                    n->last_seq = p->seq;
+                    n->miss_cum += gap;
+                    n->rx_new++;
+                } else {
+                    ESP_LOGE(TAG, "RX_NOT_ACKED node=%u seq=%u reason=durable_persist_failed",
+                             p->node_id, (unsigned)p->seq);
+                }
+            } else {
+                n->rx_dup++;
+            }
+
+            if (!is_new || accepted) {
+                uint32_t fail_before = s_ack_status_fail;
+                if (send_ack(item.src_mac, p->node_id, p->seq)) {
+                    n->ack_sent++;
+                    if (s_ack_status_fail != fail_before) n->ack_txfail++;
+                }
             }
 
             ESP_LOGI(TAG, "RX node=%u seq=%u kind=%s gap=%u rssi=%d "
@@ -1352,11 +1745,6 @@ static void rx_consumer_task(void *arg)
                          (int)item.rssi);
             }
 
-            if (is_new) {
-                master_record_t rec;
-                node_record_from_payload(&rec, p, &item, gap);
-                cloud_enqueue_record(&rec);
-            }
         }
 
         int64_t now_us = esp_timer_get_time();
@@ -1376,15 +1764,17 @@ static void rx_consumer_task(void *arg)
             const char *wifi_state = "OFF";
 #endif
             ESP_LOGI(TAG, "MSTAT uptime_s=%u rxcb=%u q_drop=%u len_bad=%u ver_bad=%u "
-                          "wifi=%s ch=%u expected_ch=%u cloud_ok=%u cloud_fail=%u cloud_drop=%u "
-                          "backup_pending=%u backup_enq=%u backup_up=%u backup_bad=%u",
+                          "wifi=%s ch=%u expected_ch=%u cloud_ok=%u cloud_fail=%u cloud_skip=%u cloud_drop=%u "
+                          "backup_pending=%u backup_enq=%u backup_up=%u backup_bad=%u backup_full=%u",
                      (unsigned)(now_us / 1000000), (unsigned)s_diag_recv_cb,
                      (unsigned)s_q_dropped, (unsigned)s_diag_len_bad,
                      (unsigned)s_diag_ver_bad, wifi_state, (unsigned)ch,
                      (unsigned)MASTER_ESPNOW_CHANNEL,
-                     (unsigned)s_cloud_ok, (unsigned)s_cloud_fail, (unsigned)s_cloud_drop,
+                     (unsigned)s_cloud_ok, (unsigned)s_cloud_fail, (unsigned)s_cloud_skip,
+                     (unsigned)s_cloud_drop,
                      (unsigned)backup_count_unlocked(), (unsigned)s_backup_enqueued,
-                     (unsigned)s_backup_uploaded, (unsigned)s_backup_bad);
+                     (unsigned)s_backup_uploaded, (unsigned)s_backup_bad,
+                     (unsigned)s_backup_full);
         }
     }
 }
@@ -1738,7 +2128,23 @@ static bool cloud_put_json_path(const char *path, const char *body, int *status_
     return http_json(url, body, HTTP_METHOD_PUT, NULL, resp, sizeof(resp), status_out);
 }
 
-static bool __attribute__((unused)) cloud_post_hive2_record_once(const master_record_t *rec)
+static bool cloud_record_should_skip(const master_record_t *rec)
+{
+    if (!cloud_record_enabled(rec)) return true;
+    if (MASTER_FIREBASE_ROOT_PATH[0] != '\0') {
+        return rec->type != REC_TYPE_NODE ||
+               !(rec->valid_mask & REC_VALID_HX711) ||
+               !(rec->valid_mask & REC_VALID_TEMP);
+    }
+#if MASTER_CLOUD_HIVE2_SCHEMA
+    if (rec->type == REC_TYPE_NODE && !(rec->valid_mask & REC_VALID_HX711)) {
+        return true;
+    }
+#endif
+    return rec->type != REC_TYPE_NODE && rec->type != REC_TYPE_MASTER;
+}
+
+static cloud_result_t __attribute__((unused)) cloud_post_hive2_record_once(const master_record_t *rec)
 {
     char path[256];
     char body[1024];
@@ -1747,33 +2153,33 @@ static bool __attribute__((unused)) cloud_post_hive2_record_once(const master_re
     bool ok_all = true;
 
     if (rec->type == REC_TYPE_NODE) {
-        if (!build_hive2_node_json(rec, body, sizeof(body))) return false;
+        if (!build_hive2_node_json(rec, body, sizeof(body))) return CLOUD_RESULT_RETRY;
         int p = snprintf(path, sizeof(path),
                          "hives/%s/rods/node_%u/readings/%08X_%u",
                          MASTER_FIREBASE_TARGET_HIVE_ID, rec->unit_id,
                          (unsigned)rec->boot_id, (unsigned)rec->seq);
-        if (p <= 0 || p >= (int)sizeof(path)) return false;
+        if (p <= 0 || p >= (int)sizeof(path)) return CLOUD_RESULT_RETRY;
         attempted = true;
         ok_all = cloud_put_json_path(path, body, &status);
     } else {
         if (build_hive2_master_rod_json(rec, body, sizeof(body))) {
             int p = snprintf(path, sizeof(path), "hives/%s/rods/master/readings/master_%u",
                              MASTER_FIREBASE_TARGET_HIVE_ID, (unsigned)rec->seq);
-            if (p <= 0 || p >= (int)sizeof(path)) return false;
+            if (p <= 0 || p >= (int)sizeof(path)) return CLOUD_RESULT_RETRY;
             attempted = true;
             ok_all = cloud_put_json_path(path, body, &status) && ok_all;
         }
         if (build_hive2_master_env_json(rec, body, sizeof(body))) {
             int p = snprintf(path, sizeof(path), "hives/%s/env/readings/master_%u",
                              MASTER_FIREBASE_TARGET_HIVE_ID, (unsigned)rec->seq);
-            if (p <= 0 || p >= (int)sizeof(path)) return false;
+            if (p <= 0 || p >= (int)sizeof(path)) return CLOUD_RESULT_RETRY;
             attempted = true;
             ok_all = cloud_put_json_path(path, body, &status) && ok_all;
         }
         if (build_hive2_master_temp_json(rec, body, sizeof(body))) {
             int p = snprintf(path, sizeof(path), "hives/%s/temp/readings/master_%u",
                              MASTER_FIREBASE_TARGET_HIVE_ID, (unsigned)rec->seq);
-            if (p <= 0 || p >= (int)sizeof(path)) return false;
+            if (p <= 0 || p >= (int)sizeof(path)) return CLOUD_RESULT_RETRY;
             attempted = true;
             ok_all = cloud_put_json_path(path, body, &status) && ok_all;
         }
@@ -1781,13 +2187,14 @@ static bool __attribute__((unused)) cloud_post_hive2_record_once(const master_re
 
     if (!ok_all) ESP_LOGW(TAG, "cloud PUT failed status=%d type=%u unit=%u seq=%u",
                           status, rec->type, rec->unit_id, (unsigned)rec->seq);
-    return attempted && ok_all;
+    return attempted && ok_all ? CLOUD_RESULT_OK : CLOUD_RESULT_RETRY;
 }
 
-static bool cloud_post_record_once(const master_record_t *rec)
+static cloud_result_t cloud_post_record_once(const master_record_t *rec)
 {
-    if (!s_wifi_ip) return false;
-    if (!firebase_token_valid() && !firebase_auth_refresh()) return false;
+    if (cloud_record_should_skip(rec)) return CLOUD_RESULT_SKIP;
+    if (!s_wifi_ip) return CLOUD_RESULT_RETRY;
+    if (!firebase_token_valid() && !firebase_auth_refresh()) return CLOUD_RESULT_RETRY;
 
 #if MASTER_CLOUD_HIVE2_SCHEMA
     if (MASTER_FIREBASE_ROOT_PATH[0] == '\0') {
@@ -1799,7 +2206,7 @@ static bool cloud_post_record_once(const master_record_t *rec)
     int u;
     bool experiment_path = MASTER_FIREBASE_ROOT_PATH[0] != '\0';
     if (experiment_path) {
-        if (rec->type != REC_TYPE_NODE) return false;
+        if (rec->type != REC_TYPE_NODE) return CLOUD_RESULT_SKIP;
         u = snprintf(url, sizeof(url),
                      "%s/%s/nodes/node_%u/readings/%08X_%u.json?auth=%s",
                      MASTER_FIREBASE_DATABASE_URL, MASTER_FIREBASE_ROOT_PATH,
@@ -1819,30 +2226,41 @@ static bool cloud_post_record_once(const master_record_t *rec)
                      MASTER_FIREBASE_HIVE_PATH_SUFFIX, (unsigned)rec->seq,
                      s_firebase_token);
     }
-    if (u <= 0 || u >= (int)sizeof(url)) return false;
+    if (u <= 0 || u >= (int)sizeof(url)) return CLOUD_RESULT_RETRY;
 
     char body[1024];
     bool body_ok = experiment_path ?
                    build_experiment_node_json(rec, body, sizeof(body)) :
                    build_record_json(rec, body, sizeof(body));
-    if (!body_ok) return false;
+    if (!body_ok) return CLOUD_RESULT_RETRY;
     char resp[256];
     int status = 0;
     bool ok = http_json(url, body, HTTP_METHOD_PUT, NULL, resp, sizeof(resp), &status);
     if (!ok) ESP_LOGW(TAG, "cloud PUT failed status=%d type=%u unit=%u seq=%u",
                       status, rec->type, rec->unit_id, (unsigned)rec->seq);
-    return ok;
+    return ok ? CLOUD_RESULT_OK : CLOUD_RESULT_RETRY;
 }
 
-static bool cloud_post_record_with_retries(const master_record_t *rec)
+static cloud_result_t cloud_post_record_with_retries(const master_record_t *rec)
 {
-    if (!cloud_record_enabled(rec)) return true;
+    if (cloud_record_should_skip(rec)) {
+        s_cloud_skip++;
+        ESP_LOGW(TAG, "CLOUD_SKIP_INVALID type=%u unit=%u seq=%u valid=0x%02X",
+                 rec->type, rec->unit_id, (unsigned)rec->seq, rec->valid_mask);
+        return CLOUD_RESULT_SKIP;
+    }
+    if (!s_wifi_ip) return CLOUD_RESULT_RETRY;
 
     uint32_t backoff = MASTER_CLOUD_RETRY_BASE_MS;
     for (int attempt = 1; attempt <= MASTER_CLOUD_MAX_ATTEMPTS; attempt++) {
-        if (cloud_post_record_once(rec)) {
+        cloud_result_t result = cloud_post_record_once(rec);
+        if (result == CLOUD_RESULT_OK) {
             s_cloud_ok++;
-            return true;
+            return CLOUD_RESULT_OK;
+        }
+        if (result == CLOUD_RESULT_SKIP) {
+            s_cloud_skip++;
+            return CLOUD_RESULT_SKIP;
         }
         s_cloud_fail++;
         if (attempt < MASTER_CLOUD_MAX_ATTEMPTS) {
@@ -1851,7 +2269,7 @@ static bool cloud_post_record_with_retries(const master_record_t *rec)
             if (backoff > MASTER_CLOUD_RETRY_MAX_MS) backoff = MASTER_CLOUD_RETRY_MAX_MS;
         }
     }
-    return false;
+    return CLOUD_RESULT_RETRY;
 }
 
 static void sntp_start_once(void)
@@ -1869,19 +2287,18 @@ static void cloud_task(void *arg)
     (void)arg;
     master_record_t rec;
     for (;;) {
-        while (s_wifi_ip && backup_peek(&rec)) {
-            if (cloud_post_record_with_retries(&rec)) {
-                backup_pop();
-            } else {
-                break;
-            }
-        }
-
-        if (xQueueReceive(s_cloud_queue, &rec, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        if (!backup_peek(&rec)) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
-        if (!cloud_post_record_with_retries(&rec)) {
-            backup_enqueue(&rec);
+
+        cloud_result_t result = cloud_post_record_with_retries(&rec);
+        if (result == CLOUD_RESULT_OK || result == CLOUD_RESULT_SKIP) {
+            if (!backup_pop()) {
+                vTaskDelay(pdMS_TO_TICKS(1000));
+            }
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(1000));
         }
     }
 }
@@ -2000,7 +2417,7 @@ static void master_measure_task(void *arg)
         memset(&rec, 0, sizeof(rec));
         rec.type = REC_TYPE_MASTER;
         rec.unit_id = MASTER_UNIT_ID;
-        rec.seq = ++s_master_seq;
+        rec.seq = master_next_seq();
         rec.rx_ms = millis_u32();
         rec.ts = current_epoch_s();
 
@@ -2011,7 +2428,15 @@ static void master_measure_task(void *arg)
         }
 
         float ds_t[DS18B20_MAX_SENSORS];
-        ds18b20_read_all(ds_t);
+        if (s_ds18b20_count != DS18B20_EXPECTED_COUNT) {
+            ds18b20_refresh_search();
+        }
+        if (!ds18b20_read_all(ds_t)) {
+            ds18b20_refresh_search();
+            if (s_ds18b20_count > 0) {
+                (void)ds18b20_read_all(ds_t);
+            }
+        }
         if (s_ds18b20_count > 0 && isfinite(ds_t[0])) {
             rec.valid_mask |= REC_VALID_DS0;
             rec.ds0_hive_c = ds_t[0];
@@ -2050,20 +2475,23 @@ static void master_measure_task(void *arg)
         rec.rain_mm_total = rain_mm_total;
         rec.rain_mm_delta = (float)rain_delta * RAIN_MM_PER_TIP;
 
-        nvs_set_u32(s_master_nvs, "seq", s_master_seq);
-        nvs_commit(s_master_nvs);
+        record_store_result_t store_result = cloud_enqueue_record(&rec);
 
-        ESP_LOGI(TAG, "MASTER_SAMPLE seq=%u valid=0x%02X hx711_raw=%ld ds0=%.3f ds1=%.3f "
+        ESP_LOGI(TAG, "MASTER_SAMPLE seq=%u store=%u valid=0x%02X hx711_raw=%ld ds0=%.3f ds1=%.3f "
                       "aht_t=%.3f aht_rh=%.3f bmp_t=%.3f bmp_pa=%.1f "
                       "rain_tips=%u delta=%u rain_mm_delta=%.4f",
-                 (unsigned)rec.seq, rec.valid_mask, (long)rec.hx711_raw,
+                 (unsigned)rec.seq, (unsigned)store_result, rec.valid_mask,
+                 (long)rec.hx711_raw,
                  (double)rec.ds0_hive_c, (double)rec.ds1_scale_c,
                  (double)rec.aht20_t_c, (double)rec.aht20_rh,
                  (double)rec.bmp280_t_c, (double)rec.bmp280_pa,
                  (unsigned)rec.rain_tips_total, (unsigned)rec.rain_tips_delta,
                  (double)rec.rain_mm_delta);
 
-        cloud_enqueue_record(&rec);
+        if (store_result == RECORD_STORE_FAILED) {
+            ESP_LOGE(TAG, "master sample not durably queued seq=%u; rain cursor retained",
+                     (unsigned)rec.seq);
+        }
         vTaskDelay(pdMS_TO_TICKS(MASTER_SAMPLE_PERIOD_SEC * 1000UL));
     }
 }
@@ -2091,12 +2519,11 @@ void app_main(void)
     s_rain_mutex = xSemaphoreCreateMutex();
     s_backup_mutex = xSemaphoreCreateMutex();
     s_rx_queue = xQueueCreate(MASTER_RX_QUEUE_LEN, sizeof(rx_item_t));
-    s_cloud_queue = xQueueCreate(MASTER_CLOUD_QUEUE_LEN, sizeof(master_record_t));
     s_tx_done = xSemaphoreCreateBinary();
 #if MASTER_CLOUD_MODE
     s_reconn_sem = xSemaphoreCreateCounting(8, 0);
 #endif
-    configASSERT(s_rain_mutex && s_backup_mutex && s_rx_queue && s_cloud_queue && s_tx_done);
+    configASSERT(s_rain_mutex && s_backup_mutex && s_rx_queue && s_tx_done);
 
     backup_init();
     hx711_init();

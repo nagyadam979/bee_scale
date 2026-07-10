@@ -9,7 +9,7 @@
  *   4) profil-függő munka:
  *        BENCH: fázis-szekvencer — baseline, összes szenzor együtt, rádió-idle, ESP-NOW TX.
  *               A szenzorok a WiFi BEKAPCSOLÁSA ELŐTT mérnek (tiszta, zajmentes táp/ADC).
- *        FIELD: egyszeri gyors mérés (HX711 + DS18B20 + vbat) -> payload -> broadcast.
+ *        FIELD: egyszeri gyors mérés -> payload -> NVS commit -> WiFi/ESP-NOW -> ACK-os drain.
  *   5) deep sleep NODE_WAKE_PERIOD_SEC-ig — node_sleep
  *
  * A main CSAK vezényel; a driver-logika a modulokban van (sens_*, espnow_tx, node_sleep).
@@ -83,7 +83,7 @@ static void run_powerup_service_window(const node_wake_state_t *st)
 
 /* Payload feltöltése a KÖZÖS wire-szerződés szerint (protocol.h). A CRC-t utolsóként számoljuk. */
 static void build_payload(sz2_payload_t *p, const node_wake_state_t *st, uint32_t seq,
-                          float weight, float temp, uint16_t vbat)
+                          uint32_t sample_epoch_s, float weight, float temp, uint16_t vbat)
 {
     memset(p, 0, sizeof(*p));
     p->protocol_version = SZ2_PROTO_VERSION;
@@ -94,15 +94,16 @@ static void build_payload(sz2_payload_t *p, const node_wake_state_t *st, uint32_
     p->seq              = seq;
     p->packet_idx       = seq;
     p->total_packets    = 0;   /* éles üzemben nincs fix futás-hossz; diagnosztikára szabad */
-    p->send_timestamp_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    p->send_timestamp_ms = sample_epoch_s;
     p->weight           = weight;
     p->temp             = temp;
     p->vbat             = vbat;
     p->crc              = sz2_payload_crc(p);
 
     /* A mért adat láthatóvá tétele a soros logon (temp NAN, ha nincs bekötve hőmérő). */
-    ESP_LOGI(TAG, "payload: node=%u seq=%u boot=0x%08X weight=%.0f temp=%.2f vbat=%u mV crc=0x%04X",
+    ESP_LOGI(TAG, "payload: node=%u seq=%u boot=0x%08X sample_epoch_s=%u weight=%.0f temp=%.2f vbat=%u mV crc=0x%04X",
              p->node_id, (unsigned)p->seq, (unsigned)p->boot_id,
+             (unsigned)p->send_timestamp_ms,
              (double)p->weight, (double)p->temp, (unsigned)p->vbat, p->crc);
 }
 
@@ -228,7 +229,8 @@ static void sample_espnow(const node_wake_state_t *st)
     }
 
     sz2_payload_t p;
-    build_payload(&p, st, st->cycle, weight, ds18b20_read_temp(), vbat_read_mv());
+    build_payload(&p, st, st->cycle, node_sleep_estimated_epoch_s(),
+                  weight, ds18b20_read_temp(), vbat_read_mv());
     espnow_tx_send(&p, NODE_TX_REPEAT);
 }
 
@@ -340,6 +342,20 @@ static bool ack_slot_valid(uint32_t next_slot_s)
            next_slot_s <= NODE_WAKE_PERIOD_SEC + NODE_ACK_SLOT_MAX_EXTRA_SEC;
 }
 
+static void sync_epoch_from_ack(const espnow_tx_ack_result_t *ack)
+{
+    if (ack->clock_correction_s <= 0) {
+        return;
+    }
+
+    uint32_t master_epoch_s = (uint32_t)ack->clock_correction_s;
+    if (node_sleep_sync_epoch(master_epoch_s)) {
+        ESP_LOGI(TAG, "CLOCK_SYNC master_epoch_s=%u", (unsigned)master_epoch_s);
+    } else {
+        ESP_LOGW(TAG, "CLOCK_SYNC invalid master_epoch_s=%u", (unsigned)master_epoch_s);
+    }
+}
+
 static uint32_t drain_pending_records(uint32_t *next_sleep_sec)
 {
     uint32_t delivered = 0;
@@ -361,11 +377,14 @@ static uint32_t drain_pending_records(uint32_t *next_sleep_sec)
                      (unsigned)pending.seq, (unsigned)node_buffer_count());
             break;
         }
-        if ((int32_t)(ack.clear_buffer_until_seq - pending.seq) < 0) {
-            ESP_LOGE(TAG, "ACK clear_until visszafele: seq=%u clear=%u",
-                     (unsigned)pending.seq, (unsigned)ack.clear_buffer_until_seq);
+        if (ack.ack_last_seq != pending.seq ||
+            ack.clear_buffer_until_seq != pending.seq) {
+            ESP_LOGE(TAG, "ACK contract mismatch pending=%u ack_last=%u clear_until=%u; stop, nincs torles",
+                     (unsigned)pending.seq, (unsigned)ack.ack_last_seq,
+                     (unsigned)ack.clear_buffer_until_seq);
             break;
         }
+        sync_epoch_from_ack(&ack);
         err = node_buffer_clear_until(ack.clear_buffer_until_seq);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "pending clear hiba seq=%u clear=%u: %s",
@@ -388,6 +407,21 @@ static uint32_t run_field(const node_wake_state_t *st)
     ESP_LOGI(TAG, "FIELD profil: egyszeri meres, majd %d s alvas.", NODE_WAKE_PERIOD_SEC);
     uint32_t next_sleep_sec = fallback_sleep_sec();
 
+    /* A meres es a tartos commit radiozaj nelkul, a WiFi inditasa elott tortenik. */
+    uint32_t sample_epoch_s = node_sleep_estimated_epoch_s();
+    node_measurement_t m = measure_once();
+
+    uint32_t seq = node_buffer_next_seq();
+    sz2_payload_t p;
+    build_payload(&p, st, seq, sample_epoch_s, m.weight, m.temp, m.vbat);
+    esp_err_t err = node_buffer_enqueue(&p);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "uj minta NEM mentheto flashbe seq=%u: %s",
+                 (unsigned)seq, esp_err_to_name(err));
+    }
+
+    /* A hold mar a meres vegen aktiv, ezt a radio-fazis elott is explicit garantaljuk. */
+    hx711_power_down();
     espnow_tx_init();
     if (st->cold_boot) {
         sz2_hello_t hello;
@@ -395,26 +429,16 @@ static uint32_t run_field(const node_wake_state_t *st)
         build_hello(&hello, st);
         if (!espnow_tx_sync_hello(&hello, &sync_ack)) {
             uint32_t retry_s = NODE_COLD_SYNC_FAIL_SLEEP_SEC;
-            ESP_LOGW(TAG, "COLD_SYNC fail: nincs master ACK, rovid retry sleep %u s", (unsigned)retry_s);
+            ESP_LOGW(TAG, "COLD_SYNC fail: minta flashben marad, rovid retry sleep %u s",
+                     (unsigned)retry_s);
             return retry_s;
         }
+        sync_epoch_from_ack(&sync_ack);
         if (ack_slot_valid(sync_ack.next_slot_offset_s)) {
             next_sleep_sec = sync_ack.next_slot_offset_s;
         }
         ESP_LOGI(TAG, "COLD_SYNC ok next_sleep_s=%u pending=%u",
                  (unsigned)next_sleep_sec, (unsigned)node_buffer_count());
-    }
-
-    /* Sikeres cold-boot sync utan, illetve timer-wake ciklusban indul a minta. */
-    node_measurement_t m = measure_once();
-
-    uint32_t seq = node_buffer_next_seq();
-    sz2_payload_t p;
-    build_payload(&p, st, seq, m.weight, m.temp, m.vbat);
-    esp_err_t err = node_buffer_enqueue(&p);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "uj minta NEM mentheto flashbe seq=%u: %s",
-                 (unsigned)seq, esp_err_to_name(err));
     }
 
     uint32_t before = node_buffer_count();
@@ -473,6 +497,7 @@ void app_main(void)
     user_led_blink_once("deep sleep elott");
     espnow_tx_deinit();
     vbat_prepare_sleep();
+    hx711_power_down();
     node_enter_deep_sleep(sleep_sec);
 #endif
 }
