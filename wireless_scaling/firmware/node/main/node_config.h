@@ -107,14 +107,14 @@
 /* Kivezetve: GPIO0..10, 20, 21. ADC-képes: GPIO0..4. Strapping (kerülendő): GPIO2, 8, 9. */
 
 /* HX711 — a ténylegesen bekötött mérleg-erősítő lábak.
- * A sleep-floor diagnosztika igazolta: PD_SCK GPIO5-ön van, nem GPIO4-en. */
-#define HX711_PD_SCK_GPIO    GPIO_NUM_5   /* PD_SCK: HIGH>60us = power-down; olvasáskor SCK */
-#define HX711_DOUT_GPIO      GPIO_NUM_6   /* DOUT: adat (input), LOW = konverzió kész */
+ * Node oldalon: SCK/PD_SCK=GPIO4, DOUT/DT=GPIO3. A master saját HX711-e ettől független. */
+#define HX711_PD_SCK_GPIO    GPIO_NUM_4   /* PD_SCK: HIGH>60us = power-down; olvasáskor SCK */
+#define HX711_DOUT_GPIO      GPIO_NUM_3   /* DOUT: adat (input), LOW = konverzió kész */
 
 /* vbat feszültségosztó ADC + NPN low-side kapcsoló.
  * A C3-on CSAK az ADC1 (GPIO0..4) megbízható: az ADC2 (GPIO5) oneshot módban HW-korlátos +
  * WiFi-vel ütközik (Espressif dok/errata) -> a vbat ADC kényszerűen a 0..4 oldalra kerül.
- * Foglalt: GPIO5(SCK), GPIO6(DT), GPIO2 strapping -> vbat ADC = GPIO0 (ADC1_CH0), fizikailag
+ * Foglalt: GPIO4(SCK), GPIO3(DT), GPIO2 strapping -> vbat ADC = GPIO0 (ADC1_CH0), fizikailag
  * elérhető. A NPN-kapcsoló (digitális) az elérhető 5..10 oldalon (GPIO10).
  *
  * 2026-07-09: a low-side kapcsolt osztó GPIO0-ról le lett kötve, mert OFF állapotban a
