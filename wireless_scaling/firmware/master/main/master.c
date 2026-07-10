@@ -679,12 +679,33 @@ static bool backup_prepare_head_unlocked(const master_record_t *incoming,
         bool valid = backup_slot_decode(&existing, &recovered, false);
         bool recovered_expected = valid && existing.write_seq == s_backup_write_seq + 1;
         if (!recovered_expected) {
-            if (s_backup_tail != s_backup_head) {
-                ESP_LOGE(TAG, "occupied unexpected backup head=%u while queue pending; refusing write",
-                         (unsigned)s_backup_head);
-                return false;
-            }
             uint32_t sector = s_backup_head / slots_per_sector;
+            if (s_backup_tail != s_backup_head) {
+                /* Szektorhatáron az előző ring-kör konzumált slotjai maradnak a headnél.
+                 * A szektor minden slotja a headtől előre esik, a pending [tail, head)
+                 * tartományon kívül, ezért ha a tail nincs ebben a szektorban, a törlés
+                 * nem érinthet olvasatlan rekordot. Az orphan-adopt ág fentebb már
+                 * lefutott, így indexeletlen, de teljes slot ide nem juthat. */
+                uint32_t tail_sector = s_backup_tail / slots_per_sector;
+                bool head_on_boundary = (s_backup_head % slots_per_sector) == 0;
+                if (!head_on_boundary || tail_sector == sector) {
+                    s_backup_full++;
+                    ESP_LOGE(TAG, "occupied unexpected backup head=%u while queue pending; refusing write",
+                             (unsigned)s_backup_head);
+                    return false;
+                }
+                err = esp_partition_erase_range(s_backup_part,
+                                                sector * BACKUP_SECTOR_SIZE,
+                                                BACKUP_SECTOR_SIZE);
+                if (err != ESP_OK) {
+                    ESP_LOGW(TAG, "backup stale-sector erase failed: %s",
+                             esp_err_to_name(err));
+                    return false;
+                }
+                ESP_LOGI(TAG, "backup erased stale sector=%u at head=%u (previous ring lap)",
+                         (unsigned)sector, (unsigned)s_backup_head);
+                return true;
+            }
             err = esp_partition_erase_range(s_backup_part,
                                             sector * BACKUP_SECTOR_SIZE,
                                             BACKUP_SECTOR_SIZE);
@@ -698,10 +719,9 @@ static bool backup_prepare_head_unlocked(const master_record_t *incoming,
             return true;
         }
 
-        uint32_t recovered_write_seq = s_backup_write_seq;
+        uint32_t recovered_write_seq = existing.write_seq;
         uint32_t recovered_master_seq = s_master_seq;
         uint32_t recovered_rain_reported = rain_get_durable_cursor();
-        recovered_write_seq = existing.write_seq;
         ESP_LOGW(TAG, "recovered unindexed backup slot=%u write_seq=%u",
                  (unsigned)s_backup_head, (unsigned)existing.write_seq);
         if (recovered.type == REC_TYPE_MASTER) {
@@ -816,7 +836,13 @@ static bool backup_peek(master_record_t *rec)
     backup_raw_slot_t slot;
     esp_err_t err = esp_partition_read(s_backup_part, s_backup_tail * BACKUP_SLOT_SIZE,
                                        &slot, sizeof(slot));
-    bool valid = err == ESP_OK && backup_slot_decode(&slot, rec, true);
+    if (err != ESP_OK) {
+        /* Átmeneti olvasási hiba: a tail marad, a cloud task később újrapróbálja. */
+        ESP_LOGW(TAG, "backup tail read failed: %s", esp_err_to_name(err));
+        xSemaphoreGive(s_backup_mutex);
+        return false;
+    }
+    bool valid = backup_slot_decode(&slot, rec, true);
     if (!valid) {
         s_backup_bad++;
         uint32_t next_tail = (s_backup_tail + 1) % s_backup_slot_count;
@@ -885,7 +911,11 @@ static bool hx711_read_raw_once(int32_t *raw)
         esp_rom_delay_us(100);
     }
 
+    /* A 25 órajel alatt a PD_SCK nem maradhat >60 µs-ig magas (a HX711 power-downba
+     * resetel és korrupt értéket ad), ezért a bit-bang preempció ellen védett. */
+    static portMUX_TYPE hx711_mux = portMUX_INITIALIZER_UNLOCKED;
     uint32_t value = 0;
+    portENTER_CRITICAL(&hx711_mux);
     for (int i = 0; i < 24; i++) {
         gpio_set_level(HX711_SCK_GPIO, 1);
         esp_rom_delay_us(1);
@@ -897,6 +927,7 @@ static bool hx711_read_raw_once(int32_t *raw)
     esp_rom_delay_us(1);
     gpio_set_level(HX711_SCK_GPIO, 0);
     esp_rom_delay_us(1);
+    portEXIT_CRITICAL(&hx711_mux);
 
     if (value & 0x800000U) {
         value |= 0xFF000000U;

@@ -444,3 +444,29 @@ power-loss allapotgepenek utolso, fuggetlen review-ja es az utolso osszevont reb
 keresere felbeszakadt; ez nem forditasi vagy teszthiba. Hardveres flash, power-cut fault injection
 es valos felho/ESP-NOW elfogadasi teszt nem futott. A jelen commit ezert kod- es build-validalt,
 de hardveren meg nem elfogadott allapotot jelol.
+
+## Kiegeszites — 2026-07-10, kesobbi session
+
+A felbeszakadt lepesek potolva lettek:
+
+- **Osszevont rebuild:** node 6/6 es master 5/5 environment SUCCESS, meretek a fenti tablazattal
+  egyezoek.
+- **Fuggetlen review (node pending queue power-loss allapotgep):** mind a 7 invarians betartva,
+  wrap-aritmetika korrekt, adatveszto/dupla-rekord ablak nincs. Verdikt: mehet hardveres tesztre.
+- **Fuggetlen review (master backup ring + ACK lanc):** nincs ut, ahol ACK megy ki tartos commit
+  nelkul. Egy KRITIKUS es harom KOZEPES talalat volt, ezek javitva (kulon commit):
+  1. Ring wrap utan a stale szektor pending backlog mellett nem torlodott -> az offline kapacitas
+     az elso teljes kor (~9728 rekord) utan <=16 rekordra esett. Fix: szektorhataron a bizonyitottan
+     konzumalt (tail-t nem tartalmazo) stale szektor torolheto pending mellett is; az orphan-adopt
+     tovabbra is elonyt elvez, a tail-szektor vedelme valtozatlan.
+  2. `backup_peek`: transient flash READ hiba is popolta a tailt (adatvesztes) -> a read-hiba most
+     RETRY (tail marad), csak a dekodolasi hiba lep at `backup_bad`-del.
+  3. HX711 bit-bang orajel kritikus szekcio nelkul preemptalhato volt (>60 us SCK-high -> chip
+     reset, csendben korrupt raw) -> a 25 orajel most `portENTER_CRITICAL` alatt fut, a DOUT-ra
+     varakozas tovabbra is kivul.
+  4. Node `app_main`: `ESP_ERROR_CHECK(node_buffer_init())` tartos NVS hibanal panic-reboot-hurok
+     volt deep sleep nelkul (akkugyilkos) -> hiba eseten log + HX711 power-down + periodikus retry
+     deep sleep.
+- A dedup watermark (out-of-order retransmit) talalat a jelenlegi node drain-nel (szigoruan
+  oldest-first, exact ACK-ig nem lep) nem erheto el — dokumentalva, nem javitva.
+- Tovabbra is nyitott: hardveres elfogadasi lista (fent), DS18B20 ROM mapping, 2038 epoch.

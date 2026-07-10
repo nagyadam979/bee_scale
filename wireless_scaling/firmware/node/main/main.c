@@ -477,7 +477,17 @@ void app_main(void)
     run_powerup_service_window(&st);
 
     nvs_init();
-    ESP_ERROR_CHECK(node_buffer_init());
+    esp_err_t buf_err = node_buffer_init();
+    if (buf_err != ESP_OK) {
+        /* A buffer-init fail-closed (helyesen), de panic helyett retry alvás kell:
+         * a panic-reset cold bootnak számit, a reboot-hurok a szervizablakkal
+         * napok alatt meritene az akkut. A minta ezen az ebredesen elvesz. */
+        ESP_LOGE(TAG, "node_buffer_init hiba: %s — minta kihagyva, retry sleep %d s",
+                 esp_err_to_name(buf_err), NODE_WAKE_PERIOD_SEC);
+        hx711_init();
+        hx711_power_down();
+        node_enter_deep_sleep(NODE_WAKE_PERIOD_SEC);
+    }
 
     /* Szenzorok GPIO/perifériák init — a driver-modulok maguk konfigolnak. */
     hx711_init();
