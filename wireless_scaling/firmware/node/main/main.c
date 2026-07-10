@@ -290,11 +290,16 @@ static node_measurement_t measure_once(void)
         }
         m.temp = ds18b20_read_temp_after_conversion();
     }
+    if (!isfinite(m.temp)) {
+        ESP_LOGW(TAG, "DS18B20 meres hiba: egyszeri blocking retry");
+        m.temp = ds18b20_read_temp();
+    }
 
     m.measure_ms = (uint32_t)((esp_timer_get_time() - t0) / 1000);
-    ESP_LOGI(TAG, "MEASURE ms=%u hx711=%s ds18b20=%s weight=%.0f temp=%.2f vbat=%u",
+    ESP_LOGI(TAG, "MEASURE ms=%u hx711=%s ds18b20=%s started=%s weight=%.0f temp=%.2f vbat=%u",
              (unsigned)m.measure_ms, m.hx711_ok ? "OK" : "ERR",
-             m.ds18b20_started ? "STARTED" : "ERR",
+             isfinite(m.temp) ? "OK" : "ERR",
+             m.ds18b20_started ? "YES" : "NO",
              (double)m.weight, (double)m.temp, (unsigned)m.vbat);
     return m;
 }

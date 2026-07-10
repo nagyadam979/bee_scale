@@ -95,6 +95,22 @@ static uint8_t ow_read_byte(void)
     return v;
 }
 
+static bool scratchpad_all_value(const uint8_t sp[9], uint8_t value)
+{
+    for (int i = 0; i < 9; i++) {
+        if (sp[i] != value) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void log_scratchpad(const char *reason, const uint8_t sp[9])
+{
+    ESP_LOGW(TAG, "DS18B20 scratchpad %s: %02X %02X %02X %02X %02X %02X %02X %02X %02X",
+             reason, sp[0], sp[1], sp[2], sp[3], sp[4], sp[5], sp[6], sp[7], sp[8]);
+}
+
 static uint8_t ds18b20_crc8(const uint8_t *data, int len)
 {
     uint8_t crc = 0;
@@ -118,6 +134,9 @@ void ds18b20_init(void)
     ESP_LOGW(TAG, "ds18b20_init: DS18B20 tiltva (GPIO%d ag kikotve)", DS18B20_GPIO);
     return;
 #endif
+
+    gpio_deep_sleep_hold_dis();
+    gpio_hold_dis(DS18B20_GPIO);
 
     gpio_config_t cfg = {
         .pin_bit_mask = (1ULL << DS18B20_GPIO),
@@ -168,14 +187,26 @@ float ds18b20_read_temp_after_conversion(void)
         sp[i] = ow_read_byte();
     }
 
+    if (scratchpad_all_value(sp, 0x00) || scratchpad_all_value(sp, 0xFF)) {
+        log_scratchpad("ervenytelen busz-allapot", sp);
+        return NAN;
+    }
+
     uint8_t crc = ds18b20_crc8(sp, 8);
     if (crc != sp[8]) {
         ESP_LOGW(TAG, "DS18B20 CRC hiba: calc=0x%02X got=0x%02X", crc, sp[8]);
+        log_scratchpad("crc-hiba", sp);
         return NAN;
     }
 
     int16_t raw = (int16_t)((uint16_t)sp[0] | ((uint16_t)sp[1] << 8));
-    return (float)raw / 16.0f;
+    float temp = (float)raw / 16.0f;
+    if (temp < -55.0f || temp > 125.0f) {
+        ESP_LOGW(TAG, "DS18B20 tartomanyon kivuli temp=%.2f raw=%d", (double)temp, raw);
+        log_scratchpad("range-hiba", sp);
+        return NAN;
+    }
+    return temp;
 }
 
 float ds18b20_read_temp(void)
