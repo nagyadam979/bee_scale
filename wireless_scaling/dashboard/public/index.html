@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>bee_scale — kaptármérleg</title>
+  <link rel="stylesheet" href="style.css" />
+  <!-- ECharts (UMD global: window.echarts) — modern, touch-zoomolható chartok -->
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+  <!-- Adatréteg-konfiguráció (window.BEESCALE_CONFIG) — az app.js előtt töltődik -->
+  <script src="config.js"></script>
+</head>
+<body>
+  <!-- ===== Splash (anonim auth) ===== -->
+  <section id="splash" class="splash">
+    <div class="splash-card">
+      <div class="logo">🐝</div>
+      <h1>bee_scale</h1>
+      <p id="splash-status" class="muted">Csatlakozás…</p>
+      <p id="splash-error" class="error hidden"></p>
+    </div>
+  </section>
+
+  <!-- ===== App ===== -->
+  <div id="app" class="app hidden">
+    <header class="topbar">
+      <div class="brand"><span class="logo-sm">🐝</span> bee_scale</div>
+      <nav id="hive-tabs" class="tabs" aria-label="Telepítés"></nav>
+      <button id="refresh-btn" class="icon-btn" title="Frissítés">⟳</button>
+    </header>
+
+    <main class="main">
+      <!-- Telepítés-szintű időjárás -->
+      <section id="weather" class="weather"></section>
+
+      <!-- Kaptár-kártyák -->
+      <section id="cards" class="cards"></section>
+
+      <p id="load-status" class="load-status muted"></p>
+    </main>
+  </div>
+
+  <!-- ===== Részletes plot (drill-down) ===== -->
+  <div id="detail" class="detail hidden">
+    <div class="detail-panel">
+      <header class="detail-head">
+        <div>
+          <div id="detail-title" class="detail-title"></div>
+          <div id="detail-sub" class="detail-sub muted"></div>
+        </div>
+        <div class="detail-actions">
+          <button id="detail-reset" class="ghost-btn">⟲ Reset</button>
+          <button id="detail-close" class="icon-btn">✕</button>
+        </div>
+      </header>
+      <div id="chart" class="chart"></div>
+      <p class="detail-hint muted">Két ujjal nagyíts / húzz · görgő = zoom · a tengelyek maguktól igazodnak</p>
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
