@@ -1,0 +1,16 @@
+# bee_scale HX711 kalibrációs firmware (NODE) · sdkconfig.defaults
+#
+# Konzol a natív USB-Serial-JTAG-on (a C3 SuperMini-nek nincs külön UART-bridge chipje).
+# A cal_main a driver-t telepíti és a stdio-t a JTAG-CDC VFS-re irányítja (interaktív parancsok).
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# Flash méret: a legtöbb ESP32-C3 SuperMini 4 MB.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+# Egyedi partíciós tábla (callog nyers log-partíció).
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Soros log: WARN (a mérési adat saját protokoll-sorokban megy; a rutin INFO ne spam-eljen).
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y

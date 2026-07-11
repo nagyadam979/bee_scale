@@ -1,0 +1,8 @@
+# Name,   Type, SubType, Offset,   Size,     Flags
+# A `callog` egy NYERS adat-partíció (nem NVS): fix 16 B rekordok append-log-ja az
+# esp_partition API-val. 0x40000 = 256 KiB / 16 B = 16384 rekord (~68 óra @15 s).
+# Az `nvs`/`phy_init` rendszerpartíciók megmaradnak (a framework elvárja), bár nem használjuk.
+nvs,      data, nvs,     0x9000,   0x6000,
+phy_init, data, phy,     0xf000,   0x1000,
+factory,  app,  factory, 0x10000,  0x100000,
+callog,   data, 0x40,             , 0x40000,
