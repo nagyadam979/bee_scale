@@ -26,14 +26,16 @@ cd firmware/master
 ~/.platformio/penv/bin/pio run -e esp32-s3-zero-cloud
 ```
 
-## Helyi statusz oldal (felho nelkul)
+## Végleges terepi build: felhő + helyi státusz oldal
 
-Ez a master sajat, egyszeru HTTP oldala; nem hasznal Firebase-t, kulso webappot
-vagy internetet. A master es a telefon ugyanarra a 2,4 GHz-es WiFi-re csatlakozik.
+Az `esp32-s3-zero-local-status` a teljes éles firmware: node-vétel, master
+szenzorok, flash backlog, Firebase feltöltés **és** a master saját HTTP státuszoldala.
+A master és a telefon ugyanarra a 2,4 GHz-es WiFi-re csatlakozik; a státuszoldal
+internet nélkül is működik, a Firebase-hez természetesen internetkapcsolat kell.
 
 ```sh
 cd firmware/master
-cp main/wifi_config.example.h main/wifi_config.h
+# main/cloud_config.h kell (benne a WiFi és Firebase beállítások)
 ~/.platformio/penv/bin/pio run -e esp32-s3-zero-local-status
 ```
 
