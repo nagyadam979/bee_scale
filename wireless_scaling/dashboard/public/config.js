@@ -18,7 +18,8 @@ window.BEESCALE_CONFIG = {
   },
 
   // Egységenként ennyi legutóbbi rekordot töltünk (ts-indexelt query, limitToLast).
-  loadLimit: 1000,
+  // Nagy érték → az "egész timeline" böngészhető a chart alsó slider-ével.
+  loadLimit: 5000,
   // Auto-frissítés (ms). hive2: 20 perc/egység, hive1: 5 perc — 2 perc bőven elég.
   refreshMs: 120000,
   // "Friss-e" küszöb: ennél régebbi utolsó minta → figyelmeztető jelzés (perc).
@@ -31,11 +32,18 @@ window.BEESCALE_CONFIG = {
       sublabel: "master + 3 node · 20 perc",
       schema: "wireless",
       weightUnit: "raw", // nyers HX711 count — kalibráció (kg) a felhőben, később
+      // PLACEHOLDER kg-normalizálás, amíg nincs valódi kalibráció: minden mérleg
+      // saját nyers offsettel/előjellel írja a weight_raw-t, ezért egységenként a
+      // betöltött adat MEDIÁNJÁHOZ képest skálázunk egy feltételezett kg-tartományba:
+      //   kg = base + (raw - median(raw)) * kgPerCount
+      // A base cellánként eltér (hogy a görbék elkülönüljenek), a kgPerCount közös
+      // becslés. EZ NEM VALÓDI SÚLY — a UI "becsült kg"-ként jelöli.
+      weightEstimated: true,
       // Mérőegységek (kaptárak). Mindegyik saját HX711 → egyetlen súly.
       units: [
         {
           id: "master", label: "Master", path: "hives/hive2/rods/master/readings",
-          weightField: "weight_raw",
+          weightField: "weight_raw", placeholderKg: { base: 34, kgPerCount: 0.0008 },
           // A master belső hőmérője (mérleg-hőm) a KÖZÖS temp ágban van (scale_c),
           // nem a rod-rekordban — ts-alapon társítjuk.
           innerTempFrom: { path: "weather.temp", field: "scale_c", label: "mérleg-hőm" },
@@ -43,19 +51,19 @@ window.BEESCALE_CONFIG = {
         },
         {
           id: "node_1", label: "Node 1", path: "hives/hive2/rods/node_1/readings",
-          weightField: "weight_raw",
+          weightField: "weight_raw", placeholderKg: { base: 28, kgPerCount: 0.0008 },
           innerTempFrom: { field: "temp_c", label: "cella-hőm" },
           vbatField: "vbat_mv", noVbatHw: true, // node1: nincs akkumérő HW (mask VBAT-bit ≠ hiba)
         },
         {
           id: "node_2", label: "Node 2", path: "hives/hive2/rods/node_2/readings",
-          weightField: "weight_raw",
+          weightField: "weight_raw", placeholderKg: { base: 45, kgPerCount: 0.0008 },
           innerTempFrom: { field: "temp_c", label: "cella-hőm" },
           vbatField: "vbat_mv",
         },
         {
           id: "node_3", label: "Node 3", path: "hives/hive2/rods/node_3/readings",
-          weightField: "weight_raw",
+          weightField: "weight_raw", placeholderKg: { base: 39, kgPerCount: 0.0008 },
           innerTempFrom: { field: "temp_c", label: "cella-hőm" },
           vbatField: "vbat_mv",
         },
@@ -87,6 +95,10 @@ window.BEESCALE_CONFIG = {
       sublabel: "2 mérleg · kalibrált · 5 perc",
       schema: "legacy",
       weightUnit: "kg", // a régi rendszer már kalibrált kg-ot ír (w)
+      // hive1: w1 és w2 EGY kaptár két mérőrúdja → a fő görbe az ÖSSZEGÜK
+      // (legközelebbi-szomszéd párosítás tolSec toleranciával); a rúdak külön
+      // vonalként a legendből bekapcsolhatók, de alapból rejtve.
+      aggregate: { label: "Össz-súly", tolSec: 180 },
       units: [
         {
           id: "w1", label: "Mérleg 1", path: "hives/hive1/rods/w1/readings",

@@ -33,29 +33,32 @@
       <!-- Telepítés-szintű időjárás -->
       <section id="weather" class="weather"></section>
 
-      <!-- Kaptár-kártyák -->
+      <!-- Fő súly-chart: az adott telepítés összes mérlege egy charton -->
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <span class="panel-title">Súly</span>
+            <span id="weight-note" class="panel-note muted"></span>
+          </div>
+          <button class="ghost-btn" data-reset="weight-chart">⟲ Teljes nézet</button>
+        </div>
+        <div id="weight-chart" class="chart"></div>
+      </section>
+
+      <!-- Belső hőmérséklet-chart -->
+      <section class="panel">
+        <div class="panel-head">
+          <div><span class="panel-title">Belső hőmérséklet</span></div>
+          <button class="ghost-btn" data-reset="temp-chart">⟲ Teljes nézet</button>
+        </div>
+        <div id="temp-chart" class="chart chart-sm"></div>
+      </section>
+
+      <!-- Kompakt állapot-kártyák -->
       <section id="cards" class="cards"></section>
 
       <p id="load-status" class="load-status muted"></p>
     </main>
-  </div>
-
-  <!-- ===== Részletes plot (drill-down) ===== -->
-  <div id="detail" class="detail hidden">
-    <div class="detail-panel">
-      <header class="detail-head">
-        <div>
-          <div id="detail-title" class="detail-title"></div>
-          <div id="detail-sub" class="detail-sub muted"></div>
-        </div>
-        <div class="detail-actions">
-          <button id="detail-reset" class="ghost-btn">⟲ Reset</button>
-          <button id="detail-close" class="icon-btn">✕</button>
-        </div>
-      </header>
-      <div id="chart" class="chart"></div>
-      <p class="detail-hint muted">Két ujjal nagyíts / húzz · görgő = zoom · a tengelyek maguktól igazodnak</p>
-    </div>
   </div>
 
   <script type="module" src="app.js"></script>
