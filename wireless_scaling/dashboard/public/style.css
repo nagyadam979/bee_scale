@@ -82,9 +82,13 @@ body {
 .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .3rem; }
 .panel-title { font-weight: 700; font-size: 1.05rem; }
 .panel-note { font-size: .76rem; margin-left: .5rem; }
-/* pan-y: függőleges lapgörgetés a chart fölött is működik; a vízszintes húzást
-   (alsó slider) az ECharts kapja. Az inside-zoom touch-on kikapcsolva (app.js). */
-.chart { width: 100%; height: 360px; touch-action: pan-y; }
+/* touch-action:none KELL a kétujjas pinch-zoomhoz — különben a böngésző
+   (iOS Safari) az oldalt zoomolja. FONTOS: az ECharts a divbe egy belső
+   canvas-t rak, arra IS rá kell tenni, különben a canvas 'auto' marad és a
+   gesztus a böngészőhöz kerül. A slider ugyanabban a canvasban van (Canvas
+   renderer), így ez a húzását is átengedi az ECharts-nak. */
+.chart { width: 100%; height: 360px; touch-action: none; }
+.chart canvas, .chart > div { touch-action: none !important; }
 .chart-sm { height: 220px; }
 .ghost-btn {
   border: 1px solid var(--border); background: var(--panel-2); color: var(--text);

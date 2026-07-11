@@ -15,8 +15,9 @@
 //  Az egységek eltérő időben (async) érkező pontjait közös idővonalra lineárisan
 //  interpoláljuk, és csak ott összegzünk, ahol MINDEN egység lefedi az időt.
 //
-// MOBIL: nincs kétujjas inside-zoom (touch-on kikapcsolva) — a navigáció az alsó
-// slider (fogantyú = zoom, ablak = pan, egyujjas). Desktopon görgő+húzás marad.
+// MOBIL: kétujjas pinch = zoom, egyujjas húzás = pan (ECharts inside dataZoom).
+// KRITIKUS: a belső <canvas> touch-action:none (CSS), különben a böngésző
+// (iOS Safari) az oldalt zoomolja pinchre. Alul slider a teljes timeline-hoz.
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
 import { getAuth, signInAnonymously, onAuthStateChanged }
@@ -67,6 +68,8 @@ function startApp() {
   $("app").classList.remove("hidden");
   charts["weight-chart"] = echarts.init($("weight-chart"), null, { renderer: "canvas" });
   charts["temp-chart"] = echarts.init($("temp-chart"), null, { renderer: "canvas" });
+  hardenTouch("weight-chart");
+  hardenTouch("temp-chart");
   renderTabs();
   $("refresh-btn").addEventListener("click", () => loadHive(activeHiveId));
   document.querySelectorAll("[data-reset]").forEach((b) =>
@@ -249,13 +252,15 @@ function chartOption(series, yName, selected, valFmt) {
       type: "value", scale: true, name: yName, nameTextStyle: { color: MUT },
       axisLabel: { color: MUT }, splitLine: { lineStyle: { color: GRID } },
     },
-    // Navigáció: az alsó SLIDER a fő eszköz (fogantyú húzása = zoom, ablak húzása
-    // = pan; egyujjas, megbízható mobilon is). Az inside-zoom touch-on KI van
-    // kapcsolva (a kétujjas gesztus rossz volt); desktopon marad görgő + húzás.
-    // filterMode:filter → az Y-tengely a látható X-ablakhoz igazodik (scale:true).
+    // Navigáció: inside = KÉTUJJAS pinch (zoom) + egyujjas húzás (pan) érintőn,
+    // desktopon görgő + húzás. Feltétel: a belső canvas touch-action:none (CSS),
+    // különben a böngésző (iOS Safari) elkapja a pinchet oldal-zoomnak.
+    // Alul slider = teljes timeline böngésző. filterMode:filter → Y a látható
+    // X-ablakhoz igazodik (scale:true).
     dataZoom: [
-      { type: "inside", filterMode: "filter", disabled: TOUCH,
-        zoomOnMouseWheel: !TOUCH, moveOnMouseMove: !TOUCH, moveOnMouseWheel: false },
+      { type: "inside", filterMode: "filter",
+        zoomOnMouseWheel: true, moveOnMouseMove: true, moveOnMouseWheel: false,
+        preventDefaultMouseMove: true },
       { type: "slider", filterMode: "filter", bottom: 8, height: TOUCH ? 34 : 20,
         showDetail: !TOUCH, brushSelect: false, throttle: 40,
         handleSize: TOUCH ? "160%" : "100%", moveHandleSize: TOUCH ? 10 : 7,
@@ -265,6 +270,20 @@ function chartOption(series, yName, selected, valFmt) {
     ],
     series,
   };
+}
+
+// A kétujjas pinch-zoom feltétele, hogy a böngésző NE vegye el a gesztust:
+//  1) touch-action:none a konténeren + a belső canvas/div-en (JS, biztos, ami CSS
+//     mellett is győz, ha az ECharts inline stílust tenne rá),
+//  2) iOS Safari 'gesture*' eseményeinek letiltása (az oldal-zoomot ezek lövik;
+//     az ECharts touchstart/move-ot használ, ezt nem érinti).
+function hardenTouch(chartId) {
+  const el = $(chartId);
+  if (!el) return;
+  el.style.touchAction = "none";
+  el.querySelectorAll("canvas, div").forEach((n) => { n.style.touchAction = "none"; });
+  ["gesturestart", "gesturechange", "gestureend"].forEach((ev) =>
+    el.addEventListener(ev, (e) => e.preventDefault(), { passive: false }));
 }
 
 function resetZoom(chartId) {
