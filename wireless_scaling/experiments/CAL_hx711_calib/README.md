@@ -39,8 +39,38 @@ Parancsok (egy karakter):
 **16384 rekord (~68 óra @15 s)**. NVS helyett szándékos: a ritka NVS-flush power-loss-nál
 veszíthetne egyensúlyi pontokat.
 
+## PC-oldali eszköz — `tools/cal_capture.py`
+A firmware csak nyers adatot streamel; a gyűjtést/illesztést ez a script végzi, és cellánként
+egy közös `calibration.json`-be írja az eredményt. A `fit` stdlib-only (OLS); a `weight`/`temp`
+capture-höz **pyserial** kell:
+```
+.venv/bin/pip install pyserial
+```
+Soros port (macOS, C3 natív USB): `/dev/cu.usbmodem*` (dugd be, `ls /dev/cu.*`).
+
+Alparancsok (a `--unit` a cella neve: `node1`/`node2`/`node3`):
+```
+# 1) SÚLY — interaktív kg-címkézés (üres platform = 0), majd súly-lépcsők
+python3 tools/cal_capture.py weight --port /dev/cu.usbmodemXXXX --unit node1
+#    -> ../data/node1_weight.csv   (kg,count_median,scale_c,n)
+
+# 2) HŐ — a board off-grid loggolt (hűtő/nap); visszadugva a dump lehúzása
+python3 tools/cal_capture.py temp   --port /dev/cu.usbmodemXXXX --unit node1
+#    -> ../data/node1_temp.csv     (seq,raw,scale_c)
+
+# 3) ILLESZTÉS (serial nélkül) -> a node1 bejegyzés a calibration.json-ben
+python3 tools/cal_capture.py fit --unit node1
+python3 tools/cal_capture.py show          # a teljes calibration.json
+python3 tools/cal_capture.py selftest      # a fit-mag öntesztje (board nélkül)
+```
+A `fit` kiírja a diagnosztikát is: súly-`R²` + RMS-reziduál (count és kg), hő-`tempCoef` + `R²` +
+`scale_c` span, és figyelmeztet, ha a `tempCoef` az M1b ~1031-től nagyságrendben eltér, vagy ha a
+hő-span < 10 °C (bizonytalan meredekség).
+
 ## Bench-protokoll cellánként
-1. **Súly**: USB-ről `w`, üres platform → ismert súly-lépcsők; a PC-script rögzíti a stabil
-   mediánokat → `zero_count` + `count_per_kg`.
+1. **Súly**: USB-ről `weight` alparancs, üres platform → ismert súly-lépcsők; a script rögzíti a
+   stabil mediánokat → `zero_count` + `count_per_kg`.
 2. **Hő**: `e` (töröl), akkuról hűtőbe/napra (terheletlen), mindegyik hőponton egyensúlyig; a
-   szonda a cella tényleges hőjét mérje. Vissza USB-re → `d` → `tempCoef` illesztés.
+   szonda a cella tényleges hőjét mérje. Vissza USB-re → `temp` alparancs (`d` dump) → `tempCoef`.
+3. **Illesztés**: `fit --unit <cella>` → `calibration.json`. A 4 cellát (node1..3 + master)
+   egymás után kalibrálva egy fájl épül, amit a felhő-oldali konverzió használ.
