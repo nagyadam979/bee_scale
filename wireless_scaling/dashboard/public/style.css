@@ -87,9 +87,9 @@ body {
    canvas-t rak, arra IS rá kell tenni, különben a canvas 'auto' marad és a
    gesztus a böngészőhöz kerül. A slider ugyanabban a canvasban van (Canvas
    renderer), így ez a húzását is átengedi az ECharts-nak. */
-.chart { width: 100%; height: 360px; touch-action: none; }
+.chart { width: 100%; height: 460px; touch-action: none; }
 .chart canvas, .chart > div { touch-action: none !important; }
-.chart-sm { height: 220px; }
+.chart-sm { height: 340px; }
 .ghost-btn {
   border: 1px solid var(--border); background: var(--panel-2); color: var(--text);
   padding: .4rem .7rem; border-radius: 10px; cursor: pointer; font-weight: 600; font-size: .8rem; white-space: nowrap;
@@ -127,3 +127,11 @@ body {
 .card-foot .fi { display: flex; align-items: center; gap: .25rem; }
 
 .load-status { text-align: center; margin-top: 1.2rem; font-size: .82rem; }
+
+/* Mobilon a chart-panel majdnem a képernyő széléig — több hely a nagyításhoz */
+@media (max-width: 640px) {
+  .main { padding: .5rem; }
+  .panel { padding: .7rem .35rem .5rem; border-radius: 12px; }
+  .chart { height: 62vh; }
+  .chart-sm { height: 44vh; }
+}

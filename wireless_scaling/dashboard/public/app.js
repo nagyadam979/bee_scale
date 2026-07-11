@@ -37,6 +37,10 @@ const db = getDatabase(app);
 // vonal-színpaletta (a fő/össz görbe mindig az első = méz-sárga)
 const PALETTE = ["#f5b301", "#4fc3f7", "#81c784", "#ba68c8", "#ff8a65", "#e57373"];
 const GRID = "#242a34", MUT = "#8b93a1", TXT = "#eceef1";
+// Interpolációs pont-sűrítés: a ritka mérések közé ennyi lépésenként szúrunk be
+// lineárisan interpolált pontot (hogy legyen mire ránagyítani); gap-enként max ennyi
+// (nagy adatkimaradást nem tömünk tele pontokkal).
+const DENSIFY_MS = 5 * 60 * 1000, DENSIFY_MAX = 6;
 
 let activeHiveId = CFG.hives[0].id;
 let refreshTimer = null;
@@ -194,12 +198,31 @@ function totalKgSeries(perUnit) {
   return out;
 }
 
+// A ritka (pl. 20 perces) mérések KÖZÉ lineárisan interpolált pontokat szúr, hogy
+// nagyításnál a szakaszon is legyenek pontok, ne csak egyenes. Az eredetieket megtartja.
+function densify(data, stepMs, maxPerGap) {
+  if (data.length < 2) return data;
+  const out = [];
+  for (let i = 0; i < data.length - 1; i++) {
+    const a = data[i], b = data[i + 1];
+    out.push(a);
+    const gap = b[0] - a[0];
+    const n = Math.min(maxPerGap, Math.floor(gap / stepMs) - 1);
+    for (let k = 1; k <= n; k++) {
+      const t = a[0] + k * stepMs;
+      out.push([t, +(a[1] + (b[1] - a[1]) * (t - a[0]) / gap).toFixed(3)]);
+    }
+  }
+  out.push(data[data.length - 1]);
+  return out;
+}
+
 // ===========================================================================
 // Fő súly-chart — telepítésenként EGYETLEN vonal (össz-súly)
 // ===========================================================================
 function renderWeightChart(hive, st) {
   const perUnit = hive.units.map((u) => unitWeightKg(hive, u, st.units[u.id]));
-  const total = totalKgSeries(perUnit);
+  const total = densify(totalKgSeries(perUnit), DENSIFY_MS, DENSIFY_MAX);
   const series = [lineSeries("Össz-súly", total, PALETTE[0], 2.6)];
   charts["weight-chart"].setOption(chartOption(series, "kg", null, (v) => v.toFixed(2) + " kg"), true);
   requestAnimationFrame(() => charts["weight-chart"].resize());
@@ -214,8 +237,8 @@ function renderTempChart(hive, st) {
   const series = [];
   (hive.tempPlot || []).forEach((m) => {
     const arr = m.src === "env" ? st.env : st.temp;
-    const data = arr.filter((r) => typeof r[m.field] === "number").map((r) => [r.ts * 1000, r[m.field]]);
-    series.push(lineSeries(m.label, data, m.color || PALETTE[0], 1.8));
+    const raw = arr.filter((r) => typeof r[m.field] === "number").map((r) => [r.ts * 1000, r[m.field]]);
+    series.push(lineSeries(m.label, densify(raw, DENSIFY_MS, DENSIFY_MAX), m.color || PALETTE[0], 1.8));
   });
   charts["temp-chart"].setOption(chartOption(series, "°C", null, (v) => v.toFixed(1) + " °C"), true);
   requestAnimationFrame(() => charts["temp-chart"].resize());
@@ -226,8 +249,11 @@ function renderTempChart(hive, st) {
 // ===========================================================================
 function lineSeries(name, data, color, width) {
   return {
-    name, type: "line", data, showSymbol: false, smooth: false, connectNulls: true,
-    sampling: "lttb", lineStyle: { color, width }, itemStyle: { color },
+    // showSymbol: minden pont látszik (a valós mérések ÉS a köztük beszúrt
+    // interpoláltak) → van mire ránagyítani. Nincs lttb-sampling, ami eldobná őket.
+    name, type: "line", data, showSymbol: true, symbol: "circle", symbolSize: 3.5,
+    smooth: false, connectNulls: true,
+    lineStyle: { color, width }, itemStyle: { color },
     emphasis: { focus: "series" },
   };
 }
