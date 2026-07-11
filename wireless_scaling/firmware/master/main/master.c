@@ -2751,7 +2751,13 @@ static void web_status_start(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.stack_size = 7168;
-    config.max_open_sockets = 2;
+    /* A bongeszo keep-alive kapcsolatokat tart nyitva (a favicon-keres is foglal
+     * egy slotot), ezert 2 socket gyorsan betelik. lru_purge_enable nelkul a
+     * szerver ilyenkor nem fogad uj kapcsolatot amig egy regi le nem zarul ->
+     * a meta-refresh nem kap valaszt, a lap "beragad" (csak master reset oldja).
+     * Tobb socket + LRU-zaras: uj kapcsolatnal a legregebben hasznaltat lezarja. */
+    config.max_open_sockets = 4;
+    config.lru_purge_enable = true;
     httpd_handle_t server = NULL;
     esp_err_t err = httpd_start(&server, &config);
     if (err != ESP_OK) {
