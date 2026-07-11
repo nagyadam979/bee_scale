@@ -83,7 +83,8 @@ static void run_powerup_service_window(const node_wake_state_t *st)
 
 /* Payload feltöltése a KÖZÖS wire-szerződés szerint (protocol.h). A CRC-t utolsóként számoljuk. */
 static void build_payload(sz2_payload_t *p, const node_wake_state_t *st, uint32_t seq,
-                          uint32_t sample_epoch_s, float weight, float temp, uint16_t vbat)
+                          uint32_t sample_epoch_s, float weight, float temp, uint16_t vbat,
+                          uint32_t sensor_error_mask)
 {
     memset(p, 0, sizeof(*p));
     p->protocol_version = SZ2_PROTO_VERSION;
@@ -98,13 +99,15 @@ static void build_payload(sz2_payload_t *p, const node_wake_state_t *st, uint32_
     p->weight           = weight;
     p->temp             = temp;
     p->vbat             = vbat;
+    p->sensor_error_mask = sensor_error_mask;
     p->crc              = sz2_payload_crc(p);
 
     /* A mért adat láthatóvá tétele a soros logon (temp NAN, ha nincs bekötve hőmérő). */
-    ESP_LOGI(TAG, "payload: node=%u seq=%u boot=0x%08X sample_epoch_s=%u weight=%.0f temp=%.2f vbat=%u mV crc=0x%04X",
+    ESP_LOGI(TAG, "payload: node=%u seq=%u boot=0x%08X sample_epoch_s=%u weight=%.0f temp=%.2f vbat=%u mV sensor_error=0x%08X crc=0x%04X",
              p->node_id, (unsigned)p->seq, (unsigned)p->boot_id,
              (unsigned)p->send_timestamp_ms,
-             (double)p->weight, (double)p->temp, (unsigned)p->vbat, p->crc);
+             (double)p->weight, (double)p->temp, (unsigned)p->vbat,
+             (unsigned)p->sensor_error_mask, p->crc);
 }
 
 static void build_hello(sz2_hello_t *h, const node_wake_state_t *st)
@@ -224,13 +227,15 @@ static void sample_espnow(const node_wake_state_t *st)
     float weight = 0.0f;
     bool hx711_ok = hx711_read_weight_checked(&weight);
     hx711_power_down();
-    if (!hx711_ok) {
-        ESP_LOGW(TAG, "HX711 meres hiba: weight=NAN megy a payloadba");
-    }
+    uint32_t sensor_error_mask = hx711_ok ? 0 : SZ2_SENSOR_ERR_HX711;
+    float temp = ds18b20_read_temp();
+    if (ds18b20_last_read_had_error()) sensor_error_mask |= SZ2_SENSOR_ERR_NODE_DS18B20;
+    uint16_t vbat = vbat_read_mv();
+    if (vbat_last_read_had_error()) sensor_error_mask |= SZ2_SENSOR_ERR_VBAT;
 
     sz2_payload_t p;
     build_payload(&p, st, st->cycle, node_sleep_estimated_epoch_s(),
-                  weight, ds18b20_read_temp(), vbat_read_mv());
+                  weight, temp, vbat, sensor_error_mask);
     espnow_tx_send(&p, NODE_TX_REPEAT);
 }
 
@@ -278,6 +283,7 @@ typedef struct {
     float weight;
     float temp;
     uint16_t vbat;
+    uint32_t sensor_error_mask;
     bool hx711_ok;
     bool ds18b20_started;
     uint32_t measure_ms;
@@ -289,6 +295,7 @@ static node_measurement_t measure_once(void)
         .weight = NAN,
         .temp = NAN,
         .vbat = 0,
+        .sensor_error_mask = 0,
         .hx711_ok = false,
         .ds18b20_started = false,
         .measure_ms = 0,
@@ -300,11 +307,10 @@ static node_measurement_t measure_once(void)
     hx711_power_up();
     m.hx711_ok = hx711_read_weight_checked(&m.weight);
     hx711_power_down();
-    if (!m.hx711_ok) {
-        ESP_LOGW(TAG, "HX711 meres hiba: weight=NAN megy a payloadba");
-    }
+    if (!m.hx711_ok) m.sensor_error_mask |= SZ2_SENSOR_ERR_HX711;
 
     m.vbat = vbat_read_mv();
+    if (vbat_last_read_had_error()) m.sensor_error_mask |= SZ2_SENSOR_ERR_VBAT;
 
     if (m.ds18b20_started) {
         int64_t elapsed_ms = (esp_timer_get_time() - t0) / 1000;
@@ -313,17 +319,17 @@ static node_measurement_t measure_once(void)
         }
         m.temp = ds18b20_read_temp_after_conversion();
     }
-    if (!isfinite(m.temp)) {
-        ESP_LOGW(TAG, "DS18B20 meres hiba: egyszeri blocking retry");
-        m.temp = ds18b20_read_temp();
-    }
+    /* Nincs azonos ciklusbeli retry: a következő ébredés új mérése/reinitje a helyreállítás. */
+    if (!m.ds18b20_started) m.sensor_error_mask |= SZ2_SENSOR_ERR_NODE_DS18B20;
+    if (ds18b20_last_read_had_error()) m.sensor_error_mask |= SZ2_SENSOR_ERR_NODE_DS18B20;
 
     m.measure_ms = (uint32_t)((esp_timer_get_time() - t0) / 1000);
-    ESP_LOGI(TAG, "MEASURE ms=%u hx711=%s ds18b20=%s started=%s weight=%.0f temp=%.2f vbat=%u",
+    ESP_LOGI(TAG, "MEASURE ms=%u hx711=%s ds18b20=%s started=%s weight=%.0f temp=%.2f vbat=%u error=0x%08X",
              (unsigned)m.measure_ms, m.hx711_ok ? "OK" : "ERR",
              isfinite(m.temp) ? "OK" : "ERR",
              m.ds18b20_started ? "YES" : "NO",
-             (double)m.weight, (double)m.temp, (unsigned)m.vbat);
+             (double)m.weight, (double)m.temp, (unsigned)m.vbat,
+             (unsigned)m.sensor_error_mask);
     return m;
 }
 
@@ -413,7 +419,8 @@ static uint32_t run_field(const node_wake_state_t *st)
 
     uint32_t seq = node_buffer_next_seq();
     sz2_payload_t p;
-    build_payload(&p, st, seq, sample_epoch_s, m.weight, m.temp, m.vbat);
+    build_payload(&p, st, seq, sample_epoch_s, m.weight, m.temp, m.vbat,
+                  m.sensor_error_mask);
     esp_err_t err = node_buffer_enqueue(&p);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "uj minta NEM mentheto flashbe seq=%u: %s",

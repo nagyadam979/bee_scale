@@ -30,6 +30,7 @@
 #include "esp_err.h"
 #include "esp_event.h"
 #include "esp_http_client.h"
+#include "esp_http_server.h"
 #include "esp_idf_version.h"
 #include "esp_log.h"
 #include "esp_mac.h"
@@ -48,17 +49,28 @@
 
 #include "protocol.h"
 
-#if defined(MASTER_CLOUD_MODE) && MASTER_CLOUD_MODE
+#ifndef MASTER_CLOUD_MODE
+#define MASTER_CLOUD_MODE 0
+#endif
+#ifndef MASTER_WEB_STATUS
+#define MASTER_WEB_STATUS 0
+#endif
+
+#if MASTER_CLOUD_MODE
 #if __has_include("cloud_config.h")
 #include "cloud_config.h"
 #else
 #error "MASTER_CLOUD_MODE=1 mellett kell main/cloud_config.h (minta: cloud_config.example.h)"
 #endif
+#elif MASTER_WEB_STATUS
+#if __has_include("wifi_config.h")
+#include "wifi_config.h"
+#else
+#error "MASTER_WEB_STATUS=1 mellett kell main/wifi_config.h (minta: wifi_config.example.h)"
+#endif
 #endif
 
-#ifndef MASTER_CLOUD_MODE
-#define MASTER_CLOUD_MODE 0
-#endif
+#define MASTER_WIFI_ENABLED (MASTER_CLOUD_MODE || MASTER_WEB_STATUS)
 #ifndef MASTER_FIREBASE_HIVE_PATH_SUFFIX
 #define MASTER_FIREBASE_HIVE_PATH_SUFFIX ""
 #endif
@@ -93,6 +105,9 @@
 #endif
 #ifndef MASTER_TEST_SSID
 #define MASTER_TEST_SSID               ""
+#endif
+#ifndef MASTER_WEB_REFRESH_SEC
+#define MASTER_WEB_REFRESH_SEC         5
 #endif
 
 #define HX711_SCK_GPIO                 GPIO_NUM_2
@@ -158,10 +173,11 @@
 #define BACKUP_SLOT_SIZE               256
 #define BACKUP_SECTOR_SIZE             4096
 #define BACKUP_MAGIC_V1                0x42534D31UL
-#define BACKUP_MAGIC_V2                0x42534D32UL
-#define BACKUP_FORMAT_VERSION          2U
+#define BACKUP_MAGIC_V2                0x42534D32UL /* 86-byte, pre sensor_error_mask */
+#define BACKUP_MAGIC_V3                0x42534D33UL
+#define BACKUP_FORMAT_VERSION          3U
 #define BACKUP_INDEX_MAGIC             0x42495832UL
-#define BACKUP_INDEX_VERSION           2U
+#define BACKUP_INDEX_VERSION           3U
 
 #define REC_TYPE_NODE                  1
 #define REC_TYPE_MASTER                2
@@ -200,6 +216,7 @@ typedef struct __attribute__((packed)) {
     uint8_t type;
     uint8_t unit_id;
     uint8_t valid_mask;
+    uint32_t sensor_error_mask;
     int8_t rssi;
     uint8_t src_mac[6];
     uint32_t seq;
@@ -222,6 +239,35 @@ typedef struct __attribute__((packed)) {
     float rain_mm_total;
     float rain_mm_delta;
 } master_record_t;
+
+/* A korábbi, pontosan 86 bájtos rekord: az új mező miatt ezt nem szabad az
+ * aktuális sizeof()-fal dekódolni. */
+typedef struct __attribute__((packed)) {
+    uint8_t type;
+    uint8_t unit_id;
+    uint8_t valid_mask;
+    int8_t rssi;
+    uint8_t src_mac[6];
+    uint32_t seq;
+    uint32_t boot_id;
+    uint32_t rx_ms;
+    uint32_t ts;
+    uint32_t vbat_mv;
+    uint32_t gap;
+    uint32_t rain_tips_total;
+    uint32_t rain_tips_delta;
+    int32_t weight_raw;
+    int32_t hx711_raw;
+    float temp_c;
+    float ds0_hive_c;
+    float ds1_scale_c;
+    float aht20_t_c;
+    float aht20_rh;
+    float bmp280_t_c;
+    float bmp280_pa;
+    float rain_mm_total;
+    float rain_mm_delta;
+} master_record_v2_t;
 
 typedef struct __attribute__((packed)) {
     uint8_t type;
@@ -287,6 +333,7 @@ typedef struct __attribute__((packed)) {
 typedef enum {
     CLOUD_RESULT_OK,
     CLOUD_RESULT_SKIP,
+    CLOUD_RESULT_DROP,
     CLOUD_RESULT_RETRY,
 } cloud_result_t;
 
@@ -296,10 +343,11 @@ typedef enum {
     RECORD_STORE_FAILED,
 } record_store_result_t;
 
-_Static_assert(sizeof(master_record_t) == sizeof(master_record_v1_t) + sizeof(float),
-               "master_record V1 migration layout changed");
+_Static_assert(sizeof(master_record_t) == sizeof(master_record_v2_t) + sizeof(uint32_t),
+               "master_record V2 migration layout changed");
 _Static_assert(sizeof(master_record_v1_t) == 82, "unexpected pre-d99 record size");
-_Static_assert(sizeof(master_record_t) == 86, "unexpected current record size");
+_Static_assert(sizeof(master_record_v2_t) == 86, "unexpected legacy record size");
+_Static_assert(sizeof(master_record_t) == 90, "unexpected current record size");
 _Static_assert(sizeof(backup_slot_t) == BACKUP_SLOT_SIZE, "backup slot size changed");
 _Static_assert(sizeof(backup_raw_slot_t) == BACKUP_SLOT_SIZE, "raw backup slot size changed");
 _Static_assert(sizeof(backup_index_t) == 32, "backup index size changed");
@@ -307,6 +355,7 @@ _Static_assert(sizeof(backup_index_legacy_t) == 16, "legacy backup index size ch
 
 typedef struct {
     sz2_payload_t payload;
+    sz2_payload_v1_t payload_v1;
     sz2_hello_t hello;
     uint8_t src_mac[6];
     int8_t rssi;
@@ -334,19 +383,28 @@ typedef struct {
     int64_t rssi_sum;
     uint32_t rssi_n;
     int64_t last_rx_us;
+    bool have_measurement;
+    bool last_weight_valid;
+    int32_t last_weight_raw;
+    bool last_temp_valid;
+    float last_temp_c;
+    uint16_t last_vbat_mv;
+    uint32_t last_sensor_error_mask;
+    int8_t last_rssi;
 } node_state_t;
 
 static QueueHandle_t s_rx_queue;
 static SemaphoreHandle_t s_tx_done;
 static SemaphoreHandle_t s_rain_mutex;
 static SemaphoreHandle_t s_backup_mutex;
-#if MASTER_CLOUD_MODE
+#if MASTER_WIFI_ENABLED
 static SemaphoreHandle_t s_reconn_sem;
 #endif
 
 static node_state_t s_nodes[MASTER_MAX_NODES];
 static ds18b20_sensor_t s_ds18b20[DS18B20_MAX_SENSORS];
 static int s_ds18b20_count;
+static bool s_ds18_role_present[DS18B20_EXPECTED_COUNT];
 static bmp280_cal_t s_bmp280;
 static bool s_aht20_present;
 
@@ -354,6 +412,9 @@ static nvs_handle_t s_master_nvs;
 static nvs_handle_t s_rain_nvs;
 static nvs_handle_t s_backup_nvs;
 static uint32_t s_master_seq;
+/* Indulásonként változó névtér a master felhőrekordjaihoz. Az NVS elvesztésekor a
+ * sorszám újraindulhat, ezért a seq önmagában nem lehet globálisan egyedi kulcs. */
+static uint32_t s_master_boot_id;
 static uint32_t s_rain_tip_count;
 static uint32_t s_rain_last_reported;
 
@@ -376,15 +437,20 @@ static volatile uint32_t s_backup_enqueued;
 static volatile uint32_t s_backup_uploaded;
 static volatile uint32_t s_backup_bad;
 static volatile uint32_t s_backup_full;
+static volatile uint32_t s_registry_full_noack;
 
-#if MASTER_CLOUD_MODE
+#if MASTER_WIFI_ENABLED
 static volatile bool s_wifi_assoc;
 static volatile bool s_wifi_ip;
 static volatile uint32_t s_disconn_cnt;
 static volatile uint32_t s_got_ip_cnt;
 static volatile uint32_t s_backoff_ms = MASTER_RECONN_BACKOFF_MIN_MS;
+#endif
+#if MASTER_CLOUD_MODE
 static char s_firebase_token[2048];
 static int64_t s_firebase_token_expire_us;
+static int64_t s_auth_probe_not_before_us;
+static bool s_auth_401_refresh_used;
 #endif
 
 static uint32_t __attribute__((unused)) crc32_update(uint32_t crc, const uint8_t *data, size_t len)
@@ -546,7 +612,7 @@ static void backup_init(void)
     esp_err_t err = nvs_get_blob(s_backup_nvs, "state2", &index, &index_len);
     bool valid_index = err == ESP_OK && index_len == sizeof(index) &&
                        index.magic == BACKUP_INDEX_MAGIC &&
-                       index.version == BACKUP_INDEX_VERSION &&
+                       (index.version == BACKUP_INDEX_VERSION || index.version == 2U) &&
                        index.crc32 == crc32_update(0, (const uint8_t *)&index,
                                                   sizeof(index) - sizeof(index.crc32));
     bool migrate_index = false;
@@ -556,6 +622,7 @@ static void backup_init(void)
         s_backup_write_seq = index.write_seq;
         s_master_seq = index.master_seq;
         s_rain_last_reported = index.rain_reported;
+        migrate_index = index.version != BACKUP_INDEX_VERSION;
     } else if (err == ESP_OK && index_len == sizeof(backup_index_legacy_t)) {
         const backup_index_legacy_t *legacy = (const backup_index_legacy_t *)&index;
         valid_index = legacy->crc32 ==
@@ -609,20 +676,46 @@ static void backup_init(void)
 static bool backup_slot_decode(const backup_raw_slot_t *slot, master_record_t *rec,
                                bool log_migration)
 {
-    if (slot->magic == BACKUP_MAGIC_V2 &&
+    if (slot->magic == BACKUP_MAGIC_V3 &&
         slot->format_version == BACKUP_FORMAT_VERSION &&
         slot->crc32 == crc32_update(0, slot->payload, sizeof(master_record_t))) {
         memcpy(rec, slot->payload, sizeof(*rec));
         return true;
     }
-    if (slot->magic != BACKUP_MAGIC_V1) return false;
-    if (slot->crc32 == crc32_update(0, slot->payload, sizeof(master_record_t))) {
-        memcpy(rec, slot->payload, sizeof(*rec));
+    if (slot->magic == BACKUP_MAGIC_V2 &&
+        slot->format_version == 2U &&
+        slot->crc32 == crc32_update(0, slot->payload, sizeof(master_record_v2_t))) {
+        master_record_v2_t old;
+        memcpy(&old, slot->payload, sizeof(old));
+        memset(rec, 0, sizeof(*rec));
+        rec->type=old.type; rec->unit_id=old.unit_id; rec->valid_mask=old.valid_mask;
+        rec->rssi=old.rssi; memcpy(rec->src_mac, old.src_mac, sizeof(rec->src_mac));
+        rec->seq=old.seq; rec->boot_id=old.boot_id; rec->rx_ms=old.rx_ms; rec->ts=old.ts;
+        rec->vbat_mv=old.vbat_mv; rec->gap=old.gap; rec->rain_tips_total=old.rain_tips_total;
+        rec->rain_tips_delta=old.rain_tips_delta; rec->weight_raw=old.weight_raw;
+        rec->hx711_raw=old.hx711_raw; rec->temp_c=old.temp_c; rec->ds0_hive_c=old.ds0_hive_c;
+        rec->ds1_scale_c=old.ds1_scale_c; rec->aht20_t_c=old.aht20_t_c;
+        rec->aht20_rh=old.aht20_rh; rec->bmp280_t_c=old.bmp280_t_c;
+        rec->bmp280_pa=old.bmp280_pa; rec->rain_mm_total=old.rain_mm_total;
+        rec->rain_mm_delta=old.rain_mm_delta;
+        if (log_migration) ESP_LOGI(TAG, "backup V2 86-byte record migrated write_seq=%u",
+                                   (unsigned)slot->write_seq);
         return true;
     }
+    if (slot->magic != BACKUP_MAGIC_V1) return false;
     if (slot->crc32 == crc32_update(0, slot->payload, sizeof(master_record_v1_t))) {
+        master_record_v1_t old;
+        memcpy(&old, slot->payload, sizeof(old));
         memset(rec, 0, sizeof(*rec));
-        memcpy(rec, slot->payload, sizeof(master_record_v1_t));
+        rec->type=old.type; rec->unit_id=old.unit_id; rec->valid_mask=old.valid_mask;
+        rec->rssi=old.rssi; memcpy(rec->src_mac, old.src_mac, sizeof(rec->src_mac));
+        rec->seq=old.seq; rec->boot_id=old.boot_id; rec->rx_ms=old.rx_ms; rec->ts=old.ts;
+        rec->vbat_mv=old.vbat_mv; rec->gap=old.gap; rec->rain_tips_total=old.rain_tips_total;
+        rec->rain_tips_delta=old.rain_tips_delta; rec->weight_raw=old.weight_raw;
+        rec->hx711_raw=old.hx711_raw; rec->temp_c=old.temp_c; rec->ds0_hive_c=old.ds0_hive_c;
+        rec->ds1_scale_c=old.ds1_scale_c; rec->aht20_t_c=old.aht20_t_c;
+        rec->aht20_rh=old.aht20_rh; rec->bmp280_t_c=old.bmp280_t_c;
+        rec->bmp280_pa=old.bmp280_pa; rec->rain_mm_total=old.rain_mm_total;
         rec->rain_mm_delta = (float)rec->rain_tips_delta * RAIN_MM_PER_TIP;
         if (log_migration) {
             ESP_LOGI(TAG, "backup V1 record migrated write_seq=%u",
@@ -795,7 +888,7 @@ static bool backup_enqueue(master_record_t *rec)
     backup_slot_t slot;
     memset(&slot, 0xFF, sizeof(slot));
     uint32_t next_write_seq = s_backup_write_seq + 1;
-    slot.magic = BACKUP_MAGIC_V2;
+    slot.magic = BACKUP_MAGIC_V3;
     slot.write_seq = next_write_seq;
     slot.format_version = BACKUP_FORMAT_VERSION;
     memcpy(&slot.rec, rec, sizeof(slot.rec));
@@ -948,22 +1041,32 @@ static bool hx711_read_raw_once(int32_t *raw)
 
 static bool hx711_read_avg(int32_t *avg)
 {
-    int64_t acc = 0;
-    int ok = 0;
+    int64_t all_acc = 0, good_acc = 0;
+    int ok = 0, good = 0;
     int zero_count = 0;
+    int minus_one_count = 0;
+    int32_t first = 0;
+    bool constant = true;
     for (int i = 0; i < HX711_SAMPLES; i++) {
         int32_t raw = 0;
         if (hx711_read_raw_once(&raw)) {
-            acc += raw;
+            if (ok > 0 && raw != first) constant = false;
+            if (ok == 0) first = raw;
+            all_acc += raw;
             ok++;
             if (raw == 0) zero_count++;
+            if (raw == -1) minus_one_count++;
+            if (raw != 0 && raw != -1) { good_acc += raw; good++; }
         }
     }
-    if (ok == 0 || zero_count == ok) {
-        return false;
-    }
-    *avg = (int32_t)(acc / ok);
-    return true;
+    *avg = good >= HX711_SAMPLES / 2 ? (int32_t)(good_acc / good) :
+                                        (ok ? (int32_t)(all_acc / ok) : 0);
+    bool error = ok != HX711_SAMPLES || zero_count != 0 || minus_one_count != 0 ||
+                 good < HX711_SAMPLES / 2 || constant;
+    ESP_LOGI(TAG, "HX711 samples total=%u successful=%d zero=%d minus1=%d unique=%d used=%d avg=%ld",
+             HX711_SAMPLES, ok, zero_count, minus_one_count, constant ? 1 : 2,
+             good >= HX711_SAMPLES / 2 ? good : 0, (long)*avg);
+    return !error;
 }
 
 static uint8_t crc8_maxim(const uint8_t *data, int len)
@@ -1138,28 +1241,36 @@ static void ds18b20_apply_role_mapping(void)
         DS18B20_ROM_HIVE,  /* index 0 -> hive_c */
         DS18B20_ROM_SCALE, /* index 1 -> scale_c */
     };
-    for (int r = 0; r < DS18B20_EXPECTED_COUNT && r < s_ds18b20_count; r++) {
+    bool explicit_roles = role_rom[0][0] != '\0' || role_rom[1][0] != '\0';
+    if (!explicit_roles) {
+        for (int r = 0; r < DS18B20_EXPECTED_COUNT; r++) s_ds18_role_present[r] = r < s_ds18b20_count;
+        return; /* csak teljesen üres konfigurációban megengedett az index-fallback */
+    }
+    ds18b20_sensor_t discovered[DS18B20_MAX_SENSORS];
+    int discovered_count = s_ds18b20_count;
+    memcpy(discovered, s_ds18b20, sizeof(discovered));
+    memset(s_ds18b20, 0, sizeof(s_ds18b20));
+    for (int r = 0; r < DS18B20_EXPECTED_COUNT; r++) {
+        s_ds18_role_present[r] = false;
         if (role_rom[r][0] == '\0') continue;
         int found = -1;
-        for (int i = 0; i < s_ds18b20_count; i++) {
+        for (int i = 0; i < discovered_count; i++) {
             char hex[17];
-            rom_to_hex(s_ds18b20[i].rom, hex);
+            rom_to_hex(discovered[i].rom, hex);
             if (strcmp(hex, role_rom[r]) == 0) {
                 found = i;
                 break;
             }
         }
         if (found < 0) {
-            ESP_LOGW(TAG, "DS18B20 role=%d ROM=%s nincs a buszon; index-sorrend fallback",
+            ESP_LOGW(TAG, "DS18B20 role=%d ROM=%s nincs a buszon; nincs index-fallback",
                      r, role_rom[r]);
             continue;
         }
-        if (found != r) {
-            ds18b20_sensor_t tmp = s_ds18b20[r];
-            s_ds18b20[r] = s_ds18b20[found];
-            s_ds18b20[found] = tmp;
-        }
+        s_ds18b20[r] = discovered[found];
+        s_ds18_role_present[r] = true;
     }
+    s_ds18b20_count = DS18B20_EXPECTED_COUNT;
 }
 
 static void ds18b20_refresh_search(void)
@@ -1181,20 +1292,33 @@ static void ds18b20_match_rom(const uint8_t rom[8])
     for (int i = 0; i < 8; i++) ow_write_byte(rom[i]);
 }
 
-static bool ds18b20_read_all(float temps[DS18B20_MAX_SENSORS])
+static bool ds18b20_read_all(float temps[DS18B20_MAX_SENSORS], uint32_t *error_mask)
 {
     for (int i = 0; i < DS18B20_MAX_SENSORS; i++) temps[i] = NAN;
-    if (s_ds18b20_count <= 0) return false;
+    if (error_mask) *error_mask = 0;
+    if (s_ds18b20_count <= 0) {
+        if (error_mask) *error_mask = SZ2_SENSOR_ERR_HIVE_DS18B20 | SZ2_SENSOR_ERR_SCALE_DS18B20;
+        return false;
+    }
 
-    if (!ow_reset()) return false;
+    if (!ow_reset()) {
+        if (error_mask) *error_mask = SZ2_SENSOR_ERR_HIVE_DS18B20 | SZ2_SENSOR_ERR_SCALE_DS18B20;
+        return false;
+    }
     ow_write_byte(0xCC);
     ow_write_byte(0x44);
     vTaskDelay(pdMS_TO_TICKS(750));
 
     bool all_ok = true;
     for (int i = 0; i < s_ds18b20_count; i++) {
+        if (i < DS18B20_EXPECTED_COUNT && !s_ds18_role_present[i]) {
+            all_ok = false;
+            if (error_mask) *error_mask |= i == 0 ? SZ2_SENSOR_ERR_HIVE_DS18B20 : SZ2_SENSOR_ERR_SCALE_DS18B20;
+            continue;
+        }
         if (!ow_reset()) {
             all_ok = false;
+            if (error_mask && i < 2) *error_mask |= i == 0 ? SZ2_SENSOR_ERR_HIVE_DS18B20 : SZ2_SENSOR_ERR_SCALE_DS18B20;
             continue;
         }
         ds18b20_match_rom(s_ds18b20[i].rom);
@@ -1207,17 +1331,18 @@ static bool ds18b20_read_all(float temps[DS18B20_MAX_SENSORS])
             all_zero = all_zero && sp[b] == 0x00;
             all_ff = all_ff && sp[b] == 0xFF;
         }
-        if (all_zero || all_ff || crc8_maxim(sp, 8) != sp[8]) {
-            all_ok = false;
-            continue;
-        }
         int16_t raw = (int16_t)((uint16_t)sp[0] | ((uint16_t)sp[1] << 8));
         float temp_c = (float)raw / 16.0f;
-        if (temp_c < -55.0f || temp_c > 125.0f) {
+        if (all_zero || all_ff) {
             all_ok = false;
+            if (error_mask && i < 2) *error_mask |= i == 0 ? SZ2_SENSOR_ERR_HIVE_DS18B20 : SZ2_SENSOR_ERR_SCALE_DS18B20;
             continue;
         }
-        temps[i] = temp_c;
+        temps[i] = temp_c; /* CRC/range/85 után is őrizzük meg a tényleges számot. */
+        if (crc8_maxim(sp, 8) != sp[8] || temp_c < -55.0f || temp_c > 125.0f || temp_c == 85.0f) {
+            all_ok = false;
+            if (error_mask && i < 2) *error_mask |= i == 0 ? SZ2_SENSOR_ERR_HIVE_DS18B20 : SZ2_SENSOR_ERR_SCALE_DS18B20;
+        }
     }
     return all_ok;
 }
@@ -1483,6 +1608,8 @@ static void recv_cb(const esp_now_recv_info_t *info, const uint8_t *data, int le
     item.len = (uint16_t)len;
     if (len == (int)sizeof(sz2_payload_t)) {
         memcpy(&item.payload, data, sizeof(sz2_payload_t));
+    } else if (len == (int)sizeof(sz2_payload_v1_t)) {
+        memcpy(&item.payload_v1, data, sizeof(sz2_payload_v1_t));
     } else if (len == (int)sizeof(sz2_hello_t)) {
         memcpy(&item.hello, data, sizeof(sz2_hello_t));
     } else {
@@ -1515,13 +1642,14 @@ static uint32_t next_node_slot_offset_s(uint8_t node_id)
     return target_abs - phase;
 }
 
-static bool send_ack(const uint8_t *dest, uint8_t node_id, uint32_t seq)
+static bool send_ack(const uint8_t *dest, uint8_t node_id, uint32_t boot_id, uint32_t seq)
 {
     sz2_ack_t ack;
     memset(&ack, 0, sizeof(ack));
     ack.protocol_version = SZ2_PROTO_VERSION;
     ack.packet_type = SZ2_PKT_ACK;
     ack.node_id = node_id;
+    ack.boot_id = boot_id;
     ack.ack_last_seq = seq;
     ack.clear_buffer_until_seq = seq;
     ack.clock_correction_s = (int32_t)current_epoch_s();
@@ -1546,13 +1674,14 @@ static bool send_ack(const uint8_t *dest, uint8_t node_id, uint32_t seq)
     }
 }
 
-static bool send_sync_ack(const uint8_t *dest, uint8_t node_id, uint32_t hello_seq)
+static bool send_sync_ack(const uint8_t *dest, uint8_t node_id, uint32_t boot_id, uint32_t hello_seq)
 {
     sz2_ack_t ack;
     memset(&ack, 0, sizeof(ack));
     ack.protocol_version = SZ2_PROTO_VERSION;
     ack.packet_type = SZ2_PKT_ACK;
     ack.node_id = node_id;
+    ack.boot_id = boot_id;
     ack.ack_last_seq = hello_seq;
     ack.clear_buffer_until_seq = 0;
     ack.clock_correction_s = (int32_t)current_epoch_s();
@@ -1580,7 +1709,21 @@ static bool send_sync_ack(const uint8_t *dest, uint8_t node_id, uint32_t hello_s
 static node_state_t *node_get(uint8_t node_id, const uint8_t *mac)
 {
     for (int i = 0; i < MASTER_MAX_NODES; i++) {
-        if (s_nodes[i].in_use && s_nodes[i].node_id == node_id) return &s_nodes[i];
+        if (s_nodes[i].in_use && s_nodes[i].node_id == node_id) {
+            if (memcmp(s_nodes[i].mac, mac, 6) != 0) {
+                ESP_LOGW(TAG, "NODE_TAKEOVER node=%u old=%02X:%02X:%02X:%02X:%02X:%02X new=%02X:%02X:%02X:%02X:%02X:%02X; state reset",
+                         node_id, s_nodes[i].mac[0], s_nodes[i].mac[1], s_nodes[i].mac[2],
+                         s_nodes[i].mac[3], s_nodes[i].mac[4], s_nodes[i].mac[5],
+                         mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+                memset(&s_nodes[i], 0, sizeof(s_nodes[i]));
+                s_nodes[i].in_use = true;
+                s_nodes[i].node_id = node_id;
+                memcpy(s_nodes[i].mac, mac, 6);
+                s_nodes[i].rssi_min = 127;
+                s_nodes[i].rssi_max = -128;
+            }
+            return &s_nodes[i];
+        }
     }
     for (int i = 0; i < MASTER_MAX_NODES; i++) {
         if (!s_nodes[i].in_use) {
@@ -1594,6 +1737,9 @@ static node_state_t *node_get(uint8_t node_id, const uint8_t *mac)
             return n;
         }
     }
+    s_registry_full_noack++;
+    ESP_LOGE(TAG, "NODE_REGISTRY_FULL no-ACK node=%u count=%u", node_id,
+             (unsigned)s_registry_full_noack);
     return NULL;
 }
 
@@ -1634,6 +1780,7 @@ static void node_record_from_payload(master_record_t *rec, const sz2_payload_t *
     rec->type = REC_TYPE_NODE;
     rec->unit_id = p->node_id;
     rec->valid_mask = 0;
+    rec->sensor_error_mask = p->sensor_error_mask;
     if (isfinite(p->weight)) rec->valid_mask |= REC_VALID_HX711;
     if (isfinite(p->temp)) rec->valid_mask |= REC_VALID_TEMP;
     rec->rssi = item->rssi;
@@ -1651,10 +1798,13 @@ static void node_record_from_payload(master_record_t *rec, const sz2_payload_t *
     rec->temp_c = p->temp;
 }
 
-static const char *hx711_payload_status(float weight)
+static const char *hx711_payload_status(float weight, uint32_t error_mask)
 {
     if (!isfinite(weight)) {
         return "HX711_ERR";
+    }
+    if (error_mask & SZ2_SENSOR_ERR_HX711) {
+        return "HX711_FAULT";
     }
     if (fabsf(weight) <= 0.5f) {
         return "HX711_ZERO_RAW_SUSPECT";
@@ -1662,9 +1812,10 @@ static const char *hx711_payload_status(float weight)
     return "HX711_OK";
 }
 
-static const char *ds18b20_payload_status(float temp)
+static const char *ds18b20_payload_status(float temp, uint32_t error_mask)
 {
-    return isfinite(temp) ? "DS18B20_OK" : "DS18B20_ERR";
+    return isfinite(temp) && !(error_mask & SZ2_SENSOR_ERR_NODE_DS18B20) ?
+           "DS18B20_OK" : "DS18B20_FAULT";
 }
 
 static void print_node_stat(const node_state_t *n, int64_t now_us)
@@ -1719,7 +1870,7 @@ static void rx_consumer_task(void *arg)
                 n->rssi_n++;
 
                 uint32_t fail_before = s_ack_status_fail;
-                if (send_sync_ack(item.src_mac, h->node_id, h->hello_seq)) {
+                if (send_sync_ack(item.src_mac, h->node_id, h->boot_id, h->hello_seq)) {
                     n->ack_sent++;
                     if (s_ack_status_fail != fail_before) n->ack_txfail++;
                 }
@@ -1729,18 +1880,39 @@ static void rx_consumer_task(void *arg)
                          (unsigned)h->wake_period_s, (unsigned)h->flags, (int)item.rssi);
                 continue;
             }
-            if (item.len != (uint16_t)sizeof(sz2_payload_t)) {
+            bool legacy_v1 = item.len == (uint16_t)sizeof(sz2_payload_v1_t);
+            if (item.len != (uint16_t)sizeof(sz2_payload_t) && !legacy_v1) {
                 s_diag_len_bad++;
                 continue;
             }
+            sz2_payload_t legacy_normalized;
             sz2_payload_t *p = &item.payload;
-            if (p->protocol_version != SZ2_PROTO_VERSION || p->packet_type != SZ2_PKT_DATA) {
+            if (legacy_v1) {
+                const sz2_payload_v1_t *old = &item.payload_v1;
+                if (old->protocol_version != SZ2_PROTO_VERSION_V1 || old->packet_type != SZ2_PKT_DATA ||
+                    sz2_payload_v1_crc(old) != old->crc) {
+                    s_diag_ver_bad++;
+                    continue;
+                }
+                memset(&legacy_normalized, 0, sizeof(legacy_normalized));
+                legacy_normalized.protocol_version = SZ2_PROTO_VERSION;
+                legacy_normalized.packet_type = old->packet_type;
+                legacy_normalized.node_id = old->node_id;
+                memcpy(legacy_normalized.node_mac, old->node_mac, sizeof(old->node_mac));
+                legacy_normalized.boot_id=old->boot_id; legacy_normalized.seq=old->seq;
+                legacy_normalized.packet_idx=old->packet_idx; legacy_normalized.total_packets=old->total_packets;
+                legacy_normalized.send_timestamp_ms=old->send_timestamp_ms;
+                legacy_normalized.weight=old->weight; legacy_normalized.temp=old->temp;
+                legacy_normalized.vbat=old->vbat; /* error mask defaults to zero */
+                p = &legacy_normalized;
+                ESP_LOGI(TAG, "RX legacy v1 DATA accepted node=%u seq=%u", p->node_id, (unsigned)p->seq);
+            } else if (p->protocol_version != SZ2_PROTO_VERSION || p->packet_type != SZ2_PKT_DATA) {
                 s_diag_ver_bad++;
                 continue;
             }
             node_state_t *n = node_get(p->node_id, item.src_mac);
             if (n == NULL) continue;
-            if (sz2_payload_crc(p) != p->crc) {
+            if (!legacy_v1 && sz2_payload_crc(p) != p->crc) {
                 n->crc_err++;
                 continue;
             }
@@ -1755,6 +1927,14 @@ static void rx_consumer_task(void *arg)
             if (item.rssi > n->rssi_max) n->rssi_max = item.rssi;
             n->rssi_sum += item.rssi;
             n->rssi_n++;
+            n->have_measurement = true;
+            n->last_weight_valid = isfinite(p->weight);
+            if (n->last_weight_valid) n->last_weight_raw = (int32_t)lrintf(p->weight);
+            n->last_temp_valid = isfinite(p->temp);
+            if (n->last_temp_valid) n->last_temp_c = p->temp;
+            n->last_vbat_mv = p->vbat;
+            n->last_sensor_error_mask = p->sensor_error_mask;
+            n->last_rssi = item.rssi;
             uint32_t gap = 0;
             bool boot_changed = n->have_boot_id && p->boot_id != n->boot_id;
             bool is_new = boot_changed || !n->have_seq || p->seq > n->last_seq;
@@ -1789,7 +1969,7 @@ static void rx_consumer_task(void *arg)
 
             if (!is_new || accepted) {
                 uint32_t fail_before = s_ack_status_fail;
-                if (send_ack(item.src_mac, p->node_id, p->seq)) {
+                if (send_ack(item.src_mac, p->node_id, p->boot_id, p->seq)) {
                     n->ack_sent++;
                     if (s_ack_status_fail != fail_before) n->ack_txfail++;
                 }
@@ -1799,10 +1979,10 @@ static void rx_consumer_task(void *arg)
                           "weight=%.0f(%s) temp=%.2f(%s) vbat=%u",
                      p->node_id, (unsigned)p->seq, is_new ? "NEW" : "DUP",
                      (unsigned)gap, (int)item.rssi, (double)p->weight,
-                     hx711_payload_status(p->weight),
-                     (double)p->temp, ds18b20_payload_status(p->temp),
+                     hx711_payload_status(p->weight, p->sensor_error_mask),
+                     (double)p->temp, ds18b20_payload_status(p->temp, p->sensor_error_mask),
                      (unsigned)p->vbat);
-            if (!isfinite(p->weight)) {
+            if (p->sensor_error_mask & SZ2_SENSOR_ERR_HX711) {
                 ESP_LOGW(TAG, "SENSOR_WARN node=%u seq=%u sensor=HX711 status=TIMEOUT kind=%s rssi=%d",
                          p->node_id, (unsigned)p->seq, is_new ? "NEW" : "DUP",
                          (int)item.rssi);
@@ -1812,7 +1992,7 @@ static void rx_consumer_task(void *arg)
                          p->node_id, (unsigned)p->seq, (double)p->weight,
                          is_new ? "NEW" : "DUP", (int)item.rssi);
             }
-            if (!isfinite(p->temp)) {
+            if (p->sensor_error_mask & SZ2_SENSOR_ERR_NODE_DS18B20 || !isfinite(p->temp)) {
                 ESP_LOGW(TAG, "SENSOR_WARN node=%u seq=%u sensor=DS18B20 status=INVALID kind=%s rssi=%d",
                          p->node_id, (unsigned)p->seq, is_new ? "NEW" : "DUP",
                          (int)item.rssi);
@@ -1831,7 +2011,7 @@ static void rx_consumer_task(void *arg)
                     print_node_stat(&s_nodes[i], now_us);
                 }
             }
-#if MASTER_CLOUD_MODE
+#if MASTER_WIFI_ENABLED
             const char *wifi_state = s_wifi_ip ? "IP" : (s_wifi_assoc ? "ASSOC" : "DOWN");
 #else
             const char *wifi_state = "OFF";
@@ -2058,8 +2238,9 @@ static bool build_record_json(const master_record_t *rec, char *body, int body_c
     uint32_t ts = rec->ts ? rec->ts : current_epoch_s();
     if (ts == 0) return false;
 
-    int n = json_add(body, body_cap, 0, "{\"ts\":%u,\"rx_ms\":%u,\"unit_id\":%u,\"seq\":%u",
-                     (unsigned)ts, (unsigned)rec->rx_ms, rec->unit_id, (unsigned)rec->seq);
+    int n = json_add(body, body_cap, 0, "{\"ts\":%u,\"rx_ms\":%u,\"unit_id\":%u,\"seq\":%u,\"sensor_error_mask\":%u",
+                     (unsigned)ts, (unsigned)rec->rx_ms, rec->unit_id, (unsigned)rec->seq,
+                     (unsigned)rec->sensor_error_mask);
     if (rec->type == REC_TYPE_NODE) {
         n = json_add(body, body_cap, n,
                      ",\"boot_id\":\"0x%08X\",\"vbat_mv\":%u,"
@@ -2110,18 +2291,18 @@ static bool build_experiment_node_json(const master_record_t *rec, char *body, i
 {
     uint32_t ts = rec->ts ? rec->ts : current_epoch_s();
     if (ts == 0 || rec->type != REC_TYPE_NODE) return false;
-    if (!(rec->valid_mask & REC_VALID_HX711) || !(rec->valid_mask & REC_VALID_TEMP)) return false;
 
     int n = json_add(body, body_cap, 0,
                      "{\"ts\":%u,\"rx_ms\":%u,\"node_id\":%u,\"seq\":%u,"
                      "\"boot_id\":\"0x%08X\",\"packet_idx\":0,\"vbat_mv\":%u,"
                      "\"weight\":%ld,\"temp_c\":%.3f,\"rssi\":%d,"
-                     "\"kind\":\"NEW\",\"gap\":%u,"
+                     "\"kind\":\"NEW\",\"gap\":%u,\"sensor_error_mask\":%u,"
                      "\"src_mac\":\"%02X:%02X:%02X:%02X:%02X:%02X\"}",
                      (unsigned)ts, (unsigned)rec->rx_ms, rec->unit_id,
                      (unsigned)rec->seq, (unsigned)rec->boot_id,
                      (unsigned)rec->vbat_mv, (long)rec->weight_raw,
                      (double)rec->temp_c, (int)rec->rssi, (unsigned)rec->gap,
+                     (unsigned)rec->sensor_error_mask,
                      rec->src_mac[0], rec->src_mac[1], rec->src_mac[2],
                      rec->src_mac[3], rec->src_mac[4], rec->src_mac[5]);
     return n > 0;
@@ -2131,10 +2312,10 @@ static bool build_hive2_node_json(const master_record_t *rec, char *body, int bo
 {
     uint32_t ts = rec->ts ? rec->ts : current_epoch_s();
     if (ts == 0 || rec->type != REC_TYPE_NODE) return false;
-    if (!(rec->valid_mask & REC_VALID_HX711)) return false;
 
-    int n = json_add(body, body_cap, 0, "{\"ts\":%u,\"node_id\":%u,\"weight_raw\":%ld",
-                     (unsigned)ts, rec->unit_id, (long)rec->weight_raw);
+    int n = json_add(body, body_cap, 0, "{\"ts\":%u,\"node_id\":%u,\"weight_raw\":%ld,\"sensor_error_mask\":%u",
+                     (unsigned)ts, rec->unit_id, (long)rec->weight_raw,
+                     (unsigned)rec->sensor_error_mask);
     if (rec->valid_mask & REC_VALID_TEMP) {
         n = json_add(body, body_cap, n, ",\"temp_c\":%.3f", (double)rec->temp_c);
     }
@@ -2148,9 +2329,9 @@ static bool build_hive2_node_json(const master_record_t *rec, char *body, int bo
 static bool build_hive2_master_rod_json(const master_record_t *rec, char *body, int body_cap)
 {
     uint32_t ts = rec->ts ? rec->ts : current_epoch_s();
-    if (ts == 0 || !(rec->valid_mask & REC_VALID_HX711)) return false;
-    int n = json_add(body, body_cap, 0, "{\"ts\":%u,\"weight_raw\":%ld}",
-                     (unsigned)ts, (long)rec->hx711_raw);
+    if (ts == 0) return false;
+    int n = json_add(body, body_cap, 0, "{\"ts\":%u,\"weight_raw\":%ld,\"sensor_error_mask\":%u}",
+                     (unsigned)ts, (long)rec->hx711_raw, (unsigned)rec->sensor_error_mask);
     return n > 0;
 }
 
@@ -2159,8 +2340,8 @@ static bool build_hive2_master_env_json(const master_record_t *rec, char *body, 
     uint32_t ts = rec->ts ? rec->ts : current_epoch_s();
     if (ts == 0) return false;
 
-    int n = json_add(body, body_cap, 0, "{\"ts\":%u,\"rain_mm\":%.4f",
-                     (unsigned)ts, (double)rec->rain_mm_delta);
+    int n = json_add(body, body_cap, 0, "{\"ts\":%u,\"rain_mm\":%.4f,\"sensor_error_mask\":%u",
+                     (unsigned)ts, (double)rec->rain_mm_delta, (unsigned)rec->sensor_error_mask);
     if (rec->valid_mask & REC_VALID_AHT) {
         n = json_add(body, body_cap, n, ",\"air_t_c\":%.3f,\"air_rh\":%.3f",
                      (double)rec->aht20_t_c, (double)rec->aht20_rh);
@@ -2179,7 +2360,8 @@ static bool build_hive2_master_temp_json(const master_record_t *rec, char *body,
     if (ts == 0) return false;
     if (!(rec->valid_mask & REC_VALID_DS0) && !(rec->valid_mask & REC_VALID_DS1)) return false;
 
-    int n = json_add(body, body_cap, 0, "{\"ts\":%u", (unsigned)ts);
+    int n = json_add(body, body_cap, 0, "{\"ts\":%u,\"sensor_error_mask\":%u",
+                     (unsigned)ts, (unsigned)rec->sensor_error_mask);
     if (rec->valid_mask & REC_VALID_DS0) {
         n = json_add(body, body_cap, n, ",\"hive_c\":%.3f", (double)rec->ds0_hive_c);
     }
@@ -2201,19 +2383,24 @@ static bool cloud_put_json_path(const char *path, const char *body, int *status_
     return http_json(url, body, HTTP_METHOD_PUT, NULL, resp, sizeof(resp), status_out);
 }
 
+static int master_record_key(char *out, size_t cap, const master_record_t *rec)
+{
+    /* A már flashben levő, régi firmware-rel készült master rekordok boot_id=0
+     * értékűek. Ezeknél tartsuk meg a régi kulcsot, így a backlog újraküldése továbbra
+     * idempotens; minden új rekord boot-scoped kulcsot kap. */
+    if (rec->boot_id == 0) {
+        return snprintf(out, cap, "master_%u", (unsigned)rec->seq);
+    }
+    return snprintf(out, cap, "master_%08X_%u",
+                    (unsigned)rec->boot_id, (unsigned)rec->seq);
+}
+
 static bool cloud_record_should_skip(const master_record_t *rec)
 {
     if (!cloud_record_enabled(rec)) return true;
     if (MASTER_FIREBASE_ROOT_PATH[0] != '\0') {
-        return rec->type != REC_TYPE_NODE ||
-               !(rec->valid_mask & REC_VALID_HX711) ||
-               !(rec->valid_mask & REC_VALID_TEMP);
+        return rec->type != REC_TYPE_NODE;
     }
-#if MASTER_CLOUD_HIVE2_SCHEMA
-    if (rec->type == REC_TYPE_NODE && !(rec->valid_mask & REC_VALID_HX711)) {
-        return true;
-    }
-#endif
     return rec->type != REC_TYPE_NODE && rec->type != REC_TYPE_MASTER;
 }
 
@@ -2235,23 +2422,26 @@ static cloud_result_t __attribute__((unused)) cloud_post_hive2_record_once(const
         attempted = true;
         ok_all = cloud_put_json_path(path, body, &status);
     } else {
+        char record_key[40];
+        int key_len = master_record_key(record_key, sizeof(record_key), rec);
+        if (key_len <= 0 || key_len >= (int)sizeof(record_key)) return CLOUD_RESULT_RETRY;
         if (build_hive2_master_rod_json(rec, body, sizeof(body))) {
-            int p = snprintf(path, sizeof(path), "hives/%s/rods/master/readings/master_%u",
-                             MASTER_FIREBASE_TARGET_HIVE_ID, (unsigned)rec->seq);
+            int p = snprintf(path, sizeof(path), "hives/%s/rods/master/readings/%s",
+                             MASTER_FIREBASE_TARGET_HIVE_ID, record_key);
             if (p <= 0 || p >= (int)sizeof(path)) return CLOUD_RESULT_RETRY;
             attempted = true;
             ok_all = cloud_put_json_path(path, body, &status) && ok_all;
         }
         if (build_hive2_master_env_json(rec, body, sizeof(body))) {
-            int p = snprintf(path, sizeof(path), "hives/%s/env/readings/master_%u",
-                             MASTER_FIREBASE_TARGET_HIVE_ID, (unsigned)rec->seq);
+            int p = snprintf(path, sizeof(path), "hives/%s/env/readings/%s",
+                             MASTER_FIREBASE_TARGET_HIVE_ID, record_key);
             if (p <= 0 || p >= (int)sizeof(path)) return CLOUD_RESULT_RETRY;
             attempted = true;
             ok_all = cloud_put_json_path(path, body, &status) && ok_all;
         }
         if (build_hive2_master_temp_json(rec, body, sizeof(body))) {
-            int p = snprintf(path, sizeof(path), "hives/%s/temp/readings/master_%u",
-                             MASTER_FIREBASE_TARGET_HIVE_ID, (unsigned)rec->seq);
+            int p = snprintf(path, sizeof(path), "hives/%s/temp/readings/%s",
+                             MASTER_FIREBASE_TARGET_HIVE_ID, record_key);
             if (p <= 0 || p >= (int)sizeof(path)) return CLOUD_RESULT_RETRY;
             attempted = true;
             ok_all = cloud_put_json_path(path, body, &status) && ok_all;
@@ -2267,6 +2457,7 @@ static cloud_result_t cloud_post_record_once(const master_record_t *rec)
 {
     if (cloud_record_should_skip(rec)) return CLOUD_RESULT_SKIP;
     if (!s_wifi_ip) return CLOUD_RESULT_RETRY;
+    if (esp_timer_get_time() < s_auth_probe_not_before_us) return CLOUD_RESULT_RETRY;
     if (!firebase_token_valid() && !firebase_auth_refresh()) return CLOUD_RESULT_RETRY;
 
 #if MASTER_CLOUD_HIVE2_SCHEMA
@@ -2293,10 +2484,13 @@ static cloud_result_t cloud_post_record_once(const master_record_t *rec)
                      (unsigned)rec->boot_id, (unsigned)rec->seq,
                      s_firebase_token);
     } else {
+        char record_key[40];
+        int key_len = master_record_key(record_key, sizeof(record_key), rec);
+        if (key_len <= 0 || key_len >= (int)sizeof(record_key)) return CLOUD_RESULT_RETRY;
         u = snprintf(url, sizeof(url),
-                     "%s/hives/%s%s/master/raw/master_%u.json?auth=%s",
+                     "%s/hives/%s%s/master/raw/%s.json?auth=%s",
                      MASTER_FIREBASE_DATABASE_URL, MASTER_FIREBASE_HIVE_ID,
-                     MASTER_FIREBASE_HIVE_PATH_SUFFIX, (unsigned)rec->seq,
+                     MASTER_FIREBASE_HIVE_PATH_SUFFIX, record_key,
                      s_firebase_token);
     }
     if (u <= 0 || u >= (int)sizeof(url)) return CLOUD_RESULT_RETRY;
@@ -2309,9 +2503,23 @@ static cloud_result_t cloud_post_record_once(const master_record_t *rec)
     char resp[256];
     int status = 0;
     bool ok = http_json(url, body, HTTP_METHOD_PUT, NULL, resp, sizeof(resp), &status);
-    if (!ok) ESP_LOGW(TAG, "cloud PUT failed status=%d type=%u unit=%u seq=%u",
-                      status, rec->type, rec->unit_id, (unsigned)rec->seq);
-    return ok ? CLOUD_RESULT_OK : CLOUD_RESULT_RETRY;
+    if (ok) {
+        s_auth_401_refresh_used = false;
+        return CLOUD_RESULT_OK;
+    }
+    ESP_LOGW(TAG, "cloud PUT failed status=%d type=%u unit=%u seq=%u",
+             status, rec->type, rec->unit_id, (unsigned)rec->seq);
+    if (status == 401) {
+        if (!s_auth_401_refresh_used) {
+            s_auth_401_refresh_used = true;
+            s_firebase_token_expire_us = 0; /* a következő kísérlet egyszer frissít */
+        } else {
+            s_auth_probe_not_before_us = esp_timer_get_time() + 15LL * 60LL * 1000000LL;
+            ESP_LOGW(TAG, "Firebase repeated 401; auth probe paused for 15 minutes");
+        }
+        return CLOUD_RESULT_RETRY;
+    }
+    return status >= 400 && status < 500 ? CLOUD_RESULT_DROP : CLOUD_RESULT_RETRY;
 }
 
 static cloud_result_t cloud_post_record_with_retries(const master_record_t *rec)
@@ -2334,6 +2542,12 @@ static cloud_result_t cloud_post_record_with_retries(const master_record_t *rec)
         if (result == CLOUD_RESULT_SKIP) {
             s_cloud_skip++;
             return CLOUD_RESULT_SKIP;
+        }
+        if (result == CLOUD_RESULT_DROP) {
+            s_cloud_drop++;
+            ESP_LOGW(TAG, "CLOUD_DROP_PERMANENT type=%u unit=%u seq=%u",
+                     rec->type, rec->unit_id, (unsigned)rec->seq);
+            return CLOUD_RESULT_DROP;
         }
         s_cloud_fail++;
         if (attempt < MASTER_CLOUD_MAX_ATTEMPTS) {
@@ -2366,7 +2580,7 @@ static void cloud_task(void *arg)
         }
 
         cloud_result_t result = cloud_post_record_with_retries(&rec);
-        if (result == CLOUD_RESULT_OK || result == CLOUD_RESULT_SKIP) {
+        if (result == CLOUD_RESULT_OK || result == CLOUD_RESULT_SKIP || result == CLOUD_RESULT_DROP) {
             if (!backup_pop()) {
                 vTaskDelay(pdMS_TO_TICKS(1000));
             }
@@ -2375,7 +2589,9 @@ static void cloud_task(void *arg)
         }
     }
 }
+#endif
 
+#if MASTER_WIFI_ENABLED
 static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     (void)arg;
@@ -2399,12 +2615,18 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
         s_wifi_ip = true;
         s_got_ip_cnt++;
         s_backoff_ms = MASTER_RECONN_BACKOFF_MIN_MS;
+#if MASTER_CLOUD_MODE
         sntp_start_once();
+#endif
         uint8_t ch = 0;
         wifi_second_chan_t sec = WIFI_SECOND_CHAN_NONE;
         esp_wifi_get_channel(&ch, &sec);
         ESP_LOGI(TAG, "WIFI GOT_IP ip=" IPSTR " gw=" IPSTR " ch=%u",
                  IP2STR(&ev->ip_info.ip), IP2STR(&ev->ip_info.gw), (unsigned)ch);
+#if MASTER_WEB_STATUS
+        ESP_LOGI(TAG, "LOCAL_STATUS open http://" IPSTR "/",
+                 IP2STR(&ev->ip_info.ip));
+#endif
         check_wifi_channel("GOT_IP");
     }
 }
@@ -2426,11 +2648,126 @@ static void reconnect_task(void *arg)
 }
 #endif
 
+#if MASTER_WEB_STATUS
+static esp_err_t web_sendf(httpd_req_t *req, const char *fmt, ...)
+{
+    char line[640];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(line, sizeof(line), fmt, ap);
+    va_end(ap);
+    if (n < 0 || n >= (int)sizeof(line)) return ESP_FAIL;
+    return httpd_resp_sendstr_chunk(req, line);
+}
+
+static esp_err_t web_status_handler(httpd_req_t *req)
+{
+    /* This is a best-effort monitoring view. RX is the only writer; a slightly
+     * older field is preferable to blocking an ESP-NOW ACK while rendering HTML. */
+    node_state_t nodes[MASTER_MAX_NODES];
+    memcpy(nodes, s_nodes, sizeof(nodes));
+    const int64_t now_us = esp_timer_get_time();
+    const int fresh_limit_s = MASTER_NODE_PERIOD_SEC + MASTER_NODE_SLOT_SPACING_SEC +
+                              MASTER_NODE_SLOT_GUARD_SEC + 30;
+
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    if (web_sendf(req,
+        "<!doctype html><html><head><meta charset=utf-8><meta http-equiv=refresh content=%u>"
+        "<meta name=viewport content='width=device-width,initial-scale=1'>"
+        "<title>Bee Scale master</title><style>body{font:16px system-ui;margin:18px;color:#18221b}"
+        "table{border-collapse:collapse;width:100%%;max-width:1000px}th,td{border:1px solid #ccd5ce;"
+        "padding:8px;text-align:left}th{background:#edf4ee}.ok{color:#087a35;font-weight:700}"
+        ".stale{color:#a24b00;font-weight:700}.wait{color:#5d6670}small{color:#5d6670}</style></head><body>"
+        "<h1>Bee Scale master</h1><p>WiFi: <b>%s</b> &middot; uptime: %us &middot; refresh: %us</p>"
+        "<table><tr><th>Node</th><th>Allapot</th><th>Utolso vetel</th><th>RSSI</th>"
+        "<th>Seq</th><th>Merleg (raw)</th><th>Homerseklet</th><th>VBAT</th>"
+        "<th>Hibak (crc/miss/ackfail)</th></tr>",
+        (unsigned)MASTER_WEB_REFRESH_SEC, s_wifi_ip ? "csatlakozva" : "nincs IP",
+        (unsigned)(now_us / 1000000), (unsigned)MASTER_WEB_REFRESH_SEC) != ESP_OK) {
+        return ESP_FAIL;
+    }
+
+    int node_count = 0;
+    for (int i = 0; i < MASTER_MAX_NODES; i++) {
+        const node_state_t *n = &nodes[i];
+        if (!n->in_use) continue;
+        node_count++;
+        int age_s = n->last_rx_us ? (int)((now_us - n->last_rx_us) / 1000000) : -1;
+        bool online = age_s >= 0 && age_s <= fresh_limit_s;
+        int rssi_avg = n->rssi_n ? (int)(n->rssi_sum / (int64_t)n->rssi_n) : 0;
+        const char *state = online ? "ONLINE" : "ELOREGED";
+        const char *state_class = online ? "ok" : "stale";
+        char age[32];
+        char weight[32];
+        char temp[32];
+        if (age_s < 0) snprintf(age, sizeof(age), "nincs adat");
+        else snprintf(age, sizeof(age), "%d s", age_s);
+        if (n->have_measurement && n->last_weight_valid) {
+            snprintf(weight, sizeof(weight), "%ld%s", (long)n->last_weight_raw,
+                     (n->last_sensor_error_mask & SZ2_SENSOR_ERR_HX711) ? " FAULT" : "");
+        } else {
+            snprintf(weight, sizeof(weight), "--");
+        }
+        if (n->have_measurement && n->last_temp_valid) {
+            snprintf(temp, sizeof(temp), "%.2f C%s", (double)n->last_temp_c,
+                     (n->last_sensor_error_mask & SZ2_SENSOR_ERR_NODE_DS18B20) ? " FAULT" : "");
+        } else {
+            snprintf(temp, sizeof(temp), "--");
+        }
+        if (web_sendf(req,
+            "<tr><td>%u</td><td class=%s>%s</td><td>%s</td><td>%d dBm <small>(atlag)</small></td>"
+            "<td>" PRIu32 "</td><td>%s</td><td>%s</td><td>%u mV</td>"
+            "<td>" PRIu32 "/" PRIu32 "/" PRIu32 "</td></tr>",
+            n->node_id, state_class, state, age, rssi_avg, n->last_seq, weight, temp,
+            n->last_vbat_mv, n->crc_err, n->miss_cum, n->ack_txfail) != ESP_OK) {
+            return ESP_FAIL;
+        }
+    }
+    if (node_count == 0) {
+        if (web_sendf(req,
+            "<tr><td colspan=9 class=wait>Meg nincs bejelentkezett node. Inditsd el a node-ot, "
+            "vagy varj a kovetkezo kuldesere.</td></tr>") != ESP_OK) {
+            return ESP_FAIL;
+        }
+    }
+    if (web_sendf(req,
+        "</table><p><small>A lap csak a master helyi memoriaban levo utolso veteli allapotot mutatja; "
+        "internet es felho nem szukseges hozza.</small></p></body></html>") != ESP_OK) {
+        return ESP_FAIL;
+    }
+    return httpd_resp_sendstr_chunk(req, NULL);
+}
+
+static void web_status_start(void)
+{
+    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.stack_size = 7168;
+    config.max_open_sockets = 2;
+    httpd_handle_t server = NULL;
+    esp_err_t err = httpd_start(&server, &config);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "LOCAL_STATUS server start failed: %s", esp_err_to_name(err));
+        return;
+    }
+    static const httpd_uri_t status_uri = {
+        .uri = "/", .method = HTTP_GET, .handler = web_status_handler, .user_ctx = NULL,
+    };
+    err = httpd_register_uri_handler(server, &status_uri);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "LOCAL_STATUS URI register failed: %s", esp_err_to_name(err));
+        httpd_stop(server);
+        return;
+    }
+    ESP_LOGI(TAG, "LOCAL_STATUS server started (waiting for WiFi IP)");
+}
+#endif
+
 static void wifi_espnow_init(void)
 {
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-#if MASTER_CLOUD_MODE
+#if MASTER_WIFI_ENABLED
     esp_netif_create_default_wifi_sta();
 #endif
 
@@ -2439,7 +2776,7 @@ static void wifi_espnow_init(void)
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
 
-#if MASTER_CLOUD_MODE
+#if MASTER_WIFI_ENABLED
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                                         wifi_event_handler, NULL, NULL));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
@@ -2457,11 +2794,11 @@ static void wifi_espnow_init(void)
 #if MASTER_WIFI_SCAN_DIAG
     wifi_scan_diag_once();
 #endif
-#if !MASTER_CLOUD_MODE
+#if !MASTER_WIFI_ENABLED
     ESP_ERROR_CHECK(esp_wifi_set_channel(MASTER_ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE));
     check_wifi_channel("wifi_espnow_init");
 #else
-    ESP_LOGI(TAG, "cloud STA mode: AP/router csatorna diktal, expected_ch=%u",
+    ESP_LOGI(TAG, "WiFi STA mode: AP/router csatorna diktal, expected_ch=%u",
              (unsigned)MASTER_ESPNOW_CHANNEL);
 #endif
 
@@ -2477,8 +2814,8 @@ static void wifi_espnow_init(void)
     wifi_second_chan_t sec = WIFI_SECOND_CHAN_NONE;
     esp_wifi_get_mac(WIFI_IF_STA, mac);
     esp_wifi_get_channel(&ch, &sec);
-    ESP_LOGI(TAG, "master MAC=%02X:%02X:%02X:%02X:%02X:%02X cloud=%d ch=%u expected_ch=%u",
-             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], MASTER_CLOUD_MODE,
+    ESP_LOGI(TAG, "master MAC=%02X:%02X:%02X:%02X:%02X:%02X cloud=%d web=%d ch=%u expected_ch=%u",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], MASTER_CLOUD_MODE, MASTER_WEB_STATUS,
              (unsigned)ch, (unsigned)MASTER_ESPNOW_CHANNEL);
 }
 
@@ -2490,26 +2827,28 @@ static void master_measure_task(void *arg)
         memset(&rec, 0, sizeof(rec));
         rec.type = REC_TYPE_MASTER;
         rec.unit_id = MASTER_UNIT_ID;
+        rec.boot_id = s_master_boot_id;
         rec.seq = master_next_seq();
         rec.rx_ms = millis_u32();
         rec.ts = current_epoch_s();
 
+        /* Egy korábbi hibából csak új mintavételi ciklus elején próbálunk reinitet. */
+        if (!s_aht20_present) s_aht20_present = aht20_init();
+        if (!s_bmp280.present) (void)bmp280_init();
+
         int32_t hx_raw = 0;
-        if (hx711_read_avg(&hx_raw)) {
-            rec.valid_mask |= REC_VALID_HX711;
-            rec.hx711_raw = hx_raw;
-        }
+        bool hx_ok = hx711_read_avg(&hx_raw);
+        rec.valid_mask |= REC_VALID_HX711;
+        rec.hx711_raw = hx_raw;
+        if (!hx_ok) rec.sensor_error_mask |= SZ2_SENSOR_ERR_HX711;
 
         float ds_t[DS18B20_MAX_SENSORS];
+        uint32_t ds_error = 0;
         if (s_ds18b20_count != DS18B20_EXPECTED_COUNT) {
             ds18b20_refresh_search();
         }
-        if (!ds18b20_read_all(ds_t)) {
-            ds18b20_refresh_search();
-            if (s_ds18b20_count > 0) {
-                (void)ds18b20_read_all(ds_t);
-            }
-        }
+        (void)ds18b20_read_all(ds_t, &ds_error);
+        rec.sensor_error_mask |= ds_error;
         if (s_ds18b20_count > 0 && isfinite(ds_t[0])) {
             rec.valid_mask |= REC_VALID_DS0;
             rec.ds0_hive_c = ds_t[0];
@@ -2526,7 +2865,7 @@ static void master_measure_task(void *arg)
             rec.aht20_t_c = aht_t;
             rec.aht20_rh = aht_rh;
         } else {
-            s_aht20_present = aht20_init();
+            rec.sensor_error_mask |= SZ2_SENSOR_ERR_AHT20;
         }
 
         float bmp_t = NAN;
@@ -2536,7 +2875,7 @@ static void master_measure_task(void *arg)
             rec.bmp280_t_c = bmp_t;
             rec.bmp280_pa = bmp_pa;
         } else {
-            bmp280_init();
+            rec.sensor_error_mask |= SZ2_SENSOR_ERR_BMP280;
         }
 
         uint32_t rain_total = 0;
@@ -2550,10 +2889,11 @@ static void master_measure_task(void *arg)
 
         record_store_result_t store_result = cloud_enqueue_record(&rec);
 
-        ESP_LOGI(TAG, "MASTER_SAMPLE seq=%u store=%u valid=0x%02X hx711_raw=%ld ds0=%.3f ds1=%.3f "
+        ESP_LOGI(TAG, "MASTER_SAMPLE seq=%u store=%u valid=0x%02X error=0x%08X hx711_raw=%ld ds0=%.3f ds1=%.3f "
                       "aht_t=%.3f aht_rh=%.3f bmp_t=%.3f bmp_pa=%.1f "
                       "rain_tips=%u delta=%u rain_mm_delta=%.4f",
                  (unsigned)rec.seq, (unsigned)store_result, rec.valid_mask,
+                 (unsigned)rec.sensor_error_mask,
                  (long)rec.hx711_raw,
                  (double)rec.ds0_hive_c, (double)rec.ds1_scale_c,
                  (double)rec.aht20_t_c, (double)rec.aht20_rh,
@@ -2589,6 +2929,9 @@ void app_main(void)
              I2C_SDA_GPIO, I2C_SCL_GPIO);
 
     nvs_init_all();
+    s_master_boot_id = esp_random();
+    if (s_master_boot_id == 0) s_master_boot_id = 1;
+    ESP_LOGI(TAG, "master boot_id=0x%08X", (unsigned)s_master_boot_id);
     s_rain_mutex = xSemaphoreCreateMutex();
     s_backup_mutex = xSemaphoreCreateMutex();
     s_rx_queue = xQueueCreate(MASTER_RX_QUEUE_LEN, sizeof(rx_item_t));
@@ -2608,12 +2951,17 @@ void app_main(void)
     s_bmp280.present = bmp280_init();
 
     wifi_espnow_init();
+#if MASTER_WEB_STATUS
+    web_status_start();
+#endif
 
     xTaskCreatePinnedToCore(rx_consumer_task, "master_rx", 8192, NULL, 5, NULL, 1);
     xTaskCreatePinnedToCore(rain_task, "rain", 4096, NULL, 4, NULL, 1);
     xTaskCreatePinnedToCore(master_measure_task, "master_sample", 8192, NULL, 3, NULL, 1);
-#if MASTER_CLOUD_MODE
+#if MASTER_WIFI_ENABLED
     xTaskCreatePinnedToCore(reconnect_task, "wifi_reconn", 4096, NULL, 4, NULL, 0);
+#endif
+#if MASTER_CLOUD_MODE
     xTaskCreatePinnedToCore(cloud_task, "cloud", 24576, NULL, 3, NULL, 0);
 #endif
 

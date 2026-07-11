@@ -11,6 +11,7 @@ firmware/node/sdkconfig.*
 # --- Helyi firmware credentialok / webhook URL-ek ---
 experiments/Sz6_wake_handoff/master/main/cloud_config.h
 firmware/master/main/cloud_config.h
+firmware/master/main/wifi_config.h
 
 # --- Generált CAD export (STL/STEP/PNG/FCStd) — az enclosure.py reprodukálja ---
 modeling/enclosure/export/

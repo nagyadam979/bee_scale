@@ -22,7 +22,8 @@
  *
  * VERZIÓ
  *   A protocol_version mindkét csomag első byte-ja -> a master eldobhatja az ismeretlen
- *   verziójú csomagot. Aktuális: SZ2_PROTO_VERSION = 1.
+ *   verziójú csomagot. Aktuális: SZ2_PROTO_VERSION = 2. A master a korábbi v1
+ *   DATA csomagokat továbbra is fogadja, hogy a már sorban álló node-backlog ne vesszen el.
  */
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
@@ -41,7 +42,19 @@ extern "C" {
 #endif
 
 /* A protokoll verziója — mindkét oldal ezt írja/várja. */
-#define SZ2_PROTO_VERSION   1
+#define SZ2_PROTO_VERSION_V1 1
+#define SZ2_PROTO_VERSION    2
+
+/* A számérték megmarad, ez a külön maszk mondja meg, hogy melyik érték gyanús.
+ * A bitek rekordtípustól függetlenek: node DATA-n csak HX711/NODE_DS/VBAT lehet,
+ * master rekordban a masterhez tartozó bitek használatosak. */
+#define SZ2_SENSOR_ERR_HX711       (1UL << 0)
+#define SZ2_SENSOR_ERR_NODE_DS18B20 (1UL << 1)
+#define SZ2_SENSOR_ERR_HIVE_DS18B20 (1UL << 2)
+#define SZ2_SENSOR_ERR_SCALE_DS18B20 (1UL << 3)
+#define SZ2_SENSOR_ERR_AHT20       (1UL << 4)
+#define SZ2_SENSOR_ERR_BMP280      (1UL << 5)
+#define SZ2_SENSOR_ERR_VBAT        (1UL << 6)
 
 /* packet_type értékek. */
 #define SZ2_PKT_DATA        1   /* node -> master: mérés-payload (sz2_payload_t)   */
@@ -77,8 +90,26 @@ typedef struct __attribute__((packed)) {
     float    weight;            /* docs: nyers/kalibralt terheles; NAN = HX711 hiba     */
     float    temp;              /* docs: homerseklet; NAN = nincs/hibas DS18B20         */
     uint16_t vbat;              /* docs: elemfeszultseg mV-ban; 0 = nincs/tiltott VBAT  */
+    uint32_t sensor_error_mask; /* gyanus/hibas szenzor, az ertek ettol meg megmarad     */
     uint16_t crc;               /* CRC16-CCITT az osszes elozo byte-on — UTOLSO mezo    */
 } sz2_payload_t;
+
+/* Csak master oldali, visszamenőleges DATA-dekódoláshoz. V1 ACK-ot nem küldünk. */
+typedef struct __attribute__((packed)) {
+    uint8_t protocol_version;
+    uint8_t packet_type;
+    uint8_t node_id;
+    uint8_t node_mac[6];
+    uint32_t boot_id;
+    uint32_t seq;
+    uint32_t packet_idx;
+    uint32_t total_packets;
+    uint32_t send_timestamp_ms;
+    float weight;
+    float temp;
+    uint16_t vbat;
+    uint16_t crc;
+} sz2_payload_v1_t;
 
 /*
  * ACK: master -> node. PACKED, fixed-size. Sz0-CSÍRA — a tűzz-és-felejts node-ban NEM
@@ -88,6 +119,7 @@ typedef struct __attribute__((packed)) {
     uint8_t  protocol_version;        /* = SZ2_PROTO_VERSION                            */
     uint8_t  packet_type;             /* = SZ2_PKT_ACK                                  */
     uint8_t  node_id;                 /* melyik node-nak szol                           */
+    uint32_t boot_id;                 /* a DATA/HELLO boot_id-je: kesleltetett ACK ellen */
     uint32_t ack_last_seq;            /* az utolso hibatlanul vett seq                  */
     uint32_t clear_buffer_until_seq;  /* a node eddig torolheti a buffert               */
     int32_t  clock_correction_s;      /* legacy nev: master aktualis Unix epoch; 0=nem ismert */
@@ -113,8 +145,9 @@ typedef struct __attribute__((packed)) {
     uint16_t crc;               /* CRC16-CCITT az osszes elozo byte-on — UTOLSO mezo    */
 } sz2_hello_t;
 
-SZ2_STATIC_ASSERT(sizeof(sz2_payload_t) == 41, "sz2_payload_t wire meret valtozott");
-SZ2_STATIC_ASSERT(sizeof(sz2_ack_t) == 20, "sz2_ack_t wire meret valtozott");
+SZ2_STATIC_ASSERT(sizeof(sz2_payload_v1_t) == 41, "sz2_payload_v1_t wire meret valtozott");
+SZ2_STATIC_ASSERT(sizeof(sz2_payload_t) == 45, "sz2_payload_t wire meret valtozott");
+SZ2_STATIC_ASSERT(sizeof(sz2_ack_t) == 24, "sz2_ack_t wire meret valtozott");
 SZ2_STATIC_ASSERT(sizeof(sz2_hello_t) == 33, "sz2_hello_t wire meret valtozott");
 
 /*
@@ -144,6 +177,11 @@ static inline uint16_t sz2_crc16(const uint8_t *p, size_t len)
 static inline uint16_t sz2_payload_crc(const sz2_payload_t *p)
 {
     return sz2_crc16((const uint8_t *)p, sizeof(sz2_payload_t) - sizeof(uint16_t));
+}
+
+static inline uint16_t sz2_payload_v1_crc(const sz2_payload_v1_t *p)
+{
+    return sz2_crc16((const uint8_t *)p, sizeof(sz2_payload_v1_t) - sizeof(uint16_t));
 }
 
 static inline uint16_t sz2_hello_crc(const sz2_hello_t *p)

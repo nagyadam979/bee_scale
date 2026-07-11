@@ -1,0 +1,8 @@
+node_queue_sim/fuzz
+node_queue_sim/fuzz.dSYM/
+master_ring_sim/fuzz
+master_ring_sim/fuzz.dSYM/
+master_ring_sim/generated_master_ring.c
+radio_dialogue_sim/radio_sweep
+radio_dialogue_sim/radio_sweep.dSYM/
+radio_dialogue_sim/generated_radio.c

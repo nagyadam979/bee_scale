@@ -27,6 +27,7 @@ static const char *TAG = "sens_vbat";
 static adc_oneshot_unit_handle_t s_adc = NULL;
 static adc_cali_handle_t s_cali = NULL;
 static bool s_cali_ok = false;
+static bool s_last_read_error = true;
 
 void vbat_init(void)
 {
@@ -95,6 +96,7 @@ void vbat_disable(void)
 uint16_t vbat_sample_mv(void)
 {
 #if !VBAT_MEASURE_ENABLED
+    s_last_read_error = true;
     return 0;
 #endif
 
@@ -109,6 +111,7 @@ uint16_t vbat_sample_mv(void)
     }
     if (n == 0) {
         ESP_LOGW(TAG, "ADC olvasas hiba (minden minta sikertelen)");
+        s_last_read_error = true;
         return 0;
     }
     int raw_avg = (int)(acc / n);
@@ -120,6 +123,7 @@ uint16_t vbat_sample_mv(void)
         /* Durva közelítés 12 dB atten / 12-bit: ~0..2500 mV a 0..4095 raw-ra. */
         mv = (int)((int64_t)raw_avg * 2500 / 4095);
     }
+    s_last_read_error = false;
     return (uint16_t)(mv * VBAT_DIVIDER_RATIO);   /* vissza az akku mV-jára */
 }
 
@@ -163,4 +167,9 @@ void vbat_prepare_sleep(void)
 
     ESP_LOGI(TAG, "vbat sleep: ADC unit torolve, SW(GPIO%d)=LOW, ADC(GPIO%d)=input/no-pull",
              VBAT_SW_GPIO, VBAT_ADC_GPIO);
+}
+
+bool vbat_last_read_had_error(void)
+{
+    return s_last_read_error;
 }

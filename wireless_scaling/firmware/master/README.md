@@ -26,6 +26,24 @@ cd firmware/master
 ~/.platformio/penv/bin/pio run -e esp32-s3-zero-cloud
 ```
 
+## Helyi statusz oldal (felho nelkul)
+
+Ez a master sajat, egyszeru HTTP oldala; nem hasznal Firebase-t, kulso webappot
+vagy internetet. A master es a telefon ugyanarra a 2,4 GHz-es WiFi-re csatlakozik.
+
+```sh
+cd firmware/master
+cp main/wifi_config.example.h main/wifi_config.h
+~/.platformio/penv/bin/pio run -e esp32-s3-zero-local-status
+```
+
+Feltoltes utan a soros logban megjelenik a `LOCAL_STATUS open http://...` sor.
+Telefonrol ezt a helyi IP-cimet nyisd meg. A lap 5 masodpercenkent frissul,
+es node-onkent mutatja az utolso vetel idejet, RSSI-t, seq-et, meresi adatokat es
+a kommunikacios hibaszamlalokat. A router WiFi-csatornajanak egyeznie kell a
+`MASTER_ESPNOW_CHANNEL` ertekevel (production default: 6), mert a WiFi STA es
+az ESP-NOW ugyanazt a radiot hasznalja.
+
 Cloud buildhez:
 
 ```sh

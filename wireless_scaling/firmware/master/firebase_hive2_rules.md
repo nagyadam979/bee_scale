@@ -22,6 +22,7 @@ prod cloud build against RTDB. This is intentionally separate from `hive1`.
               "weight_raw": { ".validate": "newData.isNumber()" },
               "temp_c": { ".validate": "newData.isNumber()" },
               "vbat_mv": { ".validate": "newData.isNumber()" },
+              "sensor_error_mask": { ".validate": "newData.isNumber()" },
               "$other": { ".validate": false }
             }
           }
@@ -40,6 +41,7 @@ prod cloud build against RTDB. This is intentionally separate from `hive1`.
             "air_rh": { ".validate": "newData.isNumber()" },
             "bmp_t_c": { ".validate": "newData.isNumber()" },
             "pressure_pa": { ".validate": "newData.isNumber()" },
+            "sensor_error_mask": { ".validate": "newData.isNumber()" },
             "$other": { ".validate": false }
           }
         }
@@ -54,6 +56,7 @@ prod cloud build against RTDB. This is intentionally separate from `hive1`.
             "ts": { ".validate": "newData.isNumber() && newData.val() > 1700000000" },
             "hive_c": { ".validate": "newData.isNumber()" },
             "scale_c": { ".validate": "newData.isNumber()" },
+            "sensor_error_mask": { ".validate": "newData.isNumber()" },
             "$other": { ".validate": false }
           }
         }

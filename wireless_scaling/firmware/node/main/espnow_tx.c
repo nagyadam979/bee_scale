@@ -35,6 +35,7 @@ static RTC_DATA_ATTR uint8_t s_master_known;
 
 static volatile uint32_t s_ack_wait_seq;
 static volatile uint8_t s_ack_wait_node;
+static volatile uint32_t s_ack_wait_boot;
 static volatile uint32_t s_tx_status_fail;
 static sz2_ack_t s_ack;
 static uint8_t s_ack_src[ESP_NOW_ETH_ALEN];
@@ -115,7 +116,14 @@ static void recv_cb(const esp_now_recv_info_t *info, const uint8_t *data, int le
     if (ack.protocol_version != SZ2_PROTO_VERSION || ack.packet_type != SZ2_PKT_ACK) {
         return;
     }
-    if (ack.node_id != s_ack_wait_node || ack.ack_last_seq != s_ack_wait_seq) {
+    if (ack.node_id != s_ack_wait_node || ack.ack_last_seq != s_ack_wait_seq ||
+        ack.boot_id != s_ack_wait_boot) {
+        return;
+    }
+    /* Első broadcast ACK tanítja meg a master MAC-jét. Utána egy másik forrásból
+     * érkező, egyébként jól formált ACK nem törölhet rekordot. */
+    if (s_master_known && memcmp(s_master_mac, info->src_addr, ESP_NOW_ETH_ALEN) != 0) {
+        ESP_LOGW(TAG, "ACK ignored from untrusted source");
         return;
     }
 
@@ -262,6 +270,7 @@ bool espnow_tx_send_with_ack(const sz2_payload_t *p, espnow_tx_ack_result_t *res
 
         s_ack_wait_node = tx.node_id;
         s_ack_wait_seq = tx.seq;
+        s_ack_wait_boot = tx.boot_id;
         drain_sem(s_ack_sem);
 
         uint32_t fail_before = s_tx_status_fail;
@@ -319,6 +328,7 @@ bool espnow_tx_sync_hello(const sz2_hello_t *hello, espnow_tx_ack_result_t *resu
 
         s_ack_wait_node = tx.node_id;
         s_ack_wait_seq = tx.hello_seq;
+        s_ack_wait_boot = tx.boot_id;
         drain_sem(s_ack_sem);
 
         uint32_t fail_before = s_tx_status_fail;

@@ -23,4 +23,8 @@ float ds18b20_read_temp_after_conversion(void);
 /* Egy blocking hőmérséklet-olvasás °C-ban. Hiba esetén NAN (a payload temp mezőjébe). */
 float ds18b20_read_temp(void);
 
+/* Az utolsó olvasás diagnosztikai minősége. A numerikus 85.0 / CRC- vagy
+ * range-hibás értéket a driver visszaadja, ezt a getter jelzi hibásnak. */
+bool ds18b20_last_read_had_error(void);
+
 #endif /* SENS_DS18B20_H */

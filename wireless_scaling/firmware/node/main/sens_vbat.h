@@ -10,6 +10,7 @@
 #ifndef SENS_VBAT_H
 #define SENS_VBAT_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 /* GPIO (NPN-kapcsoló) + ADC1 oneshot + kalibráció init. Egyszer, boot után. */
@@ -33,6 +34,9 @@ uint16_t vbat_sample_mv(void);
  * A FIELD profil ezt hívja (egyszeri mérés). A payload vbat (uint16_t mV) mezőjébe való.
  */
 uint16_t vbat_read_mv(void);
+
+/* true, ha az utolsó ADC-ciklus nem adott használható numerikus mintát. */
+bool vbat_last_read_had_error(void);
 
 /*
  * Deep sleep előtti fogyasztáscsökkentés: ADC unit/kalibráció elengedése és osztó OFF.

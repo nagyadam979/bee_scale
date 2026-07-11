@@ -142,21 +142,25 @@ static void sort_i32(int32_t *values, int n)
 bool hx711_read_weight_checked(float *weight_out)
 {
     int32_t samples[HX711_MEDIAN_SAMPLES];
+    int successful = 0;
+    int zero_count = 0;
+    int minus_one_count = 0;
+    int good_count = 0;
+    int32_t good_samples[HX711_MEDIAN_SAMPLES];
     for (int i = 0; i < HX711_MEDIAN_SAMPLES; i++) {
-        if (!hx711_read_raw_checked(&samples[i])) {
-            if (weight_out) {
-                *weight_out = NAN;
-            }
-            return false;
+        bool ok = hx711_read_raw_checked(&samples[i]);
+        if (ok) successful++;
+        if (samples[i] == 0) zero_count++;
+        if (samples[i] == -1) minus_one_count++;
+        if (ok && samples[i] != 0 && samples[i] != -1) {
+            good_samples[good_count++] = samples[i];
         }
     }
 
+    /* A 0/-1 diagnosztikai adat, nem eldobandó hibaérték. Ha van elég jó
+     * minta, csak azokból képzünk mediánt; különben a teljes batch marad. */
     sort_i32(samples, HX711_MEDIAN_SAMPLES);
-    int32_t min = samples[0];
-    int32_t max = samples[HX711_MEDIAN_SAMPLES - 1];
-    int32_t span = max - min;
-
-    float weight = 0.0f;
+    float weight;
     if ((HX711_MEDIAN_SAMPLES % 2) == 0) {
         int hi = HX711_MEDIAN_SAMPLES / 2;
         int lo = hi - 1;
@@ -165,33 +169,45 @@ bool hx711_read_weight_checked(float *weight_out)
         weight = (float)samples[HX711_MEDIAN_SAMPLES / 2];
     }
 
-    ESP_LOGI(TAG, "HX711 samples n=%u min=%ld median=%.0f max=%ld span=%ld",
-             (unsigned)HX711_MEDIAN_SAMPLES, (long)min, (double)weight,
-             (long)max, (long)span);
+    int unique_all = 0;
+    for (int i = 0; i < HX711_MEDIAN_SAMPLES; i++) {
+        if (i == 0 || samples[i] != samples[i - 1]) unique_all++;
+    }
+    int unique_good = 0;
+    if (good_count > 0) {
+        sort_i32(good_samples, good_count);
+        for (int i = 0; i < good_count; i++) {
+            if (i == 0 || good_samples[i] != good_samples[i - 1]) unique_good++;
+        }
+    }
 
-    if (min == 0 && max == 0) {
-        ESP_LOGW(TAG, "HX711 gyanus: minden nyers minta 0 (DOUT stuck-low / rossz bekotes / nincs ertelmes ADC adat)");
-        if (weight_out) {
-            *weight_out = NAN;
+    const int min_good = (HX711_MEDIAN_SAMPLES + 1) / 2;
+    if (good_count >= min_good) {
+        if ((good_count % 2) == 0) {
+            weight = (float)(((int64_t)good_samples[good_count / 2 - 1] +
+                              (int64_t)good_samples[good_count / 2]) / 2.0);
+        } else {
+            weight = (float)good_samples[good_count / 2];
         }
-        return false;
     }
-    if (min == -1 && max == -1) {
-        ESP_LOGW(TAG, "HX711 gyanus: minden nyers minta -1 (DOUT stuck-high / busz hiba)");
-        if (weight_out) {
-            *weight_out = NAN;
-        }
-        return false;
-    }
-    if (span == 0) {
-        ESP_LOGW(TAG, "HX711 gyanus: minden nyers minta azonos (%ld)", (long)min);
+    bool error = successful != HX711_MEDIAN_SAMPLES ||
+                 zero_count != 0 || minus_one_count != 0 ||
+                 good_count < min_good || unique_all <= 1 ||
+                 (good_count > 0 && unique_good <= 1);
+    ESP_LOGI(TAG, "HX711 samples total=%u successful=%d zero=%d minus1=%d unique=%d good=%d good_unique=%d used=%d median=%.0f",
+             (unsigned)HX711_MEDIAN_SAMPLES, successful, zero_count, minus_one_count,
+             unique_all, good_count, unique_good, good_count >= min_good ? good_count : 0,
+             (double)weight);
+    if (error) {
+        ESP_LOGW(TAG, "HX711 diagnostic fault: representative=%.0f (numeric value retained)",
+                 (double)weight);
     }
 
     if (weight_out) {
         /* Kalibráció még nincs -> a nyers mediánt adjuk vissza float-ként. */
         *weight_out = weight;
     }
-    return true;
+    return !error;
 }
 
 float hx711_read_weight(void)

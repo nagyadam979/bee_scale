@@ -16,6 +16,7 @@
 #include <stdint.h>
 
 static const char *TAG = "sens_ds18b20";
+static bool s_last_read_error = true;
 
 static void ow_drive_low(void)
 {
@@ -155,11 +156,13 @@ void ds18b20_init(void)
 bool ds18b20_start_conversion(void)
 {
 #if !DS18B20_ENABLED
+    s_last_read_error = true;
     return false;
 #endif
 
     if (!ow_reset()) {
         ESP_LOGW(TAG, "DS18B20 nincs jelen a buszon");
+        s_last_read_error = true;
         return false;
     }
 
@@ -171,11 +174,13 @@ bool ds18b20_start_conversion(void)
 float ds18b20_read_temp_after_conversion(void)
 {
 #if !DS18B20_ENABLED
+    s_last_read_error = true;
     return NAN;
 #endif
 
     if (!ow_reset()) {
         ESP_LOGW(TAG, "DS18B20 eltunt konverzio utan");
+        s_last_read_error = true;
         return NAN;
     }
 
@@ -189,23 +194,33 @@ float ds18b20_read_temp_after_conversion(void)
 
     if (scratchpad_all_value(sp, 0x00) || scratchpad_all_value(sp, 0xFF)) {
         log_scratchpad("ervenytelen busz-allapot", sp);
-        return NAN;
-    }
-
-    uint8_t crc = ds18b20_crc8(sp, 8);
-    if (crc != sp[8]) {
-        ESP_LOGW(TAG, "DS18B20 CRC hiba: calc=0x%02X got=0x%02X", crc, sp[8]);
-        log_scratchpad("crc-hiba", sp);
+        s_last_read_error = true;
         return NAN;
     }
 
     int16_t raw = (int16_t)((uint16_t)sp[0] | ((uint16_t)sp[1] << 8));
     float temp = (float)raw / 16.0f;
+
+    uint8_t crc = ds18b20_crc8(sp, 8);
+    if (crc != sp[8]) {
+        ESP_LOGW(TAG, "DS18B20 CRC hiba: calc=0x%02X got=0x%02X", crc, sp[8]);
+        log_scratchpad("crc-hiba", sp);
+        s_last_read_error = true;
+        return temp;
+    }
+
     if (temp < -55.0f || temp > 125.0f) {
         ESP_LOGW(TAG, "DS18B20 tartomanyon kivuli temp=%.2f raw=%d", (double)temp, raw);
         log_scratchpad("range-hiba", sp);
-        return NAN;
+        s_last_read_error = true;
+        return temp;
     }
+    if (temp == 85.0f) {
+        ESP_LOGW(TAG, "DS18B20 power-on sentinel 85.0 C");
+        s_last_read_error = true;
+        return temp;
+    }
+    s_last_read_error = false;
     return temp;
 }
 
@@ -216,4 +231,9 @@ float ds18b20_read_temp(void)
     }
     vTaskDelay(pdMS_TO_TICKS(DS18B20_CONVERSION_MS));
     return ds18b20_read_temp_after_conversion();
+}
+
+bool ds18b20_last_read_had_error(void)
+{
+    return s_last_read_error;
 }
