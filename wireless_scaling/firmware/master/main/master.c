@@ -2651,12 +2651,20 @@ static void reconnect_task(void *arg)
 #if MASTER_WEB_STATUS
 static esp_err_t web_sendf(httpd_req_t *req, const char *fmt, ...)
 {
-    char line[640];
+    /* Must hold the largest single formatted chunk. The <head>+CSS+table-header
+     * block formats to ~790 B; a 640 B buffer silently truncated it, making
+     * vsnprintf return n>=size -> ESP_FAIL before any byte was sent, so the
+     * httpd handler aborted with no response (browser: ERR_EMPTY_RESPONSE). */
+    char line[1600];
     va_list ap;
     va_start(ap, fmt);
     int n = vsnprintf(line, sizeof(line), fmt, ap);
     va_end(ap);
-    if (n < 0 || n >= (int)sizeof(line)) return ESP_FAIL;
+    if (n < 0 || n >= (int)sizeof(line)) {
+        ESP_LOGE(TAG, "web_sendf truncated (need %d, buf %d) -> failing request",
+                 n, (int)sizeof(line));
+        return ESP_FAIL;
+    }
     return httpd_resp_sendstr_chunk(req, line);
 }
 
