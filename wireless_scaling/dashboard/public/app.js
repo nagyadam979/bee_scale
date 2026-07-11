@@ -2,16 +2,21 @@
 // Firebase modular SDK (ESM CDN) + ECharts (UMD global). Build-lépés nélkül.
 //
 // Elv: telepítés-választó (hive1/hive2) → telepítés-szintű időjárás-sáv +
-// EGY fő SÚLY-CHART, amin az adott telepítés összes mérlegének görbéje látszik
-// (kg-ban), alul timeline-sliderrel (teljes történet böngészés) + kétujjas zoom.
-// Alatta belső-hőm chart és kompakt állapot-kártyák.
+// EGY fő SÚLY-CHART = telepítésenként EGYETLEN vonal (az összes mérleg
+// interpolált ÖSSZEGE), alul timeline-sliderrel (teljes történet böngészés).
+// Alatta hőm-chart (csak környezeti: levegő + szonda) és állapot-kártyák.
 //
-// SÚLY-EGYSÉG:
-//  * hive1 (legacy): valódi kalibrált kg (w). A fő görbe a w1+w2 ÖSSZEG.
+// SÚLY-VONAL (egy össz-görbe / telepítés):
+//  * hive1 (legacy): valódi kalibrált kg (w) → w1+w2 összeg.
 //  * hive2 (wireless): a weight_raw NYERS count → PLACEHOLDER kg-normalizálás
-//    egységenként (config.placeholderKg): kg = base + (raw - median(raw))*kgPerCount.
-//    EZ NEM VALÓDI SÚLY — a UI "becsült kg"-ként jelöli; a valódi kalibráció +
-//    hőm-kompenzáció külön, felhős (Cloud Function) munka lesz.
+//    egységenként (config.placeholderKg): kg = base + (raw - median(raw))*kgPerCount,
+//    majd a 4 egység összege. EZ NEM VALÓDI SÚLY — a UI "becsült kg"-ként jelöli;
+//    a valódi kalibráció + hőm-kompenzáció külön, felhős (Cloud Function) munka.
+//  Az egységek eltérő időben (async) érkező pontjait közös idővonalra lineárisan
+//  interpoláljuk, és csak ott összegzünk, ahol MINDEN egység lefedi az időt.
+//
+// MOBIL: nincs kétujjas inside-zoom (touch-on kikapcsolva) — a navigáció az alsó
+// slider (fogantyú = zoom, ablak = pan, egyujjas). Desktopon görgő+húzás marad.
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
 import { getAuth, signInAnonymously, onAuthStateChanged }
@@ -29,6 +34,10 @@ const db = getDatabase(app);
 // vonal-színpaletta (a fő/össz görbe mindig az első = méz-sárga)
 const PALETTE = ["#f5b301", "#4fc3f7", "#81c784", "#ba68c8", "#ff8a65", "#e57373"];
 const GRID = "#242a34", MUT = "#8b93a1", TXT = "#eceef1";
+// Touch (érintős) eszköz? Ekkor az inside-zoomot kikapcsoljuk (a kétujjas gesztus
+// szar volt), és csak az alsó sliderrel navigálunk; a lapgörgetés visszakapja a
+// függőleges gesztust (CSS touch-action).
+const TOUCH = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
 
 let activeHiveId = CFG.hives[0].id;
 let refreshTimer = null;
@@ -157,68 +166,56 @@ function unitWeightKg(hive, unit, rows) {
   const { base, kgPerCount } = unit.placeholderKg || { base: 0, kgPerCount: 1 };
   return r.map((p) => [p.ts * 1000, +(base + (p.w - med) * kgPerCount).toFixed(3)]);
 }
-// hive1 w1+w2 összeg — legközelebbi-szomszéd párosítás (a régi frontend logikája)
-function pairTotalKg(rows1, rows2, tolSec) {
-  const a = rows1.filter((p) => p.w !== null), b = rows2.filter((p) => p.w !== null);
+// Lineáris interpoláció: az s ([ [tsMs,val], ... ] növekvő) sorozat értéke t-nél.
+// null, ha t a sorozat lefedett tartományán kívül esik (nem extrapolálunk).
+function interpAt(s, t) {
+  if (!s.length || t < s[0][0] || t > s[s.length - 1][0]) return null;
+  let lo = 0, hi = s.length - 1;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (s[mid][0] < t) lo = mid + 1; else hi = mid; }
+  if (s[lo][0] === t) return s[lo][1];
+  const b = s[lo], a = s[lo - 1];
+  return a[1] + (b[1] - a[1]) * (t - a[0]) / (b[0] - a[0]);
+}
+// EGY össz-súly vonal: az egységek async pontjait közös idővonalra interpoláljuk,
+// és csak ott adjuk össze, ahol MINDEN egység lefedi az adott időt (nincs ugrás).
+function totalKgSeries(perUnit) {
+  const lists = perUnit.filter((s) => s.length);
+  if (!lists.length) return [];
+  const tset = new Set();
+  for (const s of lists) for (const p of s) tset.add(p[0]);
+  const times = [...tset].sort((x, y) => x - y);
   const out = [];
-  if (!a.length || !b.length) return out;
-  let j = 0;
-  for (const x of a) {
-    while (j + 1 < b.length && Math.abs(b[j + 1].ts - x.ts) <= Math.abs(b[j].ts - x.ts)) j++;
-    if (Math.abs(b[j].ts - x.ts) <= tolSec) out.push([x.ts * 1000, +(x.w + b[j].w).toFixed(3)]);
+  for (const t of times) {
+    let sum = 0, ok = true;
+    for (const s of lists) { const v = interpAt(s, t); if (v == null) { ok = false; break; } sum += v; }
+    if (ok) out.push([t, +sum.toFixed(3)]);
   }
   return out;
 }
 
 // ===========================================================================
-// Fő súly-chart
+// Fő súly-chart — telepítésenként EGYETLEN vonal (össz-súly)
 // ===========================================================================
 function renderWeightChart(hive, st) {
-  const series = [], selected = {};
-  if (hive.aggregate) {
-    // fő görbe = össz (w1+w2), a rúdak külön vonalként de alapból rejtve
-    const total = pairTotalKg(st.units[hive.units[0].id], st.units[hive.units[1].id], hive.aggregate.tolSec);
-    series.push(lineSeries(hive.aggregate.label, total, PALETTE[0], 2.6));
-    selected[hive.aggregate.label] = true;
-    hive.units.forEach((u, i) => {
-      series.push(lineSeries(u.label, unitWeightKg(hive, u, st.units[u.id]), PALETTE[i + 1], 1.6));
-      selected[u.label] = false;
-    });
-  } else {
-    hive.units.forEach((u, i) => {
-      series.push(lineSeries(u.label, unitWeightKg(hive, u, st.units[u.id]), PALETTE[i % PALETTE.length], 2.2));
-      selected[u.label] = true;
-    });
-  }
-  charts["weight-chart"].setOption(chartOption(series, "kg", selected, (v) => v.toFixed(2) + " kg"), true);
+  const perUnit = hive.units.map((u) => unitWeightKg(hive, u, st.units[u.id]));
+  const total = totalKgSeries(perUnit);
+  const series = [lineSeries("Össz-súly", total, PALETTE[0], 2.6)];
+  charts["weight-chart"].setOption(chartOption(series, "kg", null, (v) => v.toFixed(2) + " kg"), true);
   requestAnimationFrame(() => charts["weight-chart"].resize());
 }
 
 // ===========================================================================
-// Belső-hőm chart
+// Hőm-chart — CSAK valós környezeti hőmérsékletek (config.tempPlot):
+// levegő (AHT20) + kaptár-szonda (DS18B20). A node-ok temp_c-je és a scale_c
+// hőm-kompenzációs/kalibrációs adat → NEM rajzoljuk.
 // ===========================================================================
-function innerTempSeries(hive, st, unit) {
-  const src = unit.innerTempFrom;
-  if (!src) return [];
-  if (src.path === "weather.temp")
-    return st.temp.filter((r) => typeof r[src.field] === "number").map((r) => [r.ts * 1000, r[src.field]]);
-  return st.units[unit.id].filter((r) => typeof r.it === "number").map((r) => [r.ts * 1000, r.it]);
-}
 function renderTempChart(hive, st) {
   const series = [];
-  hive.units.forEach((u, i) => {
-    if (u.innerTempFrom) {
-      const label = `${u.label} · ${u.innerTempFrom.label}`;
-      series.push(lineSeries(label, innerTempSeries(hive, st, u), PALETTE[(hive.aggregate ? i + 1 : i) % PALETTE.length], 1.8));
-    }
+  (hive.tempPlot || []).forEach((m) => {
+    const arr = m.src === "env" ? st.env : st.temp;
+    const data = arr.filter((r) => typeof r[m.field] === "number").map((r) => [r.ts * 1000, r[m.field]]);
+    series.push(lineSeries(m.label, data, m.color || PALETTE[0], 1.8));
   });
-  if (!series.length && hive.weather?.temp) {
-    // legacy: nincs egység-szintű belső hőm → a telepítés temp-metrikái (kaptár-hőm)
-    hive.weather.temp.metrics.forEach((m, i) => {
-      const data = st.temp.filter((r) => typeof r[m.field] === "number").map((r) => [r.ts * 1000, r[m.field]]);
-      series.push(lineSeries(m.label, data, PALETTE[(i + 1) % PALETTE.length], 1.8));
-    });
-  }
   charts["temp-chart"].setOption(chartOption(series, "°C", null, (v) => v.toFixed(1) + " °C"), true);
   requestAnimationFrame(() => charts["temp-chart"].resize());
 }
@@ -237,8 +234,8 @@ function chartOption(series, yName, selected, valFmt) {
   return {
     animation: false, backgroundColor: "transparent",
     color: PALETTE,
-    grid: { top: 40, left: 8, right: 10, bottom: 58, containLabel: true },
-    legend: { top: 4, textStyle: { color: TXT }, icon: "roundRect", selected: selected || undefined },
+    grid: { top: 40, left: 8, right: 10, bottom: TOUCH ? 66 : 58, containLabel: true },
+    legend: { show: series.length > 1, top: 4, textStyle: { color: TXT }, icon: "roundRect", selected: selected || undefined },
     tooltip: {
       trigger: "axis", backgroundColor: "#191d24", borderColor: GRID, textStyle: { color: TXT },
       axisPointer: { type: "cross", label: { backgroundColor: "#20252e" } },
@@ -252,12 +249,17 @@ function chartOption(series, yName, selected, valFmt) {
       type: "value", scale: true, name: yName, nameTextStyle: { color: MUT },
       axisLabel: { color: MUT }, splitLine: { lineStyle: { color: GRID } },
     },
-    // inside = kétujjas pinch/húzás + görgő; slider = teljes timeline böngésző.
+    // Navigáció: az alsó SLIDER a fő eszköz (fogantyú húzása = zoom, ablak húzása
+    // = pan; egyujjas, megbízható mobilon is). Az inside-zoom touch-on KI van
+    // kapcsolva (a kétujjas gesztus rossz volt); desktopon marad görgő + húzás.
     // filterMode:filter → az Y-tengely a látható X-ablakhoz igazodik (scale:true).
     dataZoom: [
-      { type: "inside", filterMode: "filter", zoomOnMouseWheel: true, moveOnMouseMove: true },
-      { type: "slider", filterMode: "filter", bottom: 8, height: 20,
-        borderColor: GRID, fillerColor: "rgba(245,179,1,.12)",
+      { type: "inside", filterMode: "filter", disabled: TOUCH,
+        zoomOnMouseWheel: !TOUCH, moveOnMouseMove: !TOUCH, moveOnMouseWheel: false },
+      { type: "slider", filterMode: "filter", bottom: 8, height: TOUCH ? 34 : 20,
+        showDetail: !TOUCH, brushSelect: false, throttle: 40,
+        handleSize: TOUCH ? "160%" : "100%", moveHandleSize: TOUCH ? 10 : 7,
+        borderColor: GRID, fillerColor: "rgba(245,179,1,.14)",
         handleStyle: { color: "#f5b301" }, textStyle: { color: MUT },
         dataBackground: { lineStyle: { color: GRID }, areaStyle: { color: "#20252e" } } },
     ],

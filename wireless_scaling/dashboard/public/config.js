@@ -87,6 +87,13 @@ window.BEESCALE_CONFIG = {
           ],
         },
       },
+      // Hőm-chart: CSAK a valós környezeti hőmérsékletek rajzolódnak.
+      // A node-ok temp_c-je és a scale_c a HŐM-KOMPENZÁCIÓS/kalibrációs adat →
+      // NEM plotoljuk. Levegő = AHT20 (air_t_c), Kaptár = DS18B20 szonda (hive_c).
+      tempPlot: [
+        { src: "env",  field: "air_t_c", label: "Levegő (AHT20)", color: "#4fc3f7" },
+        { src: "temp", field: "hive_c",  label: "Kaptár (szonda)", color: "#f5b301" },
+      ],
     },
 
     {
@@ -124,6 +131,10 @@ window.BEESCALE_CONFIG = {
           ],
         },
       },
+      tempPlot: [
+        { src: "env",  field: "t", label: "Levegő",          color: "#4fc3f7" },
+        { src: "temp", field: "t", label: "Kaptár (szonda)", color: "#f5b301" },
+      ],
     },
   ],
 };
