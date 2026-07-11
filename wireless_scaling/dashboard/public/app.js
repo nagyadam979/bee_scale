@@ -3,8 +3,8 @@
 //
 // Elv: telepítés-választó (hive1/hive2) → telepítés-szintű időjárás-sáv +
 // EGY fő SÚLY-CHART = telepítésenként EGYETLEN vonal (az összes mérleg
-// interpolált ÖSSZEGE), alul timeline-sliderrel (teljes történet böngészés).
-// Alatta hőm-chart (csak környezeti: levegő + szonda) és állapot-kártyák.
+// interpolált ÖSSZEGE). Alatta hőm-chart (csak környezeti: levegő + szonda)
+// és állapot-kártyák.
 //
 // SÚLY-VONAL (egy össz-görbe / telepítés):
 //  * hive1 (legacy): valódi kalibrált kg (w) → w1+w2 összeg.
@@ -15,9 +15,10 @@
 //  Az egységek eltérő időben (async) érkező pontjait közös idővonalra lineárisan
 //  interpoláljuk, és csak ott összegzünk, ahol MINDEN egység lefedi az időt.
 //
-// MOBIL: kétujjas pinch = zoom, egyujjas húzás = pan (ECharts inside dataZoom).
+// MOBIL: FOTÓ-szerű — kétujjas pinch = zoom (X és Y), egyujjas húzás = pan.
+// Két inside dataZoom (x+y), NINCS alsó csúszka, NINCS érték-kiíró tooltip.
 // KRITIKUS: a belső <canvas> touch-action:none (CSS), különben a böngésző
-// (iOS Safari) az oldalt zoomolja pinchre. Alul slider a teljes timeline-hoz.
+// (iOS Safari) az oldalt zoomolja pinchre.
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
 import { getAuth, signInAnonymously, onAuthStateChanged }
@@ -35,10 +36,6 @@ const db = getDatabase(app);
 // vonal-színpaletta (a fő/össz görbe mindig az első = méz-sárga)
 const PALETTE = ["#f5b301", "#4fc3f7", "#81c784", "#ba68c8", "#ff8a65", "#e57373"];
 const GRID = "#242a34", MUT = "#8b93a1", TXT = "#eceef1";
-// Touch (érintős) eszköz? Ekkor az inside-zoomot kikapcsoljuk (a kétujjas gesztus
-// szar volt), és csak az alsó sliderrel navigálunk; a lapgörgetés visszakapja a
-// függőleges gesztust (CSS touch-action).
-const TOUCH = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
 
 let activeHiveId = CFG.hives[0].id;
 let refreshTimer = null;
@@ -237,36 +234,29 @@ function chartOption(series, yName, selected, valFmt) {
   return {
     animation: false, backgroundColor: "transparent",
     color: PALETTE,
-    grid: { top: 40, left: 8, right: 10, bottom: TOUCH ? 66 : 58, containLabel: true },
+    grid: { top: 40, left: 8, right: 14, bottom: 24, containLabel: true },
     legend: { show: series.length > 1, top: 4, textStyle: { color: TXT }, icon: "roundRect", selected: selected || undefined },
-    tooltip: {
-      trigger: "axis", backgroundColor: "#191d24", borderColor: GRID, textStyle: { color: TXT },
-      axisPointer: { type: "cross", label: { backgroundColor: "#20252e" } },
-      valueFormatter: (v) => (typeof v === "number" ? valFmt(v) : "–"),
-    },
+    // Nincs tooltip: érintésre NEM írunk ki tizedes értéket.
+    tooltip: { show: false },
     xAxis: {
       type: "time", axisLine: { lineStyle: { color: GRID } },
       axisLabel: { color: MUT, hideOverlap: true }, splitLine: { show: true, lineStyle: { color: GRID } },
+      axisPointer: { show: false },
     },
     yAxis: {
       type: "value", scale: true, name: yName, nameTextStyle: { color: MUT },
       axisLabel: { color: MUT }, splitLine: { lineStyle: { color: GRID } },
+      axisPointer: { show: false },
     },
-    // Navigáció: inside = KÉTUJJAS pinch (zoom) + egyujjas húzás (pan) érintőn,
-    // desktopon görgő + húzás. Feltétel: a belső canvas touch-action:none (CSS),
-    // különben a böngésző (iOS Safari) elkapja a pinchet oldal-zoomnak.
-    // Alul slider = teljes timeline böngésző. filterMode:filter → Y a látható
-    // X-ablakhoz igazodik (scale:true).
+    // FOTÓ-szerű navigáció: két inside dataZoom (X és Y) → kétujjas pinch = zoom
+    // mindkét tengelyen, egyujjas húzás = pan. NINCS alsó csúszka.
+    // filterMode:'none' → csak a látható ablak változik (nem dobunk el adatot),
+    // mint egy kép nagyítása/tolása. Feltétel: belső canvas touch-action:none (CSS).
     dataZoom: [
-      { type: "inside", filterMode: "filter",
-        zoomOnMouseWheel: true, moveOnMouseMove: true, moveOnMouseWheel: false,
-        preventDefaultMouseMove: true },
-      { type: "slider", filterMode: "filter", bottom: 8, height: TOUCH ? 34 : 20,
-        showDetail: !TOUCH, brushSelect: false, throttle: 40,
-        handleSize: TOUCH ? "160%" : "100%", moveHandleSize: TOUCH ? 10 : 7,
-        borderColor: GRID, fillerColor: "rgba(245,179,1,.14)",
-        handleStyle: { color: "#f5b301" }, textStyle: { color: MUT },
-        dataBackground: { lineStyle: { color: GRID }, areaStyle: { color: "#20252e" } } },
+      { type: "inside", xAxisIndex: 0, filterMode: "none",
+        zoomOnMouseWheel: true, moveOnMouseMove: true, moveOnMouseWheel: false, preventDefaultMouseMove: true },
+      { type: "inside", yAxisIndex: 0, filterMode: "none",
+        zoomOnMouseWheel: true, moveOnMouseMove: true, moveOnMouseWheel: false, preventDefaultMouseMove: true },
     ],
     series,
   };
