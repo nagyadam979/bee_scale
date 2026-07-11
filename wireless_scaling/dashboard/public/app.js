@@ -15,8 +15,9 @@
 //  Az egységek eltérő időben (async) érkező pontjait közös idővonalra lineárisan
 //  interpoláljuk, és csak ott összegzünk, ahol MINDEN egység lefedi az időt.
 //
-// MOBIL: FOTÓ-szerű — kétujjas pinch = zoom (X és Y), egyujjas húzás = pan.
-// Két inside dataZoom (x+y), NINCS alsó csúszka, NINCS érték-kiíró tooltip.
+// MOBIL: az IDŐ-tengelyt nagyítod/tolod (kétujjas pinch = zoom, egyujjas húzás
+// = pan); a függőleges mindig a látható adathoz igazodik → a vonal nem csúszik
+// ki a képből. NINCS alsó csúszka, NINCS érték-kiíró tooltip.
 // KRITIKUS: a belső <canvas> touch-action:none (CSS), különben a böngésző
 // (iOS Safari) az oldalt zoomolja pinchre.
 
@@ -248,14 +249,13 @@ function chartOption(series, yName, selected, valFmt) {
       axisLabel: { color: MUT }, splitLine: { lineStyle: { color: GRID } },
       axisPointer: { show: false },
     },
-    // FOTÓ-szerű navigáció: két inside dataZoom (X és Y) → kétujjas pinch = zoom
-    // mindkét tengelyen, egyujjas húzás = pan. NINCS alsó csúszka.
-    // filterMode:'none' → csak a látható ablak változik (nem dobunk el adatot),
-    // mint egy kép nagyítása/tolása. Feltétel: belső canvas touch-action:none (CSS).
+    // Navigáció: az IDŐ (X) tengelyt nagyítjuk/toljuk (kétujjas pinch = zoom,
+    // egyujjas húzás = pan). A függőleges (Y) NEM szabad-zoomolható: mindig a
+    // LÁTHATÓ adathoz igazodik (filterMode:'filter' + yAxis scale:true), így a
+    // vonal soha nem csúszik ki a képből — nem lehet "üres semmibe" nagyítani.
+    // NINCS alsó csúszka. Feltétel: belső canvas touch-action:none (CSS).
     dataZoom: [
-      { type: "inside", xAxisIndex: 0, filterMode: "none",
-        zoomOnMouseWheel: true, moveOnMouseMove: true, moveOnMouseWheel: false, preventDefaultMouseMove: true },
-      { type: "inside", yAxisIndex: 0, filterMode: "none",
+      { type: "inside", xAxisIndex: 0, filterMode: "filter",
         zoomOnMouseWheel: true, moveOnMouseMove: true, moveOnMouseWheel: false, preventDefaultMouseMove: true },
     ],
     series,
