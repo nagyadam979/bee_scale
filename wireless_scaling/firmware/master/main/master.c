@@ -2725,8 +2725,8 @@ static esp_err_t web_status_handler(httpd_req_t *req)
         }
         if (web_sendf(req,
             "<tr><td>%u</td><td class=%s>%s</td><td>%s</td><td>%d dBm <small>(atlag)</small></td>"
-            "<td>" PRIu32 "</td><td>%s</td><td>%s</td><td>%u mV</td>"
-            "<td>" PRIu32 "/" PRIu32 "/" PRIu32 "</td></tr>",
+            "<td>%" PRIu32 "</td><td>%s</td><td>%s</td><td>%u mV</td>"
+            "<td>%" PRIu32 "/%" PRIu32 "/%" PRIu32 "</td></tr>",
             n->node_id, state_class, state, age, rssi_avg, n->last_seq, weight, temp,
             n->last_vbat_mv, n->crc_err, n->miss_cum, n->ack_txfail) != ESP_OK) {
             return ESP_FAIL;
