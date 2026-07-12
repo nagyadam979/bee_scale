@@ -25,6 +25,11 @@ ALPARANCSOK:
     fit     --unit U            : a két CSV illesztése -> calibration.json (adott unit frissítése)
     show                        : a calibration.json tartalmának kiírása
 
+MASTER-VARIÁNS (CAL_hx711_calib_master): a masteren 2 DS18B20 van egy buszon, ezért a WGT/REC
+sorok 2 hőt adnak (ds_a_c, ds_b_c), és a CSV-k oszlopai ehhez igazodnak. A fit `--temp-col`
+kapcsolóval választod ki, melyik szonda a scale (a firmware bootkori "# DS ROLES" ROM-lista
+alapján). A node workflow (`--temp-col` nélkül, scale_c) VÁLTOZATLAN.
+
 A fit-mag CSAK stdlib (saját OLS least-squares) — az m1b_analyze.py idiómáját követi.
 A capture-höz pyserial kell:  .venv/bin/pip install pyserial
 """
@@ -150,14 +155,17 @@ def cmd_weight(args):
     time.sleep(0.5)
     ser.reset_input_buffer()
 
-    points = []   # (kg, count_median, scale_c_mean, n)
+    points = []       # (kg, count_median, n, [tmean_col...])  — 1 hő (node) vagy 2 hő (master)
+    max_temps = 1
     try:
         while True:
             # élő minta a prompt elé
             live = [parse_data_line(l, "WGT") for l in read_lines(ser, 0.8)]
             live = [v for v in live if v]
             if live:
-                print(f"\r# élő: raw={live[-1][0]:.0f}  scale_c={live[-1][1]:.2f}   ", end="", flush=True)
+                last = live[-1]
+                tstr = "  ".join(f"t{i}={last[1 + i]:.2f}" for i in range(len(last) - 1))
+                print(f"\r# élő: raw={last[0]:.0f}  {tstr}   ", end="", flush=True)
             raw_in = input(f"\n[{args.unit}] kg (vagy q): ").strip()
             if raw_in.lower() == "q":
                 break
@@ -170,14 +178,19 @@ def cmd_weight(args):
             samples = [parse_data_line(l, "WGT") for l in read_lines(ser, args.settle)]
             samples = [v for v in samples if v]
             counts = [v[0] for v in samples]
-            temps = [v[1] for v in samples if not math.isnan(v[1])]
             if not counts:
                 print("  ! nem jött WGT adat, a board streamel? (w) — kihagyva")
                 continue
+            n_temps = max((len(v) - 1) for v in samples)   # 1 (node) vagy 2 (master)
+            max_temps = max(max_temps, n_temps)
+            tmeans = []
+            for ti in range(n_temps):
+                tvals = [v[1 + ti] for v in samples if len(v) > 1 + ti and not math.isnan(v[1 + ti])]
+                tmeans.append(statistics.fmean(tvals) if tvals else float("nan"))
             cmed = statistics.median(counts)
-            tmean = statistics.fmean(temps) if temps else float("nan")
-            points.append((kg, cmed, tmean, len(counts)))
-            print(f"  -> kg={kg:g}  count_median={cmed:.0f}  scale_c={tmean:.2f}  (n={len(counts)})")
+            points.append((kg, cmed, len(counts), tmeans))
+            tshow = "  ".join(f"{t:.2f}" for t in tmeans)
+            print(f"  -> kg={kg:g}  count_median={cmed:.0f}  temp[{tshow}]  (n={len(counts)})")
     finally:
         send_cmd(ser, "x")
         ser.close()
@@ -187,9 +200,17 @@ def cmd_weight(args):
         return
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["kg", "count_median", "scale_c", "n"])
-        w.writerows(points)
-    print(f"# {len(points)} pont mentve: {os.path.normpath(path)}")
+        if max_temps >= 2:
+            w.writerow(["kg", "count_median", "ds_a_c", "ds_b_c", "n"])
+            for kg, cmed, n, tm in points:
+                w.writerow([kg, cmed, tm[0] if len(tm) > 0 else float("nan"),
+                            tm[1] if len(tm) > 1 else float("nan"), n])
+        else:
+            w.writerow(["kg", "count_median", "scale_c", "n"])
+            for kg, cmed, n, tm in points:
+                w.writerow([kg, cmed, tm[0] if tm else float("nan"), n])
+    print(f"# {len(points)} pont mentve: {os.path.normpath(path)}"
+          f"{'  (2 hő: ds_a_c, ds_b_c)' if max_temps >= 2 else ''}")
 
 
 # ============================ temp dump ============================
@@ -218,35 +239,66 @@ def cmd_temp(args):
                 break
             v = parse_data_line(s, "REC")
             if v and len(v) >= 3:
-                recs.append((int(v[0]), int(v[1]), v[2]))
+                # node: REC seq raw t (3 érték) ; master: REC seq raw ds_a ds_b (4 érték)
+                rec = [int(v[0]), int(v[1]), v[2]]
+                if len(v) >= 4:
+                    rec.append(v[3])
+                recs.append(rec)
     ser.close()
     if not done:
         print(f"# FIGYELEM: nem jött '# DUMP END' {args.timeout}s alatt (részleges dump).")
     if not recs:
         print("# nincs rekord (üres a log? `s`-sel ellenőrizd).")
         return
+    two_temps = any(len(r) >= 4 for r in recs)
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["seq", "raw", "scale_c"])
-        w.writerows(recs)
-    print(f"# {len(recs)} rekord mentve: {os.path.normpath(path)}")
+        if two_temps:
+            w.writerow(["seq", "raw", "ds_a_c", "ds_b_c"])
+            w.writerows([(r[0], r[1], r[2], r[3] if len(r) >= 4 else float("nan")) for r in recs])
+        else:
+            w.writerow(["seq", "raw", "scale_c"])
+            w.writerows([(r[0], r[1], r[2]) for r in recs])
+    print(f"# {len(recs)} rekord mentve: {os.path.normpath(path)}"
+          f"{'  (2 hő: ds_a_c, ds_b_c)' if two_temps else ''}")
 
 
 # ============================ fit ============================
 
-def read_weight_csv(path):
-    pts = []
+def read_weight_csv(path, temp_col="scale_c"):
+    """A súly-CSV beolvasása. Visszaad: (kgs, counts, temps, used_temp_col).
+    A refTemp-hez a `temp_col` oszlopot olvassa; ha az nincs a fejlécben (pl. node-CSV, vagy
+    a master másik szondát kért), az első elérhető hő-oszlopra esik vissza (used_temp_col jelzi)."""
+    kgs, counts, temps = [], [], []
     with open(path, newline="") as f:
-        for row in csv.DictReader(f):
-            pts.append((float(row["kg"]), float(row["count_median"]), float(row["scale_c"])))
-    return pts
+        reader = csv.DictReader(f)
+        fields = reader.fieldnames or []
+        tcol = temp_col if temp_col in fields else None
+        if tcol is None:
+            for cand in ("scale_c", "ds_a_c", "ds_b_c", "scale_c2"):
+                if cand in fields:
+                    tcol = cand
+                    break
+        for row in reader:
+            kgs.append(float(row["kg"]))
+            counts.append(float(row["count_median"]))
+            if tcol is not None:
+                temps.append(float(row[tcol]))
+    return kgs, counts, temps, tcol
 
 
-def read_temp_csv(path):
+def read_temp_csv(path, col="scale_c"):
+    """A hő-CSV `col` oszlopának (scale_c | ds_a_c | ds_b_c) beolvasása -> [(scale_c, raw)]."""
     pts = []
     with open(path, newline="") as f:
-        for row in csv.DictReader(f):
-            sc = float(row["scale_c"])
+        reader = csv.DictReader(f)
+        fields = reader.fieldnames or []
+        if col not in fields:
+            avail = ", ".join(c for c in fields if c not in ("seq", "raw")) or "(nincs hő-oszlop)"
+            sys.exit(f"HIBA: a --temp-col '{col}' nincs a temp CSV-ben "
+                     f"({os.path.normpath(path)}); elérhető: {avail}")
+        for row in reader:
+            sc = float(row[col])
             if math.isnan(sc):
                 continue
             pts.append((sc, float(row["raw"])))
@@ -259,10 +311,11 @@ def cmd_fit(args):
     if not os.path.exists(wpath):
         sys.exit(f"HIBA: hiányzik a súly-CSV: {os.path.normpath(wpath)} (futtasd: weight)")
 
-    wpts = read_weight_csv(wpath)
-    kgs = [p[0] for p in wpts]
-    counts = [p[1] for p in wpts]
-    wtemps = [p[2] for p in wpts if not math.isnan(p[2])]
+    kgs, counts, wtemps_all, wtcol = read_weight_csv(wpath, args.temp_col)
+    wtemps = [t for t in wtemps_all if not math.isnan(t)]
+    if wtcol is not None and wtcol != args.temp_col:
+        print(f"# megjegyzés: a súly-CSV-ben nincs '{args.temp_col}' oszlop -> a refTemp a "
+              f"'{wtcol}' oszlopból (fallback).")
     wf = linfit(kgs, counts)          # count = count_per_kg*kg + zero_count
     if wf is None:
         sys.exit("HIBA: a súly-illesztéshez legalább 2, eltérő kg-jú pont kell.")
@@ -295,7 +348,7 @@ def cmd_fit(args):
 
     # hő-illesztés (opcionális, ha van dump)
     if os.path.exists(tpath):
-        tpts = read_temp_csv(tpath)
+        tpts = read_temp_csv(tpath, args.temp_col)
         tf = linfit([p[0] for p in tpts], [p[1] for p in tpts]) if len(tpts) >= 2 else None
         if tf is None:
             print("# hő-CSV megvan, de <2 érvényes pont — tempCoef kihagyva.")
@@ -397,6 +450,9 @@ def main():
 
     pf = sub.add_parser("fit", help="illesztés a CSV-kből -> calibration.json")
     pf.add_argument("--unit", required=True, help="cella azonosító")
+    pf.add_argument("--temp-col", default="scale_c",
+                    help="melyik hő-oszlop a scale (node: scale_c [default]; "
+                         "master 2 szonda: ds_a_c | ds_b_c a # DS ROLES alapján)")
     pf.set_defaults(func=cmd_fit)
 
     ps = sub.add_parser("show", help="calibration.json kiírása")
