@@ -1,0 +1,18 @@
+# bee_scale HX711 kalibrációs firmware (MASTER) · sdkconfig.defaults
+#
+# Konzol a natív USB-Serial-JTAG-on (az S3-Zero USB-C csatlakozója a natív USB-re megy).
+# A cal_main a driver-t telepíti és a stdio-t a JTAG-CDC VFS-re irányítja (interaktív parancsok).
+# (A prod master UART-konzolt használ — ez az önálló eszköz szándékosan az USB-JTAG-ot, hogy
+#  egyetlen USB-kábellel interaktív legyen, mint a node-variáns.)
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# Flash méret: az S3-Zero 4 MB.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+# Egyedi partíciós tábla (callog nyers log-partíció).
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Soros log: WARN (a mérési adat saját protokoll-sorokban megy; a rutin INFO ne spam-eljen).
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y

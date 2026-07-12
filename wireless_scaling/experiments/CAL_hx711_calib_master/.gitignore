@@ -1,0 +1,4 @@
+# PlatformIO build-artifactok (a pio run reprodukálja)
+.pio/
+# Generált env-config; a forrás a sdkconfig.defaults (az verziózva marad).
+sdkconfig.cal_master
