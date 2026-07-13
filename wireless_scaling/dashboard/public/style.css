@@ -95,6 +95,15 @@ body {
   padding: .4rem .7rem; border-radius: 10px; cursor: pointer; font-weight: 600; font-size: .8rem; white-space: nowrap;
 }
 .ghost-btn:active { transform: scale(.96); }
+.env-select {
+  margin-left: .5rem; border: 1px solid var(--border); background: var(--panel-2);
+  color: var(--text); padding: .35rem 1.6rem .35rem .6rem; border-radius: 10px;
+  cursor: pointer; font-weight: 600; font-size: .82rem; line-height: 1;
+  -webkit-appearance: none; appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' fill='none' stroke='%238b93a1' stroke-width='1.6'/></svg>");
+  background-repeat: no-repeat; background-position: right .5rem center;
+}
+.env-select:disabled { opacity: .5; cursor: default; }
 
 /* ===== Cards ===== */
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: .8rem; }

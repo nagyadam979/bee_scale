@@ -57,14 +57,16 @@ Két telepítés a `hives` tömbben:
      **lineárisan interpoláljuk** (`interpAt`) és **összegezzük** (`totalKgSeries`),
      de csak ott, ahol MINDEN egység lefedi az időt → nincs ugrás.
    - hive1: `w1 + w2`. hive2: a 4 egység összege.
-2. **hive2 „becsült kg" (placeholder):** a nyers count-ból egységenként
-   `kg = base + (raw − median(raw)) * kgPerCount` (config `placeholderKg`).
-   **EZ NEM VALÓDI SÚLY** — a UI „⚠ becsült kg"-ként jelöli. A valódi kalibráció +
-   hőm-kompenzáció **később, a felhőben** (Cloud Function) lesz, nem az MCU-n.
-3. **Hőm-chart = csak valós környezeti hőmérséklet** (config `tempPlot`):
-   Levegő (AHT20: hive2 `air_t_c` / hive1 `t`) + Kaptár-szonda (DS18B20: hive2
-   `hive_c` / hive1 `t`). A node-ok `temp_c`-je és a `scale_c` mérleg-hőm
-   **kalibrációs/hőm-kompenzációs adat → NEM rajzoljuk.**
+2. **hive2 valódi kalibrált kg (a frontenden):** a nyers count-ból boardonként
+   `kg = (raw − zero_count − tempCorr) / count_per_kg` (config `boards[].calib`;
+   node=log, master=lineáris hőkorrekció, a cella-hő a board saját `temp_c`-je).
+   Ha egy board `calib`-ja hiányos, arra `placeholderKg`-fallback (median-alap) van.
+   Nincs Cloud Function — a számítás kliens-oldali (l. `boardWeightKg`).
+3. **„Környezet" chart = legördülőből EGY szenzor idősora** (config `env.sensors`):
+   levegő (`air_t_c`), pára (`air_rh`), nyomás (`pressure_pa`) és kaptár-szonda
+   (`hive_c`) — mind az `env/readings` ágból. Az **eső** külön: a felső sávban
+   **24h csapadék-összeg csempe** (`env.rainTile`, a `rain_mm` intervallum-delták
+   összege). A board-ok kalibrációs cella-hője (`temp_c`) a KÁRTYÁN látszik, nem chart.
 4. **Fotó-szerű chart-navigáció, mobilon is:**
    - Kétujjas **pinch = idő-zoom**, egyujjas húzás = idő-pan (ECharts `inside`
      dataZoom az xAxis-on).
@@ -79,7 +81,7 @@ Két telepítés a `hives` tömbben:
 5. **Látható pontok + interpolációs sűrítés:** `showSymbol:true` (nincs lttb-sampling),
    és a ritka mérések KÖZÉ `densify()` 5 percenként interpolált pontot szúr
    (gap-enként max 6), hogy nagyításnál a szakaszon is legyenek pontok.
-6. **Nagyobb chartok:** súly 460px, hőm 340px; mobilon vh-alapú, a panel majdnem
+6. **Nagyobb chartok:** súly 460px, környezet 340px; mobilon vh-alapú, a panel majdnem
    a képernyő széléig ér.
 
 ## Deploy
@@ -95,15 +97,18 @@ A live-ot ez a projekt szándékosan **nem** deployolja. (Ha valaha élesre menn
 ## Új telepítés / node hozzáadása
 
 Csak `config.js`: új elem a `hives` tömbbe (id, label, `schema`, `weightUnit`,
-`units[]` a RTDB-útvonalakkal és mezőnevekkel, `weather`, `tempPlot`). Kód nem kell.
+`boards[]` a RTDB-útvonalakkal/mezőnevekkel + boardonkénti `calib`, és `env`
+= `{ rainTile, sensors[] }` a környezeti szenzorokhoz). Kód nem kell.
 
 ## Nyitott pontok / hátralévő
 
-- **Valódi kalibráció + kg-konverzió + hőm-kompenzáció a felhőben** (Cloud Function):
-  a hive2 nyers count → valódi kg. Kiindulási együttható ~1031 count/°C (M1b).
-  Amint kész, a `config.js` hive2 `weightUnit` "raw"→"kg" és a placeholder-blokk kivehető.
-- A hive2 Firebase-szerkezet **nem végleges** — a felhős feldolgozáshoz szabadon
-  átalakítható (pl. külön kalibrált ág).
+- **RTDB séma-tisztítás firmware-oldalon (KÉSZ, deploy hátra):** a `rods`→`boards`
+  átnevezés, a master cella-hője (`scale_c`→`temp_c`) a board-rekordba, a kaptár-szonda
+  (`hive_c`) az env-be. A master firmware-t **újra kell flashelni** (l. modul MEMORY 10.),
+  a régi `hives/hive2/` teszt-adat törölhető (nem migrálunk), és az RTDB Rules-t
+  (`firmware/master/firebase_hive2_rules.md`) deploy-olni kell az új sémára.
+- A **súly-kalibráció ~50 kg-ig extrapolációja** validálatlan (mérés max ~10 kg) —
+  a „4 cellára állás" adja a magas terhelési keresztellenőrzést.
 - **Link-minőség** (rssi/gap) a hive2-höz: a master firmware ismeri, de jelenleg
   nem tölti fel; ha kell a nézetbe, előbb firmware-oldali feltöltés kell.
 - A JS-runtime böngészős/eszközös validációja a felhasználó preview-visszajelzésén

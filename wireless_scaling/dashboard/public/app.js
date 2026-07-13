@@ -1,19 +1,22 @@
 // bee_scale dashboard — read-only. Adatréteg config.js (window.BEESCALE_CONFIG).
 // Firebase modular SDK (ESM CDN) + ECharts (UMD global). Build-lépés nélkül.
 //
-// Elv: telepítés-választó (hive1/hive2) → telepítés-szintű időjárás-sáv +
-// EGY fő SÚLY-CHART = telepítésenként EGYETLEN vonal (az összes mérleg
-// interpolált ÖSSZEGE). Alatta hőm-chart (csak környezeti: levegő + szonda)
-// és állapot-kártyák.
+// Elv: telepítés-választó (hive1/hive2) → telepítés-szintű környezet-sáv
+// (24h csapadék-csempe + szenzor-chipek) + EGY fő SÚLY-CHART (össz-súly) +
+// "Környezet" chart (legördülőből EGY szenzor idősora) + board-kártyák.
+//
+// BOARD-MODELL: minden mérőrúd (node_1..3 ÉS master) a SAJÁT board-rekordjában
+// viszi a súlyt (weight_raw) és a kalibrációs cella-hőjét (temp_c). A környezeti
+// adatok (levegő/pára/nyomás/eső + kaptár-szonda hive_c) az env ágban.
 //
 // SÚLY-VONAL (egy össz-görbe / telepítés):
 //  * hive1 (legacy): valódi kalibrált kg (w) → w1+w2 összeg.
-//  * hive2 (wireless): a weight_raw NYERS count → PLACEHOLDER kg-normalizálás
-//    egységenként (config.placeholderKg): kg = base + (raw - median(raw))*kgPerCount,
-//    majd a 4 egység összege. EZ NEM VALÓDI SÚLY — a UI "becsült kg"-ként jelöli;
-//    a valódi kalibráció + hőm-kompenzáció külön, felhős (Cloud Function) munka.
-//  Az egységek eltérő időben (async) érkező pontjait közös idővonalra lineárisan
-//  interpoláljuk, és csak ott összegzünk, ahol MINDEN egység lefedi az időt.
+//  * hive2 (wireless): a weight_raw NYERS count → valódi kalibrált kg boardonként
+//    (config.calib: kg = (raw - zero_count - tempCorr)/count_per_kg; node=log,
+//    master=lineáris hőkorrekció), majd a 4 board interpolált ÖSSZEGE. Ha egy
+//    board calib-ja hiányos, arra placeholderKg-fallback (median-alap) van.
+//  Az async pontokat közös idővonalra lineárisan interpoláljuk, és csak ott
+//  összegzünk, ahol MINDEN board lefedi az időt (nincs ugrás).
 //
 // MOBIL: az IDŐ-tengelyt nagyítod/tolod (kétujjas pinch = zoom, egyujjas húzás
 // = pan); a függőleges mindig a látható adathoz igazodik → a vonal nem csúszik
@@ -44,8 +47,9 @@ const DENSIFY_MS = 5 * 60 * 1000, DENSIFY_MAX = 6;
 
 let activeHiveId = CFG.hives[0].id;
 let refreshTimer = null;
+let envSelIdx = 0;   // a "Környezet" chart legördülőjének kiválasztott indexe
 const charts = {}; // id -> echarts instance
-const store = {};  // hiveId -> { units:{id:[{ts,w,it,mask,vbat}]}, env:[], temp:[] }
+const store = {};  // hiveId -> { boards:{id:[{ts,w,it,mask,vbat}]}, byPath:{path:[rawRec]} }
 
 // ===========================================================================
 // Auth (anonim — a Rules auth != null-t vár olvasáshoz)
@@ -69,9 +73,9 @@ function startApp() {
   $("splash").classList.add("hidden");
   $("app").classList.remove("hidden");
   charts["weight-chart"] = echarts.init($("weight-chart"), null, { renderer: "canvas" });
-  charts["temp-chart"] = echarts.init($("temp-chart"), null, { renderer: "canvas" });
+  charts["env-chart"] = echarts.init($("env-chart"), null, { renderer: "canvas" });
   hardenTouch("weight-chart");
-  hardenTouch("temp-chart");
+  hardenTouch("env-chart");
   renderTabs();
   $("refresh-btn").addEventListener("click", () => loadHive(activeHiveId));
   document.querySelectorAll("[data-reset]").forEach((b) =>
@@ -100,12 +104,13 @@ function hiveById(id) { return CFG.hives.find((h) => h.id === id); }
 
 function selectHive(id) {
   activeHiveId = id;
+  envSelIdx = 0; // új telepítésnél az első szenzorra állunk
   renderTabs();
   loadHive(id);
 }
 
 // ===========================================================================
-// Adatlekérés — ts-indexelt query, egységenként limitToLast
+// Adatlekérés — ts-indexelt query, utanként limitToLast
 // ===========================================================================
 function fetchSeries(path) {
   const q = query(ref(db, path), orderByChild("ts"), limitToLast(CFG.loadLimit));
@@ -121,19 +126,27 @@ async function loadHive(id) {
   const hive = hiveById(id);
   setStatus("Betöltés…");
   try {
-    const unitPromises = hive.units.map((u) => fetchSeries(u.path));
-    const envP = hive.weather?.env ? fetchSeries(hive.weather.env.path) : Promise.resolve([]);
-    const tempP = hive.weather?.temp ? fetchSeries(hive.weather.temp.path) : Promise.resolve([]);
-    const [unitData, env, temp] = await Promise.all([Promise.all(unitPromises), envP, tempP]);
+    // Minden EGYEDI RTDB-utat egyszer töltünk (board-ok + env-szenzorok + eső-csempe).
+    const sensors = hive.env?.sensors || [];
+    const rainTile = hive.env?.rainTile || null;
+    const paths = new Set();
+    hive.boards.forEach((b) => paths.add(b.path));
+    sensors.forEach((s) => paths.add(s.path));
+    if (rainTile) paths.add(rainTile.path);
+    const pathList = [...paths];
+    const fetched = await Promise.all(pathList.map((p) => fetchSeries(p)));
+    const byPath = {};
+    pathList.forEach((p, i) => { byPath[p] = fetched[i]; });
 
-    const st = { units: {}, env, temp };
-    hive.units.forEach((u, i) => {
-      const wf = u.weightField;
-      st.units[u.id] = unitData[i].map((r) => {
+    const st = { boards: {}, byPath };
+    hive.boards.forEach((b) => {
+      const wf = b.weightField;
+      st.boards[b.id] = (byPath[b.path] || []).map((r) => {
         const p = { ts: r.ts, w: typeof r[wf] === "number" ? r[wf] : null, mask: r.sensor_error_mask };
-        if (u.innerTempFrom && u.innerTempFrom.field && !u.innerTempFrom.path)
-          p.it = typeof r[u.innerTempFrom.field] === "number" ? r[u.innerTempFrom.field] : null;
-        if (u.vbatField && typeof r[u.vbatField] === "number") p.vbat = r[u.vbatField];
+        // cella-hő a SAJÁT board-rekordból (node: temp_c; master: temp_c = régi scale_c).
+        if (b.innerTempFrom && b.innerTempFrom.field)
+          p.it = typeof r[b.innerTempFrom.field] === "number" ? r[b.innerTempFrom.field] : null;
+        if (b.vbatField && typeof r[b.vbatField] === "number") p.vbat = r[b.vbatField];
         return p;
       });
     });
@@ -142,7 +155,7 @@ async function loadHive(id) {
     if (id === activeHiveId) {
       renderWeather(hive, st);
       renderWeightChart(hive, st);
-      renderTempChart(hive, st);
+      renderEnvChart(hive, st);
       renderCards(hive, st);
       $("weight-note").textContent = hive.weightEstimated
         ? "⚠ becsült kg (placeholder — valódi kalibráció még nincs)"
@@ -163,49 +176,29 @@ function median(nums) {
   const s = [...nums].sort((a, b) => a - b), m = s.length >> 1;
   return s.length & 1 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
-// A master cella-hőm (scale_c) sorozata a KÖZÖS temp-ágból (st.temp), ts-alapon
-// interpolálva a súly-mintákhoz — a node-oknál a temp_c a rekordban van (p.it),
-// itt kell csak külön series (innerTempFrom.path van rá).
-function scaleTempSeries(st) {
-  return (st.temp || [])
-    .filter((r) => typeof r.scale_c === "number")
-    .map((r) => [r.ts * 1000, r.scale_c]);
-}
-// egy egység súly-sorozata kg-ban [[tsMs, kg]]. scaleCSeries: a master cella-hőm
-// sorozata (lásd scaleTempSeries) — csak a path-os innerTempFrom-ú unitoknak kell.
-function unitWeightKg(hive, unit, rows, scaleCSeries) {
+// egy board súly-sorozata kg-ban [[tsMs, kg]]. A cella-hő MINDEN boardnál a saját
+// rekordból (p.it) jön — a master temp_c-je is a board-rekordban van már.
+function boardWeightKg(hive, board, rows) {
   const r = rows.filter((p) => p.w !== null);
   if (hive.weightUnit === "kg") return r.map((p) => [p.ts * 1000, p.w]);
-  const c = unit.calib;
+  const c = board.calib;
   const calibReady = c && c.zero_count != null && c.count_per_kg != null && c.refTemp != null;
   if (!calibReady) {
-    // Súly-kalibráció még nincs kész → marad a placeholder-fallback (medián-alapú).
+    // Súly-kalibráció még nincs kész → placeholder-fallback (medián-alapú).
     const med = median(r.map((p) => p.w));
-    const { base, kgPerCount } = unit.placeholderKg || { base: 0, kgPerCount: 1 };
+    const { base, kgPerCount } = board.placeholderKg || { base: 0, kgPerCount: 1 };
     return r.map((p) => [p.ts * 1000, +(base + (p.w - med) * kgPerCount).toFixed(3)]);
   }
   // Valódi kalibrált kg: kg = (raw - zero_count - tempCorr) / count_per_kg.
   return r.map((p) => {
-    const tMs = p.ts * 1000;
-    let cellTemp = null;
-    if (unit.innerTempFrom && unit.innerTempFrom.path) {
-      // master: külön series-ből, ts-interpolálva; tartományon kívül a szélső
-      // értékkel clamp-elünk (a mintát emiatt sosem dobjuk el).
-      if (scaleCSeries && scaleCSeries.length) {
-        const v = interpAt(scaleCSeries, tMs);
-        cellTemp = v != null ? v
-          : (tMs < scaleCSeries[0][0] ? scaleCSeries[0][1] : scaleCSeries[scaleCSeries.length - 1][1]);
-      }
-    } else if (typeof p.it === "number") {
-      cellTemp = p.it; // node: temp_c a rekordból
-    }
+    const cellTemp = typeof p.it === "number" ? p.it : null;
     let tempCorr = 0;
     if (cellTemp != null) {
       if (c.tempModel === "log") tempCorr = c.a * Math.log((cellTemp + c.c) / (c.refTemp + c.c));
       else if (c.tempModel === "linear") tempCorr = c.tempCoef * (cellTemp - c.refTemp);
     }
     const kg = (p.w - c.zero_count - tempCorr) / c.count_per_kg;
-    return [tMs, +kg.toFixed(3)];
+    return [p.ts * 1000, +kg.toFixed(3)];
   });
 }
 // Lineáris interpoláció: az s ([ [tsMs,val], ... ] növekvő) sorozat értéke t-nél.
@@ -218,10 +211,10 @@ function interpAt(s, t) {
   const b = s[lo], a = s[lo - 1];
   return a[1] + (b[1] - a[1]) * (t - a[0]) / (b[0] - a[0]);
 }
-// EGY össz-súly vonal: az egységek async pontjait közös idővonalra interpoláljuk,
-// és csak ott adjuk össze, ahol MINDEN egység lefedi az adott időt (nincs ugrás).
-function totalKgSeries(perUnit) {
-  const lists = perUnit.filter((s) => s.length);
+// EGY össz-súly vonal: a board-ok async pontjait közös idővonalra interpoláljuk,
+// és csak ott adjuk össze, ahol MINDEN board lefedi az adott időt (nincs ugrás).
+function totalKgSeries(perBoard) {
+  const lists = perBoard.filter((s) => s.length);
   if (!lists.length) return [];
   const tset = new Set();
   for (const s of lists) for (const p of s) tset.add(p[0]);
@@ -258,28 +251,45 @@ function densify(data, stepMs, maxPerGap) {
 // Fő súly-chart — telepítésenként EGYETLEN vonal (össz-súly)
 // ===========================================================================
 function renderWeightChart(hive, st) {
-  const scaleCSeries = scaleTempSeries(st);
-  const perUnit = hive.units.map((u) => unitWeightKg(hive, u, st.units[u.id], scaleCSeries));
-  const total = densify(totalKgSeries(perUnit), DENSIFY_MS, DENSIFY_MAX);
+  const perBoard = hive.boards.map((b) => boardWeightKg(hive, b, st.boards[b.id]));
+  const total = densify(totalKgSeries(perBoard), DENSIFY_MS, DENSIFY_MAX);
   const series = [lineSeries("Össz-súly", total, PALETTE[0], 2.6)];
   charts["weight-chart"].setOption(chartOption(series, "kg", null, (v) => v.toFixed(2) + " kg"), true);
   requestAnimationFrame(() => charts["weight-chart"].resize());
 }
 
 // ===========================================================================
-// Hőm-chart — CSAK valós környezeti hőmérsékletek (config.tempPlot):
-// levegő (AHT20) + kaptár-szonda (DS18B20). A node-ok temp_c-je és a scale_c
-// hőm-kompenzációs/kalibrációs adat → NEM rajzoljuk.
+// "Környezet" chart — legördülőből EGY szenzor idősora (config.env.sensors).
+// A szenzorok a saját RTDB-útjukból (byPath) jönnek; az eső NINCS itt (l. csempe).
 // ===========================================================================
-function renderTempChart(hive, st) {
-  const series = [];
-  (hive.tempPlot || []).forEach((m) => {
-    const arr = m.src === "env" ? st.env : st.temp;
-    const raw = arr.filter((r) => typeof r[m.field] === "number").map((r) => [r.ts * 1000, r[m.field]]);
-    series.push(lineSeries(m.label, densify(raw, DENSIFY_MS, DENSIFY_MAX), m.color || PALETTE[0], 1.8));
+function renderEnvChart(hive, st) {
+  const sensors = hive.env?.sensors || [];
+  const sel = $("env-select");
+  sel.innerHTML = "";
+  sensors.forEach((s, i) => {
+    const o = document.createElement("option");
+    o.value = String(i);
+    o.textContent = `${s.icon || ""} ${s.label}`.trim();
+    sel.appendChild(o);
   });
-  charts["temp-chart"].setOption(chartOption(series, "°C", null, (v) => v.toFixed(1) + " °C"), true);
-  requestAnimationFrame(() => charts["temp-chart"].resize());
+  if (envSelIdx >= sensors.length) envSelIdx = 0;
+  sel.value = String(envSelIdx);
+  sel.disabled = sensors.length === 0;
+  sel.onchange = () => { envSelIdx = +sel.value; drawEnvSeries(hive, st); };
+  drawEnvSeries(hive, st);
+}
+function drawEnvSeries(hive, st) {
+  const sensors = hive.env?.sensors || [];
+  const s = sensors[envSelIdx];
+  const chart = charts["env-chart"];
+  if (!s) { chart.clear(); return; }
+  const scale = s.scale || 1;
+  const rows = st.byPath[s.path] || [];
+  const raw = rows.filter((r) => typeof r[s.field] === "number").map((r) => [r.ts * 1000, +(r[s.field] * scale).toFixed(3)]);
+  const fmt = s.fmt ?? 1;
+  const series = [lineSeries(`${s.label} (${s.unit})`, densify(raw, DENSIFY_MS, DENSIFY_MAX), PALETTE[1], 1.8)];
+  chart.setOption(chartOption(series, s.unit, null, (v) => v.toFixed(fmt) + " " + s.unit), true);
+  requestAnimationFrame(() => chart.resize());
 }
 
 // ===========================================================================
@@ -346,42 +356,57 @@ function resetZoom(chartId) {
 }
 
 // ===========================================================================
-// Időjárás-sáv
+// Környezet-sáv — 24h csapadék-csempe + szenzorok pillanatnyi értékei
 // ===========================================================================
-function latest(arr) { return arr.length ? arr[arr.length - 1] : null; }
+function lastNumeric(rows, field) {
+  for (let i = rows.length - 1; i >= 0; i--) if (typeof rows[i][field] === "number") return rows[i][field];
+  return null;
+}
+function weatherChip(icon, txt, unit, label) {
+  const chip = document.createElement("div");
+  chip.className = "wchip";
+  chip.innerHTML = `<span class="wi">${icon || ""}</span>
+    <span class="wtxt"><span class="wv">${txt}<small> ${unit}</small></span>
+    <span class="wl">${label}</span></span>`;
+  return chip;
+}
 function renderWeather(hive, st) {
   const el = $("weather");
   el.innerHTML = "";
-  const groups = [];
-  if (hive.weather?.env) groups.push([hive.weather.env, latest(st.env)]);
-  if (hive.weather?.temp) groups.push([hive.weather.temp, latest(st.temp)]);
-  for (const [grp, rec] of groups) {
-    for (const m of grp.metrics) {
-      let v = rec ? rec[m.field] : null, txt = "–";
-      if (typeof v === "number") { if (m.scale) v *= m.scale; txt = v.toFixed(m.fmt ?? 1); }
-      const chip = document.createElement("div");
-      chip.className = "wchip";
-      chip.innerHTML = `<span class="wi">${m.icon || ""}</span>
-        <span class="wtxt"><span class="wv">${txt}<small> ${m.unit}</small></span>
-        <span class="wl">${m.label}</span></span>`;
-      el.appendChild(chip);
+  const env = hive.env;
+  if (!env) return;
+  // 24h csapadék-összeg csempe: a rain_mm INTERVALLUM-DELTÁK összege az ablakban.
+  if (env.rainTile) {
+    const rt = env.rainTile;
+    const rows = st.byPath[rt.path] || [];
+    const cutoff = Date.now() - (rt.windowH || 24) * 3600 * 1000;
+    let sum = 0, any = false;
+    for (const r of rows) {
+      if (typeof r[rt.field] === "number" && r.ts * 1000 >= cutoff) { sum += r[rt.field]; any = true; }
     }
+    el.appendChild(weatherChip(rt.icon, any ? sum.toFixed(rt.fmt ?? 1) : "–", rt.unit, rt.label));
+  }
+  // Szenzorok pillanatnyi (LEGUTOLSÓ érvényes) értéke chipként.
+  for (const s of env.sensors || []) {
+    let v = lastNumeric(st.byPath[s.path] || [], s.field);
+    let txt = "–";
+    if (v != null) { if (s.scale) v *= s.scale; txt = v.toFixed(s.fmt ?? 1); }
+    el.appendChild(weatherChip(s.icon, txt, s.unit, s.label));
   }
 }
 
 // ===========================================================================
-// Kompakt állapot-kártyák
+// Kompakt állapot-kártyák (boardonként: súly-kg + saját cella-hő)
 // ===========================================================================
 function renderCards(hive, st) {
   const el = $("cards");
   el.innerHTML = "";
-  const scaleCSeries = scaleTempSeries(st);
-  for (const u of hive.units) {
-    const kg = unitWeightKg(hive, u, st.units[u.id], scaleCSeries);
-    el.appendChild(buildCard(hive, u, st.units[u.id], kg));
+  for (const b of hive.boards) {
+    const kg = boardWeightKg(hive, b, st.boards[b.id]);
+    el.appendChild(buildCard(hive, b, st.boards[b.id], kg));
   }
 }
-function buildCard(hive, unit, rawRows, kg) {
+function buildCard(hive, board, rawRows, kg) {
   const card = document.createElement("div");
   card.className = "card";
   const lastRaw = rawRows.filter((r) => r.w !== null).slice(-1)[0] || null;
@@ -389,9 +414,9 @@ function buildCard(hive, unit, rawRows, kg) {
   const firstKg = kg.length ? kg[0][1] : null;
 
   const badges = [freshnessBadge(lastRaw)];
-  if (unit.power === "mains") badges.push({ txt: "⚡ hálózat", cls: "" });
-  else badges.push(batteryBadge(unit, lastRaw));
-  const errB = errorBadge(unit, lastRaw);
+  if (board.power === "mains") badges.push({ txt: "⚡ hálózat", cls: "" });
+  else badges.push(batteryBadge(board, lastRaw));
+  const errB = errorBadge(board, lastRaw);
   if (errB) badges.push(errB);
   const badgeHtml = badges.map((b) => `<span class="badge ${b.cls}">${b.txt}</span>`).join("");
 
@@ -402,7 +427,7 @@ function buildCard(hive, unit, rawRows, kg) {
 
   card.innerHTML = `
     <div class="card-head">
-      <span class="card-name">${unit.label}</span>
+      <span class="card-name">${board.label}</span>
       <span class="card-badges">${badgeHtml}</span>
     </div>
     <div class="card-value"><span class="v">${valTxt}</span><span class="u">kg</span></div>
@@ -420,18 +445,18 @@ function freshnessBadge(last) {
   if (ageMin > CFG.staleMinutes) return { txt: "⚠ elavult", cls: "warn" };
   return { txt: "friss", cls: "ok" };
 }
-function batteryBadge(unit, last) {
-  if (unit.noVbatHw) return { txt: "🔋 nincs HW", cls: "" };
+function batteryBadge(board, last) {
+  if (board.noVbatHw) return { txt: "🔋 nincs HW", cls: "" };
   const mv = last && typeof last.vbat === "number" ? last.vbat : null;
   if (mv == null || mv === 0) return { txt: "🔋 –", cls: "" };
   const pct = Math.max(0, Math.min(100, Math.round((mv - 3300) / (4200 - 3300) * 100)));
   const cls = pct < 15 ? "danger" : pct < 35 ? "warn" : "ok";
   return { txt: `🔋 ${(mv / 1000).toFixed(2)}V`, cls };
 }
-function errorBadge(unit, last) {
+function errorBadge(board, last) {
   if (!last || typeof last.mask !== "number" || last.mask === 0) return null;
   let mask = last.mask;
-  if (unit.noVbatHw) mask &= ~(1 << 6); // node1: a VBAT-bit várt, nem hiba
+  if (board.noVbatHw) mask &= ~(1 << 6); // node1: a VBAT-bit várt, nem hiba
   if (mask === 0) return null;
   const map = ["HX711", "node-DS", "kaptár-DS", "mérleg-DS", "AHT20", "BMP280", "VBAT"];
   const names = [];

@@ -45,13 +45,16 @@
         <div id="weight-chart" class="chart"></div>
       </section>
 
-      <!-- Belső hőmérséklet-chart -->
+      <!-- Környezet-chart: legördülőből EGY szenzor idősora -->
       <section class="panel">
         <div class="panel-head">
-          <div><span class="panel-title">Belső hőmérséklet</span></div>
-          <button class="ghost-btn" data-reset="temp-chart">⟲ Teljes nézet</button>
+          <div>
+            <span class="panel-title">Környezet</span>
+            <select id="env-select" class="env-select" aria-label="Környezeti szenzor"></select>
+          </div>
+          <button class="ghost-btn" data-reset="env-chart">⟲ Teljes nézet</button>
         </div>
-        <div id="temp-chart" class="chart chart-sm"></div>
+        <div id="env-chart" class="chart chart-sm"></div>
       </section>
 
       <!-- Kompakt állapot-kártyák -->

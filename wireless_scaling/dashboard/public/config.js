@@ -1,7 +1,7 @@
 // bee_scale dashboard — konfiguráció (adatréteg-vezérlő)
 // -----------------------------------------------------------------------------
 // Ez a fájl írja le, MILYEN telepítések (hive-ok) és azon belül milyen
-// mérőegységek léteznek, és melyik RTDB-ágból, milyen mezőkkel olvasandók.
+// mérőrudak (boards) léteznek, és melyik RTDB-ágból, milyen mezőkkel olvasandók.
 // Új telepítés / node hozzáadása = ITT egy bejegyzés, kód-módosítás nélkül
 // (multi-telepítésre felkészítve). A frontend read-only: soha nem ír az RTDB-be.
 //
@@ -32,31 +32,31 @@ window.BEESCALE_CONFIG = {
       sublabel: "master + 3 node · 20 perc",
       schema: "wireless",
       weightUnit: "raw", // az RTDB nyers HX711 count-ot tárol; a kg-ot a frontend
-      // számolja cellánként a units[].calib-ból (kg = (raw - zero_count - tempCorr)
+      // számolja rúdanként a boards[].calib-ból (kg = (raw - zero_count - tempCorr)
       // / count_per_kg). A weightField továbbra is weight_raw → a "raw" ág aktiválja
       // az app.js unitWeightKg() kalibrációs számítását (NEM azt jelenti, hogy raw-ot
       // jelenítünk meg). A placeholderKg (base/median-alap) csak fallback marad, ha
-      // egy cella calib-ja hiányos lenne.
-      // Súly-kalibráció mind a 4 cellára kész (calibration.json, R²>0.9998) → valódi kg.
+      // egy rúd calib-ja hiányos lenne.
+      // Súly-kalibráció mind a 4 rúdra kész (calibration.json, R²>0.9998) → valódi kg.
       weightEstimated: false,
-      // Mérőegységek (kaptárak). Mindegyik saját HX711 → egyetlen súly.
-      units: [
+      // Mérőrudak (boards) a kaptáron. Mindegyik saját HX711 → egyetlen súly.
+      boards: [
         {
-          id: "master", label: "Master", path: "hives/hive2/rods/master/readings",
+          id: "master", label: "Master", path: "hives/hive2/boards/master/readings",
           weightField: "weight_raw", placeholderKg: { base: 34, kgPerCount: 0.0008 },
-          // A master belső hőmérője (mérleg-hőm) a KÖZÖS temp ágban van (scale_c),
-          // nem a rod-rekordban — ts-alapon társítjuk.
-          innerTempFrom: { path: "weather.temp", field: "scale_c", label: "mérleg-hőm" },
+          // A master mérleg-cella hője (temp_c) mostantól a SAJÁT board-rekordjában
+          // van (mint a node-oké) — nincs külön temp ág, nincs ts-társítás.
+          innerTempFrom: { field: "temp_c", label: "cella-hőm" },
           power: "mains", // hálózati táp — nincs akku
           // Kalibráció: kg = (raw - zero_count - tempCorr) / count_per_kg.
           // master = lineáris hő-komp.: tempCorr = tempCoef * (cellTemp - refTemp),
-          // cellTemp = scale_c (a fenti innerTempFrom.path-os series, ts-interpolálva).
+          // cellTemp = temp_c (p.it, a board-rekordból — a régi scale_c).
           // a/c/tempCoef ismert (hő-kalibráció kész); zero_count/count_per_kg/refTemp
           // a súly-kalibráció végén töltendő (addig placeholderKg a fallback).
           calib: { tempModel: "linear", tempCoef: 318, zero_count: -660656.85, count_per_kg: -46267.227, refTemp: 26.121 }, // súly-kalib kész (calibration.json, R²=0.99981)
         },
         {
-          id: "node_1", label: "Node 1", path: "hives/hive2/rods/node_1/readings",
+          id: "node_1", label: "Node 1", path: "hives/hive2/boards/node_1/readings",
           weightField: "weight_raw", placeholderKg: { base: 28, kgPerCount: 0.0008 },
           innerTempFrom: { field: "temp_c", label: "cella-hőm" },
           vbatField: "vbat_mv", noVbatHw: true, // node1: nincs akkumérő HW (mask VBAT-bit ≠ hiba)
@@ -67,7 +67,7 @@ window.BEESCALE_CONFIG = {
           calib: { tempModel: "log", a: -8370, c: 5.04, zero_count: 20301.43, count_per_kg: -39503.5691, refTemp: 27.837 }, // súly-kalib kész (calibration.json, R²=0.99992)
         },
         {
-          id: "node_2", label: "Node 2", path: "hives/hive2/rods/node_2/readings",
+          id: "node_2", label: "Node 2", path: "hives/hive2/boards/node_2/readings",
           weightField: "weight_raw", placeholderKg: { base: 45, kgPerCount: 0.0008 },
           innerTempFrom: { field: "temp_c", label: "cella-hőm" },
           vbatField: "vbat_mv",
@@ -75,7 +75,7 @@ window.BEESCALE_CONFIG = {
           calib: { tempModel: "log", a: -5281, c: 2.85, zero_count: -186914.47, count_per_kg: -39127.5917, refTemp: 28.927 }, // súly-kalib kész (calibration.json, R²=0.99992)
         },
         {
-          id: "node_3", label: "Node 3", path: "hives/hive2/rods/node_3/readings",
+          id: "node_3", label: "Node 3", path: "hives/hive2/boards/node_3/readings",
           weightField: "weight_raw", placeholderKg: { base: 39, kgPerCount: 0.0008 },
           innerTempFrom: { field: "temp_c", label: "cella-hőm" },
           vbatField: "vbat_mv",
@@ -83,32 +83,22 @@ window.BEESCALE_CONFIG = {
           calib: { tempModel: "log", a: -11034, c: 5.18, zero_count: 6298.8, count_per_kg: -40104.2897, refTemp: 27.594 }, // súly-kalib kész (calibration.json, R²=0.99994)
         },
       ],
-      // Telepítés-szintű időjárás (közös a master szenzoraiból).
-      weather: {
-        env: {
-          path: "hives/hive2/env/readings",
-          metrics: [
-            { field: "air_t_c", label: "Levegő", unit: "°C", fmt: 1, icon: "🌡" },
-            { field: "air_rh", label: "Pára", unit: "%", fmt: 0, icon: "💧" },
-            { field: "pressure_pa", label: "Nyomás", unit: "hPa", fmt: 0, scale: 0.01, icon: "⏲" },
-            { field: "rain_mm", label: "Eső", unit: "mm", fmt: 1, icon: "🌧" },
-          ],
-        },
-        temp: {
-          path: "hives/hive2/temp/readings",
-          metrics: [
-            { field: "hive_c", label: "Kaptár", unit: "°C", fmt: 1, icon: "🐝" },
-            { field: "scale_c", label: "Mérleg", unit: "°C", fmt: 1, icon: "⚖" },
-          ],
-        },
+      // Telepítés-szintű környezet (közös a master szenzoraiból).
+      // - rainTile: csempeként a felső #weather sávban, az utolsó `windowH` óra
+      //   rain_mm (INTERVALLUM-DELTA) értékeinek ÖSSZEGE (NINCS a plotolható listában).
+      // - sensors: (a) pillanatnyi chip a #weather sávban (LEGUTOLSÓ érték), ÉS
+      //   (b) a "Környezet" panel <select>-jében egyszerre EGY plotolható idősor.
+      //   Minden hive2 környezeti adat EGY ágban van (env/readings) — a kaptár-szonda
+      //   (hive_c) is oda került a firmware séma-tisztításkor; path→sorozat map olvassa.
+      env: {
+        rainTile: { path: "hives/hive2/env/readings", field: "rain_mm", windowH: 24, label: "Csapadék 24ó", unit: "mm", fmt: 1, icon: "🌧" },
+        sensors: [
+          { path: "hives/hive2/env/readings",  field: "air_t_c",     label: "Levegő",        unit: "°C",  fmt: 1, icon: "🌡" },
+          { path: "hives/hive2/env/readings",  field: "air_rh",      label: "Páratartalom",  unit: "%",   fmt: 0, icon: "💧" },
+          { path: "hives/hive2/env/readings",  field: "pressure_pa", label: "Légnyomás",     unit: "hPa", fmt: 0, scale: 0.01, icon: "⏲" },
+          { path: "hives/hive2/env/readings",  field: "hive_c",      label: "Kaptár-szonda", unit: "°C",  fmt: 1, icon: "🐝" },
+        ],
       },
-      // Hőm-chart: CSAK a valós környezeti hőmérsékletek rajzolódnak.
-      // A node-ok temp_c-je és a scale_c a HŐM-KOMPENZÁCIÓS/kalibrációs adat →
-      // NEM plotoljuk. Levegő = AHT20 (air_t_c), Kaptár = DS18B20 szonda (hive_c).
-      tempPlot: [
-        { src: "env",  field: "air_t_c", label: "Levegő (AHT20)", color: "#4fc3f7" },
-        { src: "temp", field: "hive_c",  label: "Kaptár (szonda)", color: "#f5b301" },
-      ],
     },
 
     {
@@ -121,7 +111,8 @@ window.BEESCALE_CONFIG = {
       // (legközelebbi-szomszéd párosítás tolSec toleranciával); a rúdak külön
       // vonalként a legendből bekapcsolhatók, de alapból rejtve.
       aggregate: { label: "Össz-súly", tolSec: 180 },
-      units: [
+      // hive1 board-oknak nincs innerTempFrom → a kártyán nem jelenik meg cella-hő.
+      boards: [
         {
           id: "w1", label: "Mérleg 1", path: "hives/hive1/rods/w1/readings",
           weightField: "w",
@@ -131,25 +122,15 @@ window.BEESCALE_CONFIG = {
           weightField: "w",
         },
       ],
-      weather: {
-        env: {
-          path: "hives/hive1/env/readings",
-          metrics: [
-            { field: "t", label: "Levegő", unit: "°C", fmt: 1, icon: "🌡" },
-            { field: "h", label: "Pára", unit: "%", fmt: 0, icon: "💧" },
-          ],
-        },
-        temp: {
-          path: "hives/hive1/temp/readings",
-          metrics: [
-            { field: "t", label: "Kaptár", unit: "°C", fmt: 1, icon: "🐝" },
-          ],
-        },
+      // hive1-nek nincs eső-adata → rainTile: null (a kód ezt tűrje).
+      env: {
+        rainTile: null,
+        sensors: [
+          { path: "hives/hive1/env/readings",  field: "t", label: "Levegő",        unit: "°C", fmt: 1, icon: "🌡" },
+          { path: "hives/hive1/env/readings",  field: "h", label: "Páratartalom",  unit: "%",  fmt: 0, icon: "💧" },
+          { path: "hives/hive1/temp/readings", field: "t", label: "Kaptár-szonda", unit: "°C", fmt: 1, icon: "🐝" },
+        ],
       },
-      tempPlot: [
-        { src: "env",  field: "t", label: "Levegő",          color: "#4fc3f7" },
-        { src: "temp", field: "t", label: "Kaptár (szonda)", color: "#f5b301" },
-      ],
     },
   ],
 };
