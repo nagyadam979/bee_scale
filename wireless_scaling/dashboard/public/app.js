@@ -203,26 +203,30 @@ function boardWeightKg(hive, board, rows) {
 }
 // Lineáris interpoláció: az s ([ [tsMs,val], ... ] növekvő) sorozat értéke t-nél.
 // null, ha t a sorozat lefedett tartományán kívül esik (nem extrapolálunk).
-function interpAt(s, t) {
-  if (!s.length || t < s[0][0] || t > s[s.length - 1][0]) return null;
-  let lo = 0, hi = s.length - 1;
-  while (lo < hi) { const mid = (lo + hi) >> 1; if (s[mid][0] < t) lo = mid + 1; else hi = mid; }
-  if (s[lo][0] === t) return s[lo][1];
-  const b = s[lo], a = s[lo - 1];
-  return a[1] + (b[1] - a[1]) * (t - a[0]) / (b[0] - a[0]);
-}
-// EGY össz-súly vonal: a board-ok async pontjait közös idővonalra interpoláljuk,
-// és csak ott adjuk össze, ahol MINDEN board lefedi az adott időt (nincs ugrás).
+// EGY össz-súly vonal, ZOH ("tartott utolsó érték") aggregációval: minden board a
+// legutóbbi VALÓS mintáját tartja a következő valós mintájáig, és a total ezek
+// összege. NINCS interpoláció két minta közt → megszűnik a korábbi lineáris-interp
+// torzítás (ami egy terhelt és egy üres mintát összemosott). A cellák ±2-3 percen
+// belül mintáznak, így a tartott értékek egy időben koherensek. Total csak akkor
+// keletkezik, ha MINDEN board-nak van már mintája az adott időig (nincs alulösszegzés
+// a felfutásnál). A total két minta közt konstans → a chart lépcsősen (step:'end')
+// rajzolja, densify nélkül.
 function totalKgSeries(perBoard) {
   const lists = perBoard.filter((s) => s.length);
   if (!lists.length) return [];
   const tset = new Set();
   for (const s of lists) for (const p of s) tset.add(p[0]);
   const times = [...tset].sort((x, y) => x - y);
+  const idx = lists.map(() => -1); // boardonkénti mutató az utolsó (ts<=t) mintára
   const out = [];
   for (const t of times) {
     let sum = 0, ok = true;
-    for (const s of lists) { const v = interpAt(s, t); if (v == null) { ok = false; break; } sum += v; }
+    for (let i = 0; i < lists.length; i++) {
+      const s = lists[i];
+      while (idx[i] + 1 < s.length && s[idx[i] + 1][0] <= t) idx[i]++;
+      if (idx[i] < 0) { ok = false; break; } // ennek a boardnak még nincs mintája
+      sum += s[idx[i]][1];
+    }
     if (ok) out.push([t, +sum.toFixed(3)]);
   }
   return out;
@@ -252,8 +256,10 @@ function densify(data, stepMs, maxPerGap) {
 // ===========================================================================
 function renderWeightChart(hive, st) {
   const perBoard = hive.boards.map((b) => boardWeightKg(hive, b, st.boards[b.id]));
-  const total = densify(totalKgSeries(perBoard), DENSIFY_MS, DENSIFY_MAX);
-  const series = [lineSeries("Össz-súly", total, PALETTE[0], 2.6)];
+  // ZOH-total: lépcsős (step:'end') rajz, densify NÉLKÜL — két minta közt a total
+  // konstans, nem lineárisan összekötendő (az volt a régi interpolációs torzítás).
+  const total = totalKgSeries(perBoard);
+  const series = [lineSeries("Össz-súly", total, PALETTE[0], 2.6, "end")];
   charts["weight-chart"].setOption(chartOption(series, "kg", null, (v) => v.toFixed(2) + " kg"), true);
   requestAnimationFrame(() => charts["weight-chart"].resize());
 }
@@ -295,12 +301,13 @@ function drawEnvSeries(hive, st) {
 // ===========================================================================
 // ECharts közös építők
 // ===========================================================================
-function lineSeries(name, data, color, width) {
+function lineSeries(name, data, color, width, step) {
   return {
     // showSymbol: minden pont látszik (a valós mérések ÉS a köztük beszúrt
     // interpoláltak) → van mire ránagyítani. Nincs lttb-sampling, ami eldobná őket.
+    // step: 'end' → ZOH lépcsős rajz (össz-súly); env-nél nincs (sima vonal).
     name, type: "line", data, showSymbol: true, symbol: "circle", symbolSize: 3.5,
-    smooth: false, connectNulls: true,
+    smooth: false, step: step || false, connectNulls: true,
     lineStyle: { color, width }, itemStyle: { color },
     emphasis: { focus: "series" },
   };
