@@ -1,0 +1,118 @@
+{
+  "generated_by": "cal_capture.py",
+  "model": "kg = (raw - zero_count - tempCoef*(scale_c - refTemp)) / count_per_kg",
+  "units": {
+    "node1": {
+      "zero_count": 20301.43,
+      "count_per_kg": -39503.5691,
+      "tempCoef": -241.108,
+      "refTemp": 27.837,
+      "fit": {
+        "weight": {
+          "n": 5,
+          "r2": 0.999921,
+          "rms_resid_count": 1187.7,
+          "rms_resid_kg": 0.0301,
+          "kg_range": [
+            0.981,
+            10.09
+          ]
+        },
+        "temp": {
+          "n": 130,
+          "r2": 0.469859,
+          "scale_c_span": [
+            -4.44,
+            39.06
+          ],
+          "ref_1031_ok": false
+        }
+      },
+      "calibrated_at": "2026-07-13T10:13:23"
+    },
+    "node2": {
+      "zero_count": -186914.47,
+      "count_per_kg": -39127.5917,
+      "tempCoef": 24.629,
+      "refTemp": 28.927,
+      "fit": {
+        "weight": {
+          "n": 6,
+          "r2": 0.999917,
+          "rms_resid_count": 1330.1,
+          "rms_resid_kg": 0.034,
+          "kg_range": [
+            0.981,
+            10.1
+          ]
+        },
+        "temp": {
+          "n": 129,
+          "r2": 0.005176,
+          "scale_c_span": [
+            -2.25,
+            40.62
+          ],
+          "ref_1031_ok": false
+        }
+      },
+      "calibrated_at": "2026-07-13T10:23:39"
+    },
+    "node3": {
+      "zero_count": 6298.8,
+      "count_per_kg": -40104.2897,
+      "tempCoef": -476.108,
+      "refTemp": 27.594,
+      "fit": {
+        "weight": {
+          "n": 10,
+          "r2": 0.999938,
+          "rms_resid_count": 1067.7,
+          "rms_resid_kg": 0.0266,
+          "kg_range": [
+            0.982,
+            10.1
+          ]
+        },
+        "temp": {
+          "n": 130,
+          "r2": 0.656997,
+          "scale_c_span": [
+            -2.62,
+            35.44
+          ],
+          "ref_1031_ok": false
+        }
+      },
+      "calibrated_at": "2026-07-13T10:33:22"
+    },
+    "master": {
+      "zero_count": -660656.85,
+      "count_per_kg": -46267.227,
+      "tempCoef": 263.71,
+      "refTemp": 26.121,
+      "fit": {
+        "weight": {
+          "n": 7,
+          "r2": 0.999813,
+          "rms_resid_count": 2406.0,
+          "rms_resid_kg": 0.052,
+          "kg_range": [
+            0.982,
+            10.09
+          ]
+        },
+        "temp": {
+          "n": 126,
+          "r2": 0.256952,
+          "scale_c_span": [
+            -4.12,
+            45.5
+          ],
+          "ref_1031_ok": false
+        }
+      },
+      "calibrated_at": "2026-07-13T10:39:20"
+    }
+  }
+}
