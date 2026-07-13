@@ -31,14 +31,14 @@ window.BEESCALE_CONFIG = {
       label: "Wireless",
       sublabel: "master + 3 node · 20 perc",
       schema: "wireless",
-      weightUnit: "raw", // nyers HX711 count — kalibráció (kg) a felhőben, később
-      // PLACEHOLDER kg-normalizálás, amíg nincs valódi kalibráció: minden mérleg
-      // saját nyers offsettel/előjellel írja a weight_raw-t, ezért egységenként a
-      // betöltött adat MEDIÁNJÁHOZ képest skálázunk egy feltételezett kg-tartományba:
-      //   kg = base + (raw - median(raw)) * kgPerCount
-      // A base cellánként eltér (hogy a görbék elkülönüljenek), a kgPerCount közös
-      // becslés. EZ NEM VALÓDI SÚLY — a UI "becsült kg"-ként jelöli.
-      weightEstimated: true,
+      weightUnit: "raw", // az RTDB nyers HX711 count-ot tárol; a kg-ot a frontend
+      // számolja cellánként a units[].calib-ból (kg = (raw - zero_count - tempCorr)
+      // / count_per_kg). A weightField továbbra is weight_raw → a "raw" ág aktiválja
+      // az app.js unitWeightKg() kalibrációs számítását (NEM azt jelenti, hogy raw-ot
+      // jelenítünk meg). A placeholderKg (base/median-alap) csak fallback marad, ha
+      // egy cella calib-ja hiányos lenne.
+      // Súly-kalibráció mind a 4 cellára kész (calibration.json, R²>0.9998) → valódi kg.
+      weightEstimated: false,
       // Mérőegységek (kaptárak). Mindegyik saját HX711 → egyetlen súly.
       units: [
         {
@@ -53,7 +53,7 @@ window.BEESCALE_CONFIG = {
           // cellTemp = scale_c (a fenti innerTempFrom.path-os series, ts-interpolálva).
           // a/c/tempCoef ismert (hő-kalibráció kész); zero_count/count_per_kg/refTemp
           // a súly-kalibráció végén töltendő (addig placeholderKg a fallback).
-          calib: { tempModel: "linear", tempCoef: 318, zero_count: null, count_per_kg: null, refTemp: null }, // TODO: súly-kalib
+          calib: { tempModel: "linear", tempCoef: 318, zero_count: -660656.85, count_per_kg: -46267.227, refTemp: 26.121 }, // súly-kalib kész (calibration.json, R²=0.99981)
         },
         {
           id: "node_1", label: "Node 1", path: "hives/hive2/rods/node_1/readings",
@@ -64,7 +64,7 @@ window.BEESCALE_CONFIG = {
           // node = logaritmikus hő-komp.: tempCorr = a * ln((cellTemp+c)/(refTemp+c)),
           // cellTemp = temp_c (p.it, a rod-rekordból). a/c ismert (hő-kalibráció kész);
           // zero_count/count_per_kg/refTemp a súly-kalibráció végén töltendő.
-          calib: { tempModel: "log", a: -8370, c: 5.04, zero_count: null, count_per_kg: null, refTemp: null }, // TODO: súly-kalib
+          calib: { tempModel: "log", a: -8370, c: 5.04, zero_count: 20301.43, count_per_kg: -39503.5691, refTemp: 27.837 }, // súly-kalib kész (calibration.json, R²=0.99992)
         },
         {
           id: "node_2", label: "Node 2", path: "hives/hive2/rods/node_2/readings",
@@ -72,7 +72,7 @@ window.BEESCALE_CONFIG = {
           innerTempFrom: { field: "temp_c", label: "cella-hőm" },
           vbatField: "vbat_mv",
           // Kalibráció (lásd node_1 komment): tempCorr = a * ln((cellTemp+c)/(refTemp+c)).
-          calib: { tempModel: "log", a: -5281, c: 2.85, zero_count: null, count_per_kg: null, refTemp: null }, // TODO: súly-kalib
+          calib: { tempModel: "log", a: -5281, c: 2.85, zero_count: -186914.47, count_per_kg: -39127.5917, refTemp: 28.927 }, // súly-kalib kész (calibration.json, R²=0.99992)
         },
         {
           id: "node_3", label: "Node 3", path: "hives/hive2/rods/node_3/readings",
@@ -80,7 +80,7 @@ window.BEESCALE_CONFIG = {
           innerTempFrom: { field: "temp_c", label: "cella-hőm" },
           vbatField: "vbat_mv",
           // Kalibráció (lásd node_1 komment): tempCorr = a * ln((cellTemp+c)/(refTemp+c)).
-          calib: { tempModel: "log", a: -11034, c: 5.18, zero_count: null, count_per_kg: null, refTemp: null }, // TODO: súly-kalib
+          calib: { tempModel: "log", a: -11034, c: 5.18, zero_count: 6298.8, count_per_kg: -40104.2897, refTemp: 27.594 }, // súly-kalib kész (calibration.json, R²=0.99994)
         },
       ],
       // Telepítés-szintű időjárás (közös a master szenzoraiból).
