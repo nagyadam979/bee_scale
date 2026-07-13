@@ -48,24 +48,39 @@ window.BEESCALE_CONFIG = {
           // nem a rod-rekordban — ts-alapon társítjuk.
           innerTempFrom: { path: "weather.temp", field: "scale_c", label: "mérleg-hőm" },
           power: "mains", // hálózati táp — nincs akku
+          // Kalibráció: kg = (raw - zero_count - tempCorr) / count_per_kg.
+          // master = lineáris hő-komp.: tempCorr = tempCoef * (cellTemp - refTemp),
+          // cellTemp = scale_c (a fenti innerTempFrom.path-os series, ts-interpolálva).
+          // a/c/tempCoef ismert (hő-kalibráció kész); zero_count/count_per_kg/refTemp
+          // a súly-kalibráció végén töltendő (addig placeholderKg a fallback).
+          calib: { tempModel: "linear", tempCoef: 318, zero_count: null, count_per_kg: null, refTemp: null }, // TODO: súly-kalib
         },
         {
           id: "node_1", label: "Node 1", path: "hives/hive2/rods/node_1/readings",
           weightField: "weight_raw", placeholderKg: { base: 28, kgPerCount: 0.0008 },
           innerTempFrom: { field: "temp_c", label: "cella-hőm" },
           vbatField: "vbat_mv", noVbatHw: true, // node1: nincs akkumérő HW (mask VBAT-bit ≠ hiba)
+          // Kalibráció: kg = (raw - zero_count - tempCorr) / count_per_kg.
+          // node = logaritmikus hő-komp.: tempCorr = a * ln((cellTemp+c)/(refTemp+c)),
+          // cellTemp = temp_c (p.it, a rod-rekordból). a/c ismert (hő-kalibráció kész);
+          // zero_count/count_per_kg/refTemp a súly-kalibráció végén töltendő.
+          calib: { tempModel: "log", a: -8370, c: 5.04, zero_count: null, count_per_kg: null, refTemp: null }, // TODO: súly-kalib
         },
         {
           id: "node_2", label: "Node 2", path: "hives/hive2/rods/node_2/readings",
           weightField: "weight_raw", placeholderKg: { base: 45, kgPerCount: 0.0008 },
           innerTempFrom: { field: "temp_c", label: "cella-hőm" },
           vbatField: "vbat_mv",
+          // Kalibráció (lásd node_1 komment): tempCorr = a * ln((cellTemp+c)/(refTemp+c)).
+          calib: { tempModel: "log", a: -5281, c: 2.85, zero_count: null, count_per_kg: null, refTemp: null }, // TODO: súly-kalib
         },
         {
           id: "node_3", label: "Node 3", path: "hives/hive2/rods/node_3/readings",
           weightField: "weight_raw", placeholderKg: { base: 39, kgPerCount: 0.0008 },
           innerTempFrom: { field: "temp_c", label: "cella-hőm" },
           vbatField: "vbat_mv",
+          // Kalibráció (lásd node_1 komment): tempCorr = a * ln((cellTemp+c)/(refTemp+c)).
+          calib: { tempModel: "log", a: -11034, c: 5.18, zero_count: null, count_per_kg: null, refTemp: null }, // TODO: súly-kalib
         },
       ],
       // Telepítés-szintű időjárás (közös a master szenzoraiból).

@@ -163,13 +163,50 @@ function median(nums) {
   const s = [...nums].sort((a, b) => a - b), m = s.length >> 1;
   return s.length & 1 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
-// egy egység súly-sorozata kg-ban [[tsMs, kg]]
-function unitWeightKg(hive, unit, rows) {
+// A master cella-hőm (scale_c) sorozata a KÖZÖS temp-ágból (st.temp), ts-alapon
+// interpolálva a súly-mintákhoz — a node-oknál a temp_c a rekordban van (p.it),
+// itt kell csak külön series (innerTempFrom.path van rá).
+function scaleTempSeries(st) {
+  return (st.temp || [])
+    .filter((r) => typeof r.scale_c === "number")
+    .map((r) => [r.ts * 1000, r.scale_c]);
+}
+// egy egység súly-sorozata kg-ban [[tsMs, kg]]. scaleCSeries: a master cella-hőm
+// sorozata (lásd scaleTempSeries) — csak a path-os innerTempFrom-ú unitoknak kell.
+function unitWeightKg(hive, unit, rows, scaleCSeries) {
   const r = rows.filter((p) => p.w !== null);
   if (hive.weightUnit === "kg") return r.map((p) => [p.ts * 1000, p.w]);
-  const med = median(r.map((p) => p.w));
-  const { base, kgPerCount } = unit.placeholderKg || { base: 0, kgPerCount: 1 };
-  return r.map((p) => [p.ts * 1000, +(base + (p.w - med) * kgPerCount).toFixed(3)]);
+  const c = unit.calib;
+  const calibReady = c && c.zero_count != null && c.count_per_kg != null && c.refTemp != null;
+  if (!calibReady) {
+    // Súly-kalibráció még nincs kész → marad a placeholder-fallback (medián-alapú).
+    const med = median(r.map((p) => p.w));
+    const { base, kgPerCount } = unit.placeholderKg || { base: 0, kgPerCount: 1 };
+    return r.map((p) => [p.ts * 1000, +(base + (p.w - med) * kgPerCount).toFixed(3)]);
+  }
+  // Valódi kalibrált kg: kg = (raw - zero_count - tempCorr) / count_per_kg.
+  return r.map((p) => {
+    const tMs = p.ts * 1000;
+    let cellTemp = null;
+    if (unit.innerTempFrom && unit.innerTempFrom.path) {
+      // master: külön series-ből, ts-interpolálva; tartományon kívül a szélső
+      // értékkel clamp-elünk (a mintát emiatt sosem dobjuk el).
+      if (scaleCSeries && scaleCSeries.length) {
+        const v = interpAt(scaleCSeries, tMs);
+        cellTemp = v != null ? v
+          : (tMs < scaleCSeries[0][0] ? scaleCSeries[0][1] : scaleCSeries[scaleCSeries.length - 1][1]);
+      }
+    } else if (typeof p.it === "number") {
+      cellTemp = p.it; // node: temp_c a rekordból
+    }
+    let tempCorr = 0;
+    if (cellTemp != null) {
+      if (c.tempModel === "log") tempCorr = c.a * Math.log((cellTemp + c.c) / (c.refTemp + c.c));
+      else if (c.tempModel === "linear") tempCorr = c.tempCoef * (cellTemp - c.refTemp);
+    }
+    const kg = (p.w - c.zero_count - tempCorr) / c.count_per_kg;
+    return [tMs, +kg.toFixed(3)];
+  });
 }
 // Lineáris interpoláció: az s ([ [tsMs,val], ... ] növekvő) sorozat értéke t-nél.
 // null, ha t a sorozat lefedett tartományán kívül esik (nem extrapolálunk).
@@ -221,7 +258,8 @@ function densify(data, stepMs, maxPerGap) {
 // Fő súly-chart — telepítésenként EGYETLEN vonal (össz-súly)
 // ===========================================================================
 function renderWeightChart(hive, st) {
-  const perUnit = hive.units.map((u) => unitWeightKg(hive, u, st.units[u.id]));
+  const scaleCSeries = scaleTempSeries(st);
+  const perUnit = hive.units.map((u) => unitWeightKg(hive, u, st.units[u.id], scaleCSeries));
   const total = densify(totalKgSeries(perUnit), DENSIFY_MS, DENSIFY_MAX);
   const series = [lineSeries("Össz-súly", total, PALETTE[0], 2.6)];
   charts["weight-chart"].setOption(chartOption(series, "kg", null, (v) => v.toFixed(2) + " kg"), true);
@@ -337,8 +375,9 @@ function renderWeather(hive, st) {
 function renderCards(hive, st) {
   const el = $("cards");
   el.innerHTML = "";
+  const scaleCSeries = scaleTempSeries(st);
   for (const u of hive.units) {
-    const kg = unitWeightKg(hive, u, st.units[u.id]);
+    const kg = unitWeightKg(hive, u, st.units[u.id], scaleCSeries);
     el.appendChild(buildCard(hive, u, st.units[u.id], kg));
   }
 }
