@@ -1,12 +1,17 @@
 {
   "generated_by": "cal_capture.py",
-  "model": "kg = (raw - zero_count - tempCoef*(scale_c - refTemp)) / count_per_kg",
+  "model": "kg = (raw - zero_count - tempCorr) / count_per_kg  [tempCorr: lásd unit.temp_model]",
   "units": {
     "node1": {
       "zero_count": 20301.43,
       "count_per_kg": -39503.5691,
-      "tempCoef": -241.108,
       "refTemp": 27.837,
+      "temp_model": {
+        "source": "HOKALIBRACIO_eredmenyek.md",
+        "applied_in": "dashboard/public/config.js",
+        "node": "log: tempCorr = a*ln((scale_c+c)/(refTemp+c))",
+        "master": "linear: tempCorr = tempCoef*(scale_c-refTemp), +318 c/°C"
+      },
       "fit": {
         "weight": {
           "n": 5,
@@ -19,22 +24,30 @@
           ]
         },
         "temp": {
-          "n": 130,
-          "r2": 0.469859,
-          "scale_c_span": [
-            -4.44,
-            39.06
-          ],
-          "ref_1031_ok": false
+          "lin_diag": {
+            "a": -241.108,
+            "r2": 0.469859,
+            "n": 130,
+            "scale_c_span": [
+              -4.44,
+              39.06
+            ]
+          },
+          "note": "DIAGNOSZTIKA, NEM operatív: a node-ok valódi hő-modellje logaritmikus (a masteré lineáris), a lineáris meredekség itt csak tájékoztató. Az operatív hő-korrekciót lásd temp_model / data/HOKALIBRACIO_eredmenyek.md."
         }
       },
-      "calibrated_at": "2026-07-13T10:13:23"
+      "calibrated_at": "2026-07-13T10:56:34"
     },
     "node2": {
       "zero_count": -186914.47,
       "count_per_kg": -39127.5917,
-      "tempCoef": 24.629,
       "refTemp": 28.927,
+      "temp_model": {
+        "source": "HOKALIBRACIO_eredmenyek.md",
+        "applied_in": "dashboard/public/config.js",
+        "node": "log: tempCorr = a*ln((scale_c+c)/(refTemp+c))",
+        "master": "linear: tempCorr = tempCoef*(scale_c-refTemp), +318 c/°C"
+      },
       "fit": {
         "weight": {
           "n": 6,
@@ -47,22 +60,30 @@
           ]
         },
         "temp": {
-          "n": 129,
-          "r2": 0.005176,
-          "scale_c_span": [
-            -2.25,
-            40.62
-          ],
-          "ref_1031_ok": false
+          "lin_diag": {
+            "a": 24.629,
+            "r2": 0.005176,
+            "n": 129,
+            "scale_c_span": [
+              -2.25,
+              40.62
+            ]
+          },
+          "note": "DIAGNOSZTIKA, NEM operatív: a node-ok valódi hő-modellje logaritmikus (a masteré lineáris), a lineáris meredekség itt csak tájékoztató. Az operatív hő-korrekciót lásd temp_model / data/HOKALIBRACIO_eredmenyek.md."
         }
       },
-      "calibrated_at": "2026-07-13T10:23:39"
+      "calibrated_at": "2026-07-13T10:56:34"
     },
     "node3": {
       "zero_count": 6298.8,
       "count_per_kg": -40104.2897,
-      "tempCoef": -476.108,
       "refTemp": 27.594,
+      "temp_model": {
+        "source": "HOKALIBRACIO_eredmenyek.md",
+        "applied_in": "dashboard/public/config.js",
+        "node": "log: tempCorr = a*ln((scale_c+c)/(refTemp+c))",
+        "master": "linear: tempCorr = tempCoef*(scale_c-refTemp), +318 c/°C"
+      },
       "fit": {
         "weight": {
           "n": 10,
@@ -75,22 +96,30 @@
           ]
         },
         "temp": {
-          "n": 130,
-          "r2": 0.656997,
-          "scale_c_span": [
-            -2.62,
-            35.44
-          ],
-          "ref_1031_ok": false
+          "lin_diag": {
+            "a": -476.108,
+            "r2": 0.656997,
+            "n": 130,
+            "scale_c_span": [
+              -2.62,
+              35.44
+            ]
+          },
+          "note": "DIAGNOSZTIKA, NEM operatív: a node-ok valódi hő-modellje logaritmikus (a masteré lineáris), a lineáris meredekség itt csak tájékoztató. Az operatív hő-korrekciót lásd temp_model / data/HOKALIBRACIO_eredmenyek.md."
         }
       },
-      "calibrated_at": "2026-07-13T10:33:22"
+      "calibrated_at": "2026-07-13T10:56:34"
     },
     "master": {
       "zero_count": -660656.85,
       "count_per_kg": -46267.227,
-      "tempCoef": 263.71,
       "refTemp": 26.121,
+      "temp_model": {
+        "source": "HOKALIBRACIO_eredmenyek.md",
+        "applied_in": "dashboard/public/config.js",
+        "node": "log: tempCorr = a*ln((scale_c+c)/(refTemp+c))",
+        "master": "linear: tempCorr = tempCoef*(scale_c-refTemp), +318 c/°C"
+      },
       "fit": {
         "weight": {
           "n": 7,
@@ -103,16 +132,19 @@
           ]
         },
         "temp": {
-          "n": 126,
-          "r2": 0.256952,
-          "scale_c_span": [
-            -4.12,
-            45.5
-          ],
-          "ref_1031_ok": false
+          "lin_diag": {
+            "a": 263.71,
+            "r2": 0.256952,
+            "n": 126,
+            "scale_c_span": [
+              -4.12,
+              45.5
+            ]
+          },
+          "note": "DIAGNOSZTIKA, NEM operatív: a node-ok valódi hő-modellje logaritmikus (a masteré lineáris), a lineáris meredekség itt csak tájékoztató. Az operatív hő-korrekciót lásd temp_model / data/HOKALIBRACIO_eredmenyek.md."
         }
       },
-      "calibrated_at": "2026-07-13T10:39:20"
+      "calibrated_at": "2026-07-13T10:56:34"
     }
   }
 }

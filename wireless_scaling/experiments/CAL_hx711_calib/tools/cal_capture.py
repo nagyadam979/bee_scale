@@ -7,11 +7,18 @@ ez a script gyűjti, illeszti, és cellánként egy közös `calibration.json`-b
 oldali konverzió paramétereit.
 
 MODELL (cellánként, unit_id szerint):
-    kg = (raw - zero_count - tempCoef*(scale_c - refTemp)) / count_per_kg
+    kg = (raw - zero_count - tempCorr) / count_per_kg
   - zero_count    : üres platform nyers count-ja (a "0" a fizikailag üres mérleg, nincs tare)
   - count_per_kg  : count↔kg meredekség (ismert súly-lépcsőkre illesztve)
-  - tempCoef      : nulla-drift hő-együttható, count/°C (terheletlen hő-szkenre illesztve)
   - refTemp       : az a scale_c, amin a súly-kalibráció készült (a hő-tag itt ~0)
+  - tempCorr      : hő-korrekció. Az OPERATÍV modell EXTERNAL — ezt a script NEM állítja elő:
+                      node   (log):    tempCorr = a * ln((scale_c + c) / (refTemp + c))
+                      master (lin.):   tempCorr = tempCoef * (scale_c - refTemp)
+                    Forrás: data/HOKALIBRACIO_eredmenyek.md (dedikált hőkalibráció), alkalmazva:
+                    dashboard/public/config.js. EZ a script CSAK a súly-kalibrációért felel
+                    (zero_count, count_per_kg, refTemp); a `fit` egy lineáris hő-DIAGNOSZTIKÁT
+                    (fit.temp.lin_diag) is ad, de az NEM operatív — a node-ok valódi modellje
+                    logaritmikus, a lineáris meredekség csak tájékoztató jellegű.
 
 SOROS PROTOKOLL (a firmware ad ki; minden `#`-kezdetű és minden ESP-LOG sor eldobandó):
     WGT <raw_median> <scale_c|nan>          # súly-stream (a `w` parancs után)
@@ -45,15 +52,18 @@ import statistics
 import sys
 import time
 
-# A hő-együttható M1b-referenciája (cella+HX711, R²=0,974). Csak SANITY-CHECK: a valódi
-# tempCoef cella-specifikus, cellánként mérjük. Ha az illesztett érték ettől nagyságrendben
-# eltér, az bekötés-/cella-gyanú.
+# A hő-együttható M1b-referenciája (cella+HX711, R²=0,974). CSAK a lineáris hő-DIAGNOSZTIKA
+# (fit.temp.lin_diag) tájékoztató összevetéséhez használjuk, NEM a node-ok operatív modelljéhez —
+# a node-ok valódi hő-modellje LOGARITMIKUS (lásd data/HOKALIBRACIO_eredmenyek.md), a masteré
+# lineáris. Ezért az eltérés a node-oknál NEM "bekötés-/cella-gyanú", csak infó.
 TEMPCOEF_REF = 1031.0
-TEMPCOEF_REF_TOL = 500.0   # count/°C; ezen túl figyelmeztetünk
+TEMPCOEF_REF_TOL = 500.0   # count/°C; csak a diagnosztikai infó-üzenethez (lásd fent), nem riasztás
 
 CAL_JSON_DEFAULT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "calibration.json")
 DATA_DIR_DEFAULT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data")
-CAL_MODEL_STR = "kg = (raw - zero_count - tempCoef*(scale_c - refTemp)) / count_per_kg"
+# Az operatív tempCorr modellje EXTERNAL (lásd fent, docstring); a JSON-ban csak `temp_model`
+# hivatkozás van rá, konkrét a/c/tempCoef szám NÉLKÜL (autoritatív forrás: HOKALIBRACIO_eredmenyek.md).
+CAL_MODEL_STR = "kg = (raw - zero_count - tempCorr) / count_per_kg  [tempCorr: lásd unit.temp_model]"
 
 
 # ============================ OLS least-squares (stdlib) ============================
@@ -326,8 +336,13 @@ def cmd_fit(args):
     unit_entry = {
         "zero_count": round(zero_count, 2),
         "count_per_kg": round(count_per_kg, 4),
-        "tempCoef": None,
         "refTemp": round(ref_temp, 3) if not math.isnan(ref_temp) else None,
+        "temp_model": {
+            "source": "HOKALIBRACIO_eredmenyek.md",
+            "applied_in": "dashboard/public/config.js",
+            "node": "log: tempCorr = a*ln((scale_c+c)/(refTemp+c))",
+            "master": "linear: tempCorr = tempCoef*(scale_c-refTemp), +318 c/°C",
+        },
         "fit": {
             "weight": {
                 "n": wf["n"], "r2": round(wf["r2"], 6),
@@ -346,33 +361,37 @@ def cmd_fit(args):
     print(f"#  R²={wf['r2']:.5f}  RMS-reziduál={wf['rms_resid']:.1f} count "
           f"(~{wf['rms_resid']/abs(count_per_kg):.3f} kg)  n={wf['n']}")
 
-    # hő-illesztés (opcionális, ha van dump)
+    # hő-DIAGNOSZTIKA (opcionális, ha van dump) — NEM operatív! A node-ok valódi hő-modellje
+    # logaritmikus, a masteré lineáris (lásd data/HOKALIBRACIO_eredmenyek.md); az itt illesztett
+    # lineáris meredekség csak tájékoztató, NEM kerül tempCoef-ként a JSON-ba.
     if os.path.exists(tpath):
         tpts = read_temp_csv(tpath, args.temp_col)
         tf = linfit([p[0] for p in tpts], [p[1] for p in tpts]) if len(tpts) >= 2 else None
         if tf is None:
-            print("# hő-CSV megvan, de <2 érvényes pont — tempCoef kihagyva.")
+            print("# hő-CSV megvan, de <2 érvényes pont — hő-diagnosztika kihagyva.")
         else:
-            tempcoef = tf["a"]
-            unit_entry["tempCoef"] = round(tempcoef, 3)
+            lin_a = tf["a"]
             span = [min(p[0] for p in tpts), max(p[0] for p in tpts)]
-            off = abs(tempcoef - TEMPCOEF_REF)
             unit_entry["fit"]["temp"] = {
-                "n": tf["n"], "r2": round(tf["r2"], 6),
-                "scale_c_span": [round(span[0], 2), round(span[1], 2)],
-                "ref_1031_ok": off <= TEMPCOEF_REF_TOL,
+                "lin_diag": {
+                    "a": round(lin_a, 3), "r2": round(tf["r2"], 6), "n": tf["n"],
+                    "scale_c_span": [round(span[0], 2), round(span[1], 2)],
+                },
+                "note": ("DIAGNOSZTIKA, NEM operatív: a node-ok valódi hő-modellje logaritmikus "
+                         "(a masteré lineáris), a lineáris meredekség itt csak tájékoztató. "
+                         "Az operatív hő-korrekciót lásd temp_model / data/HOKALIBRACIO_eredmenyek.md."),
             }
-            print(f"# --- {args.unit} hő-illesztés ---")
-            print(f"#  tempCoef = {tempcoef:.1f} count/°C   R²={tf['r2']:.4f}  n={tf['n']}  "
+            print(f"# --- {args.unit} hő-DIAGNOSZTIKA (lineáris fit, NEM operatív) ---")
+            print(f"#  lin_diag.a = {lin_a:.1f} count/°C   R²={tf['r2']:.4f}  n={tf['n']}  "
                   f"span={span[0]:.1f}..{span[1]:.1f}°C")
-            if off > TEMPCOEF_REF_TOL:
-                print(f"#  ! FIGYELEM: tempCoef {off:.0f}-rel eltér az M1b-referencia {TEMPCOEF_REF:.0f}-től "
-                      f"(>±{TEMPCOEF_REF_TOL:.0f}) — bekötés/cella gyanú.")
+            ref_off = abs(lin_a - TEMPCOEF_REF)
+            print(f"#  info: |eltérés| az M1b-referenciától ({TEMPCOEF_REF:.0f} count/°C): {ref_off:.0f} "
+                  f"— csak tájékoztató (a valódi modell log, lásd HOKALIBRACIO_eredmenyek.md).")
             if span[1] - span[0] < 10.0:
                 print(f"#  ! FIGYELEM: a hő-span csak {span[1]-span[0]:.1f}°C — bizonytalan meredekség, "
                       f"tágabb hőpontok kellenek.")
     else:
-        print(f"# nincs hő-CSV ({os.path.normpath(tpath)}) — tempCoef=None (futtasd: temp).")
+        print(f"# nincs hő-CSV ({os.path.normpath(tpath)}) — hő-diagnosztika kihagyva (futtasd: temp).")
 
     # calibration.json frissítése (a többi unit megmarad)
     data = load_cal_json(args.json)
