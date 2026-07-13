@@ -2330,8 +2330,15 @@ static bool build_hive2_master_rod_json(const master_record_t *rec, char *body, 
 {
     uint32_t ts = rec->ts ? rec->ts : current_epoch_s();
     if (ts == 0) return false;
-    int n = json_add(body, body_cap, 0, "{\"ts\":%u,\"weight_raw\":%ld,\"sensor_error_mask\":%u}",
+    int n = json_add(body, body_cap, 0, "{\"ts\":%u,\"weight_raw\":%ld,\"sensor_error_mask\":%u",
                      (unsigned)ts, (long)rec->hx711_raw, (unsigned)rec->sensor_error_mask);
+    /* A master saját mérleg-cella hője (DS1/scale_c) a board-rekordba kerül
+     * temp_c néven — így minden board (node ÉS master) egységesen a saját
+     * kalibrációs cella-hőjét viszi a readings-ben. */
+    if (rec->valid_mask & REC_VALID_DS1) {
+        n = json_add(body, body_cap, n, ",\"temp_c\":%.3f", (double)rec->ds1_scale_c);
+    }
+    n = json_add(body, body_cap, n, "}");
     return n > 0;
 }
 
@@ -2350,23 +2357,12 @@ static bool build_hive2_master_env_json(const master_record_t *rec, char *body, 
         n = json_add(body, body_cap, n, ",\"bmp_t_c\":%.3f,\"pressure_pa\":%.1f",
                      (double)rec->bmp280_t_c, (double)rec->bmp280_pa);
     }
-    n = json_add(body, body_cap, n, "}");
-    return n > 0;
-}
-
-static bool build_hive2_master_temp_json(const master_record_t *rec, char *body, int body_cap)
-{
-    uint32_t ts = rec->ts ? rec->ts : current_epoch_s();
-    if (ts == 0) return false;
-    if (!(rec->valid_mask & REC_VALID_DS0) && !(rec->valid_mask & REC_VALID_DS1)) return false;
-
-    int n = json_add(body, body_cap, 0, "{\"ts\":%u,\"sensor_error_mask\":%u",
-                     (unsigned)ts, (unsigned)rec->sensor_error_mask);
+    /* Kaptár-szonda (DS0/hive_c) KÖRNYEZETI hőmérséklet → az env rekordba kerül
+     * (a levegő/nyomás/eső mellé). A master mérleg-cella hője (DS1/scale_c) NEM
+     * ide, hanem a boards/master rekordba megy temp_c néven (l.
+     * build_hive2_master_rod_json). A régi külön "temp" ág megszűnt. */
     if (rec->valid_mask & REC_VALID_DS0) {
         n = json_add(body, body_cap, n, ",\"hive_c\":%.3f", (double)rec->ds0_hive_c);
-    }
-    if (rec->valid_mask & REC_VALID_DS1) {
-        n = json_add(body, body_cap, n, ",\"scale_c\":%.3f", (double)rec->ds1_scale_c);
     }
     n = json_add(body, body_cap, n, "}");
     return n > 0;
@@ -2415,7 +2411,7 @@ static cloud_result_t __attribute__((unused)) cloud_post_hive2_record_once(const
     if (rec->type == REC_TYPE_NODE) {
         if (!build_hive2_node_json(rec, body, sizeof(body))) return CLOUD_RESULT_RETRY;
         int p = snprintf(path, sizeof(path),
-                         "hives/%s/rods/node_%u/readings/%08X_%u",
+                         "hives/%s/boards/node_%u/readings/%08X_%u",
                          MASTER_FIREBASE_TARGET_HIVE_ID, rec->unit_id,
                          (unsigned)rec->boot_id, (unsigned)rec->seq);
         if (p <= 0 || p >= (int)sizeof(path)) return CLOUD_RESULT_RETRY;
@@ -2426,7 +2422,7 @@ static cloud_result_t __attribute__((unused)) cloud_post_hive2_record_once(const
         int key_len = master_record_key(record_key, sizeof(record_key), rec);
         if (key_len <= 0 || key_len >= (int)sizeof(record_key)) return CLOUD_RESULT_RETRY;
         if (build_hive2_master_rod_json(rec, body, sizeof(body))) {
-            int p = snprintf(path, sizeof(path), "hives/%s/rods/master/readings/%s",
+            int p = snprintf(path, sizeof(path), "hives/%s/boards/master/readings/%s",
                              MASTER_FIREBASE_TARGET_HIVE_ID, record_key);
             if (p <= 0 || p >= (int)sizeof(path)) return CLOUD_RESULT_RETRY;
             attempted = true;
@@ -2434,13 +2430,6 @@ static cloud_result_t __attribute__((unused)) cloud_post_hive2_record_once(const
         }
         if (build_hive2_master_env_json(rec, body, sizeof(body))) {
             int p = snprintf(path, sizeof(path), "hives/%s/env/readings/%s",
-                             MASTER_FIREBASE_TARGET_HIVE_ID, record_key);
-            if (p <= 0 || p >= (int)sizeof(path)) return CLOUD_RESULT_RETRY;
-            attempted = true;
-            ok_all = cloud_put_json_path(path, body, &status) && ok_all;
-        }
-        if (build_hive2_master_temp_json(rec, body, sizeof(body))) {
-            int p = snprintf(path, sizeof(path), "hives/%s/temp/readings/%s",
                              MASTER_FIREBASE_TARGET_HIVE_ID, record_key);
             if (p <= 0 || p >= (int)sizeof(path)) return CLOUD_RESULT_RETRY;
             attempted = true;
