@@ -81,6 +81,10 @@ function startApp() {
   charts["env-chart"] = echarts.init($("env-chart"), null, { renderer: "canvas" });
   hardenTouch("weight-chart");
   hardenTouch("env-chart");
+  // A középső dátum-felirat a látható szakaszhoz igazodik minden zoom/pan után
+  // (és a ⟲ Teljes nézet reset is dataZoom-ot vált ki → szintén frissül).
+  ["weight-chart", "env-chart"].forEach((id) =>
+    charts[id].on("dataZoom", () => updateDateLabel(id)));
   renderTabs();
   $("refresh-btn").addEventListener("click", () => loadHive(activeHiveId));
   document.querySelectorAll("[data-reset]").forEach((b) =>
@@ -300,6 +304,7 @@ function renderWeightChart(hive, st) {
   const total = densify(totalKgSeries(perBoard), DENSIFY_MS, DENSIFY_MAX);
   const series = [lineSeries("Össz-súly", total, PALETTE[0], 2.6, { smooth: LINE_SMOOTH })];
   charts["weight-chart"].setOption(chartOption(series, "kg", null, (v) => v.toFixed(2) + " kg"), true);
+  updateDateLabel("weight-chart");
   requestAnimationFrame(() => charts["weight-chart"].resize());
 }
 
@@ -340,7 +345,48 @@ function drawEnvSeries(hive, st) {
   const opts = s.step ? { step: "end" } : { smooth: LINE_SMOOTH };
   const series = [lineSeries(`${s.label} (${s.unit})`, data, PALETTE[1], 1.8, opts)];
   chart.setOption(chartOption(series, s.unit, null, (v) => v.toFixed(fmt) + " " + s.unit), true);
+  updateDateLabel("env-chart");
   requestAnimationFrame(() => chart.resize());
+}
+
+// ===========================================================================
+// Idő-tengely felirat: óra:perc tick + KÖZÉPSŐ dátum-felirat
+// ===========================================================================
+const p2 = (n) => String(n).padStart(2, "0");
+const MONTHS_HU = ["jan", "feb", "márc", "ápr", "máj", "jún", "júl", "aug", "szept", "okt", "nov", "dec"];
+// A tick-label mindig csak óra:perc (a value ms-timestamp a time-tengelyről).
+function hmLabel(val) { const d = new Date(val); return p2(d.getHours()) + ":" + p2(d.getMinutes()); }
+function fmtDay(d) { return `${d.getFullYear()}. ${MONTHS_HU[d.getMonth()]} ${d.getDate()}`; }
+// A látható [aMs, bMs] szakasz dátum-felirata. Egy napon belül: egyetlen dátum;
+// éjfél-átlépéskor tartomány, a legrövidebb egyértelmű alakban (közös év/hónap
+// összevonva) → pl. "2026. júl 13", "2026. júl 13–14", "2026. júl 30 – aug 2".
+function rangeDateLabel(aMs, bMs) {
+  if (!isFinite(aMs) || !isFinite(bMs)) return "";
+  const a = new Date(aMs), b = new Date(bMs);
+  const sameDay = a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  if (sameDay) return fmtDay(a);
+  const sameYear = a.getFullYear() === b.getFullYear();
+  const sameMonth = sameYear && a.getMonth() === b.getMonth();
+  if (sameMonth) return `${a.getFullYear()}. ${MONTHS_HU[a.getMonth()]} ${a.getDate()}–${b.getDate()}`;
+  if (sameYear) return `${a.getFullYear()}. ${MONTHS_HU[a.getMonth()]} ${a.getDate()} – ${MONTHS_HU[b.getMonth()]} ${b.getDate()}`;
+  return `${fmtDay(a)} – ${fmtDay(b)}`;
+}
+// A jelenleg LÁTHATÓ idő-tengely tartománya ms-ben (a szűrt/zoomolt adathoz
+// igazodó tengely-extent). Belső ECharts model-API; hibatűrően csomagolva.
+function currentXExtent(chart) {
+  try {
+    const ax = chart.getModel().getComponent("xAxis", 0).axis;
+    const ext = ax.scale.getExtent();
+    return (Array.isArray(ext) && ext.length === 2) ? ext : null;
+  } catch (e) { return null; }
+}
+// A középső dátum-feliratot (xAxis.name) a látható szakaszhoz igazítja. MERGE
+// setOption (nem notMerge) → csak a name frissül, NEM triggerel új dataZoom-ot.
+function updateDateLabel(chartId) {
+  const chart = charts[chartId];
+  if (!chart) return;
+  const ext = currentXExtent(chart);
+  chart.setOption({ xAxis: { name: ext ? rangeDateLabel(ext[0], ext[1]) : "" } });
 }
 
 // ===========================================================================
@@ -364,14 +410,21 @@ function chartOption(series, yName, selected, valFmt) {
   return {
     animation: false, backgroundColor: "transparent",
     color: PALETTE,
-    grid: { top: 40, left: 8, right: 14, bottom: 24, containLabel: true },
+    grid: { top: 40, left: 8, right: 14, bottom: 38, containLabel: true },
     legend: { show: series.length > 1, top: 4, textStyle: { color: TXT }, icon: "roundRect", selected: selected || undefined },
     // Nincs tooltip: érintésre NEM írunk ki tizedes értéket.
     tooltip: { show: false },
+    // Idő-tengely: a tick-ek MINDIG csak óra:perc (nincs vegyes nap-hónap tick).
+    // A dátum EGYETLEN, a tengely alatt KÖZÉPEN álló felirat (xAxis.name), amit
+    // nagyítás/tolás után az updateDateLabel() a látható szakaszhoz igazít
+    // (éjfél-átlépéskor tartományt mutat) — így a napváltás elegánsan látszik.
     xAxis: {
       type: "time", axisLine: { lineStyle: { color: GRID } },
-      axisLabel: { color: MUT, hideOverlap: true }, splitLine: { show: true, lineStyle: { color: GRID } },
+      axisLabel: { color: MUT, hideOverlap: true, formatter: hmLabel },
+      splitLine: { show: true, lineStyle: { color: GRID } },
       axisPointer: { show: false },
+      name: "", nameLocation: "middle", nameGap: 30,
+      nameTextStyle: { color: MUT, fontSize: 12, fontWeight: 600 },
     },
     yAxis: {
       type: "value", scale: true, name: yName, nameTextStyle: { color: MUT },
@@ -503,7 +556,6 @@ function buildCard(hive, board, rawRows, kg) {
   card.className = "card";
   const lastRaw = rawRows.filter((r) => r.w !== null).slice(-1)[0] || null;
   const lastKg = kg.length ? kg[kg.length - 1][1] : null;
-  const firstKg = kg.length ? kg[0][1] : null;
 
   const badges = [freshnessBadge(lastRaw)];
   if (board.power === "mains") badges.push({ txt: "⚡ hálózat", cls: "" });
@@ -513,9 +565,6 @@ function buildCard(hive, board, rawRows, kg) {
   const badgeHtml = badges.map((b) => `<span class="badge ${b.cls}">${b.txt}</span>`).join("");
 
   const valTxt = lastKg == null ? "–" : (hive.weightEstimated ? "~" : "") + lastKg.toFixed(hive.weightEstimated ? 1 : 2);
-  const d = (lastKg != null && firstKg != null) ? lastKg - firstKg : null;
-  const dCls = d == null ? "flat" : Math.abs(d) < 0.05 ? "flat" : d > 0 ? "up" : "down";
-  const dTxt = d == null ? "&nbsp;" : `${dCls === "flat" ? "→" : d > 0 ? "↗" : "↘"} ${d > 0 ? "+" : ""}${d.toFixed(1)} kg <span class="muted">az ablakban</span>`;
 
   card.innerHTML = `
     <div class="card-head">
@@ -523,7 +572,6 @@ function buildCard(hive, board, rawRows, kg) {
       <span class="card-badges">${badgeHtml}</span>
     </div>
     <div class="card-value"><span class="v">${valTxt}</span><span class="u">kg</span></div>
-    <div class="card-delta ${dCls}">${dTxt}</div>
     <div class="card-foot">
       ${lastRaw ? `<span class="fi">🕒 ${ageText(lastRaw.ts)}</span>` : ""}
       ${lastRaw && typeof lastRaw.it === "number" ? `<span class="fi">🌡 ${lastRaw.it.toFixed(1)} °C</span>` : ""}
