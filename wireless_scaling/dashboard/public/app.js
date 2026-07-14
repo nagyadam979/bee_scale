@@ -18,11 +18,12 @@
 //  Az async pontokat közös idővonalra lineárisan interpoláljuk, és csak ott
 //  összegzünk, ahol MINDEN board lefedi az időt (nincs ugrás).
 //
-// MOBIL: az IDŐ-tengelyt nagyítod/tolod (kétujjas pinch = zoom, egyujjas húzás
-// = pan); a függőleges mindig a látható adathoz igazodik → a vonal nem csúszik
-// ki a képből. NINCS alsó csúszka, NINCS érték-kiíró tooltip.
-// KRITIKUS: a belső <canvas> touch-action:none (CSS), különben a böngésző
-// (iOS Safari) az oldalt zoomolja pinchre.
+// MOBIL: az IDŐ-tengelyt nagyítod/tolod (kétujjas pinch = zoom, egyujjas
+// VÍZSZINTES húzás = idő-pan); az egyujjas FÜGGŐLEGES húzás az OLDALT görgeti
+// (nem plot-pan). A függőleges mindig a látható adathoz igazodik → a vonal nem
+// csúszik ki a képből. NINCS alsó csúszka, NINCS érték-kiíró tooltip.
+// KRITIKUS: touch-action:pan-y (CSS+JS) → a böngésző natívan görget függőlegesen;
+// az irány-eldöntést capture-fázisú touch-figyelő végzi (l. hardenTouch).
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
 import { getAuth, signInAnonymously, onAuthStateChanged }
@@ -345,18 +346,47 @@ function chartOption(series, yName, selected, valFmt) {
   };
 }
 
-// A kétujjas pinch-zoom feltétele, hogy a böngésző NE vegye el a gesztust:
-//  1) touch-action:none a konténeren + a belső canvas/div-en (JS, biztos, ami CSS
-//     mellett is győz, ha az ECharts inline stílust tenne rá),
-//  2) iOS Safari 'gesture*' eseményeinek letiltása (az oldal-zoomot ezek lövik;
+// Gesztus-szétválasztás mobilon:
+//  - egyujjas FÜGGŐLEGES húzás  → OLDALGÖRGETÉS (a böngésző végzi, ne plot-pan),
+//  - egyujjas VÍZSZINTES húzás → idő-pan (ECharts),
+//  - kétujjas pinch            → idő-zoom (ECharts).
+// Hogyan:
+//  1) touch-action:pan-y a konténeren + a belső canvas/div-en → a böngésző a
+//     függőleges görgetést natívan végezheti, a vízszintes/kétujjas gesztust JS
+//     kapja (a JS a CSS !important-tal is összhangban pan-y-t állít).
+//  2) capture-fázisú touch-figyelő eldönti az irányt: dominánsan függőleges
+//     gesztusnál stopPropagation → az ECharts NEM kap touchmove-ot, tehát nem
+//     panol, a böngésző pedig görget; vízszintes/kétujjas → átengedjük.
+//  3) iOS Safari 'gesture*' eseményeinek letiltása (az oldal-zoomot ezek lövik;
 //     az ECharts touchstart/move-ot használ, ezt nem érinti).
 function hardenTouch(chartId) {
   const el = $(chartId);
   if (!el) return;
-  el.style.touchAction = "none";
-  el.querySelectorAll("canvas, div").forEach((n) => { n.style.touchAction = "none"; });
+  el.style.touchAction = "pan-y";
+  el.querySelectorAll("canvas, div").forEach((n) => { n.style.touchAction = "pan-y"; });
   ["gesturestart", "gesturechange", "gestureend"].forEach((ev) =>
     el.addEventListener(ev, (e) => e.preventDefault(), { passive: false }));
+
+  const DEADZONE = 8; // px — eddig nem dől el az irány (holtsáv)
+  let sx = 0, sy = 0, mode = "idle"; // idle | scroll | pan | pinch
+  el.addEventListener("touchstart", (e) => {
+    if (e.touches.length >= 2) { mode = "pinch"; return; } // kétujjas → ECharts zoom
+    mode = "idle";
+    sx = e.touches[0].clientX; sy = e.touches[0].clientY;
+  }, { capture: true, passive: true });
+  el.addEventListener("touchmove", (e) => {
+    if (e.touches.length >= 2) { mode = "pinch"; return; }
+    if (mode === "pinch") return;
+    if (mode === "idle") {
+      const dx = Math.abs(e.touches[0].clientX - sx);
+      const dy = Math.abs(e.touches[0].clientY - sy);
+      if (dx < DEADZONE && dy < DEADZONE) return; // még nem dől el
+      mode = dy > dx ? "scroll" : "pan";
+    }
+    // FÜGGŐLEGES: az ECharts NE lássa a mozgást (ne panoljon) → a böngésző görget.
+    // VÍZSZINTES: átengedjük az ECharts-nak (idő-pan).
+    if (mode === "scroll") e.stopPropagation();
+  }, { capture: true, passive: true });
 }
 
 function resetZoom(chartId) {
