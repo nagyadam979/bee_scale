@@ -270,7 +270,8 @@ function renderWeightChart(hive, st) {
 
 // ===========================================================================
 // "Környezet" chart — legördülőből EGY szenzor idősora (config.env.sensors).
-// A szenzorok a saját RTDB-útjukból (byPath) jönnek; az eső NINCS itt (l. csempe).
+// A szenzorok a saját RTDB-útjukból (byPath) jönnek. Az eső IS itt van (chip:false
+// → csak plotolható, felső chip nélkül); a felső sávban a 24h csapadék-csempe áll.
 // ===========================================================================
 function renderEnvChart(hive, st) {
   const sensors = hive.env?.sensors || [];
@@ -431,7 +432,10 @@ function renderWeather(hive, st) {
     el.appendChild(weatherChip(rt.icon, any ? sum.toFixed(rt.fmt ?? 1) : "–", rt.unit, rt.label));
   }
   // Szenzorok pillanatnyi (LEGUTOLSÓ érvényes) értéke chipként.
+  // chip:false → a szenzor csak a legördülőben plotolható, de a felső sávban NEM
+  // kap chipet (pl. eső: ott a 24h rainTile-csempe fedi le a státuszt).
   for (const s of env.sensors || []) {
+    if (s.chip === false) continue;
     let v = lastNumeric(st.byPath[s.path] || [], s.field);
     let txt = "–";
     if (v != null) { if (s.scale) v *= s.scale; txt = v.toFixed(s.fmt ?? 1); }

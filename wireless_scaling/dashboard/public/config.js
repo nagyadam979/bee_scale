@@ -97,6 +97,10 @@ window.BEESCALE_CONFIG = {
           { path: "hives/hive2/env/readings",  field: "air_rh",      label: "Páratartalom",  unit: "%",   fmt: 0, icon: "💧" },
           { path: "hives/hive2/env/readings",  field: "pressure_pa", label: "Légnyomás",     unit: "hPa", fmt: 0, scale: 0.01, icon: "⏲" },
           { path: "hives/hive2/env/readings",  field: "hive_c",      label: "Kaptár-szonda", unit: "°C",  fmt: 1, icon: "🐝" },
+          // Eső: a legördülőben VISSZANÉZHETŐ idősor (időszakonkénti rain_mm delta).
+          // chip:false → NEM jelenik meg pillanatnyi chipként a felső sávban, mert
+          // ott a 24h csapadék-összeg csempe (rainTile) már lefedi az eső-státuszt.
+          { path: "hives/hive2/env/readings",  field: "rain_mm",     label: "Eső (időszak)", unit: "mm",  fmt: 1, icon: "🌧", chip: false },
         ],
       },
     },
