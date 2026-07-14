@@ -1,5 +1,0 @@
-# bee_scale — parametrikus ház (build123d) Python függőségek
-# Telepítés:  python3.11 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
-# Megjegyzés: Python 3.11 ajánlott (a cadquery-ocp wheel-ek ehhez biztosan elérhetők macOS arm64-en).
-build123d==0.11.0
-ocp_vscode==3.4.0
