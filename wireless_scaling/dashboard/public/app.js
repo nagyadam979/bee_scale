@@ -81,15 +81,18 @@ function startApp() {
   charts["env-chart"] = echarts.init($("env-chart"), null, { renderer: "canvas" });
   hardenTouch("weight-chart");
   hardenTouch("env-chart");
-  // A középső dátum-felirat a látható szakaszhoz igazodik minden zoom/pan után
+  // A nap-sáv (dátumok) a látható szakaszhoz igazodik minden zoom/pan után
   // (és a ⟲ Teljes nézet reset is dataZoom-ot vált ki → szintén frissül).
   ["weight-chart", "env-chart"].forEach((id) =>
-    charts[id].on("dataZoom", () => updateDateLabel(id)));
+    charts[id].on("dataZoom", () => updateDayBands(id)));
   renderTabs();
   $("refresh-btn").addEventListener("click", () => loadHive(activeHiveId));
   document.querySelectorAll("[data-reset]").forEach((b) =>
     b.addEventListener("click", () => resetZoom(b.dataset.reset)));
-  window.addEventListener("resize", () => Object.values(charts).forEach((c) => c.resize()));
+  window.addEventListener("resize", () => {
+    Object.values(charts).forEach((c) => c.resize());
+    ["weight-chart", "env-chart"].forEach(updateDayBands); // a napok pixel-pozíciója változott
+  });
   selectHive(activeHiveId);
   if (refreshTimer) clearInterval(refreshTimer);
   refreshTimer = setInterval(() => loadHive(activeHiveId), CFG.refreshMs);
@@ -304,8 +307,7 @@ function renderWeightChart(hive, st) {
   const total = densify(totalKgSeries(perBoard), DENSIFY_MS, DENSIFY_MAX);
   const series = [lineSeries("Össz-súly", total, PALETTE[0], 2.6, { smooth: LINE_SMOOTH })];
   charts["weight-chart"].setOption(chartOption(series, "kg", null, (v) => v.toFixed(2) + " kg"), true);
-  updateDateLabel("weight-chart");
-  requestAnimationFrame(() => charts["weight-chart"].resize());
+  requestAnimationFrame(() => { charts["weight-chart"].resize(); updateDayBands("weight-chart"); });
 }
 
 // ===========================================================================
@@ -345,8 +347,7 @@ function drawEnvSeries(hive, st) {
   const opts = s.step ? { step: "end" } : { smooth: LINE_SMOOTH };
   const series = [lineSeries(`${s.label} (${s.unit})`, data, PALETTE[1], 1.8, opts)];
   chart.setOption(chartOption(series, s.unit, null, (v) => v.toFixed(fmt) + " " + s.unit), true);
-  updateDateLabel("env-chart");
-  requestAnimationFrame(() => chart.resize());
+  requestAnimationFrame(() => { chart.resize(); updateDayBands("env-chart"); });
 }
 
 // ===========================================================================
@@ -356,20 +357,14 @@ const p2 = (n) => String(n).padStart(2, "0");
 const MONTHS_HU = ["jan", "feb", "márc", "ápr", "máj", "jún", "júl", "aug", "szept", "okt", "nov", "dec"];
 // A tick-label mindig csak óra:perc (a value ms-timestamp a time-tengelyről).
 function hmLabel(val) { const d = new Date(val); return p2(d.getHours()) + ":" + p2(d.getMinutes()); }
-function fmtDay(d) { return `${d.getFullYear()}. ${MONTHS_HU[d.getMonth()]} ${d.getDate()}`; }
-// A látható [aMs, bMs] szakasz dátum-felirata. Egy napon belül: egyetlen dátum;
-// éjfél-átlépéskor tartomány, a legrövidebb egyértelmű alakban (közös év/hónap
-// összevonva) → pl. "2026. júl 13", "2026. júl 13–14", "2026. júl 30 – aug 2".
-function rangeDateLabel(aMs, bMs) {
-  if (!isFinite(aMs) || !isFinite(bMs)) return "";
-  const a = new Date(aMs), b = new Date(bMs);
-  const sameDay = a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-  if (sameDay) return fmtDay(a);
-  const sameYear = a.getFullYear() === b.getFullYear();
-  const sameMonth = sameYear && a.getMonth() === b.getMonth();
-  if (sameMonth) return `${a.getFullYear()}. ${MONTHS_HU[a.getMonth()]} ${a.getDate()}–${b.getDate()}`;
-  if (sameYear) return `${a.getFullYear()}. ${MONTHS_HU[a.getMonth()]} ${a.getDate()} – ${MONTHS_HU[b.getMonth()]} ${b.getDate()}`;
-  return `${fmtDay(a)} – ${fmtDay(b)}`;
+// Helyi éjfél az adott ms-hez (a nap kezdete).
+function dayStart(ms) { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d.getTime(); }
+// Egy nap dátum-felirata a rendelkezésre álló pixel-szélesség szerint:
+// bő helyen teljes ("2026. júl 13"), szűkebben rövid ("júl 13").
+function dayLabelFor(dayMs, availPx) {
+  const d = new Date(dayMs);
+  const short = `${MONTHS_HU[d.getMonth()]} ${d.getDate()}`;
+  return availPx >= 120 ? `${d.getFullYear()}. ${short}` : short;
 }
 // A jelenleg LÁTHATÓ idő-tengely tartománya ms-ben (a szűrt/zoomolt adathoz
 // igazodó tengely-extent). Belső ECharts model-API; hibatűrően csomagolva.
@@ -380,13 +375,44 @@ function currentXExtent(chart) {
     return (Array.isArray(ext) && ext.length === 2) ? ext : null;
   } catch (e) { return null; }
 }
-// A középső dátum-feliratot (xAxis.name) a látható szakaszhoz igazítja. MERGE
-// setOption (nem notMerge) → csak a name frissül, NEM triggerel új dataZoom-ot.
-function updateDateLabel(chartId) {
+// Nap-sáv ("date band"): a látható tartomány MINDEN napja alá a saját dátuma,
+// a nap szakaszának KÖZEPÉRE igazítva (graphic text-ek, a tengely alatt). A napok
+// pixel-pozícióját a látható extentből + convertToPixel-ből számoljuk, ezért
+// minden zoom/pan/resize után újra kell hívni. Zsúfolás-kezelés: ha a legkeskenyebb
+// napszakasz szűkebb a min. feliratnál (MIN px), ritkítunk (minden step-edik nap),
+// és a kiírt feliratnak a step-nyi hely jut → bő tartományon is olvasható marad.
+// A hónapváltás magától látszik (minden felirat hordozza a hónapot). replaceMerge
+// → a régi graphic-ok eltűnnek, és NEM triggerel új dataZoom-ot.
+function updateDayBands(chartId) {
   const chart = charts[chartId];
   if (!chart) return;
+  const clear = () => chart.setOption({ graphic: [] }, { replaceMerge: ["graphic"] });
   const ext = currentXExtent(chart);
-  chart.setOption({ xAxis: { name: ext ? rangeDateLabel(ext[0], ext[1]) : "" } });
+  if (!ext || !isFinite(ext[0]) || !isFinite(ext[1]) || ext[1] <= ext[0]) { clear(); return; }
+  const [a, b] = ext;
+  const yDate = chart.getHeight() - 12;
+  const px = (ms) => chart.convertToPixel({ xAxisIndex: 0 }, ms);
+  const days = [];
+  for (let t = dayStart(a); t < b; ) {
+    const nx = new Date(t); nx.setDate(nx.getDate() + 1); const tn = nx.getTime(); // DST-helyes lépés
+    const s = Math.max(t, a), e = Math.min(tn, b);
+    days.push({ dayMs: t, mid: (px(s) + px(e)) / 2, segW: px(e) - px(s) });
+    t = tn;
+  }
+  if (!days.length) { clear(); return; }
+  const MIN = 50; // egy dátum-felirat minimális helyigénye px-ben
+  const minSeg = Math.min(...days.map((d) => d.segW));
+  const step = minSeg >= MIN ? 1 : Math.ceil(MIN / Math.max(minSeg, 1));
+  const els = [];
+  days.forEach((d, i) => {
+    if (i % step !== 0) return;
+    els.push({
+      type: "text", x: d.mid, y: yDate, silent: true,
+      style: { text: dayLabelFor(d.dayMs, d.segW * step), fill: MUT,
+               font: "600 12px sans-serif", align: "center", verticalAlign: "middle" },
+    });
+  });
+  chart.setOption({ graphic: els }, { replaceMerge: ["graphic"] });
 }
 
 // ===========================================================================
@@ -410,21 +436,18 @@ function chartOption(series, yName, selected, valFmt) {
   return {
     animation: false, backgroundColor: "transparent",
     color: PALETTE,
-    grid: { top: 40, left: 8, right: 14, bottom: 38, containLabel: true },
+    grid: { top: 40, left: 8, right: 14, bottom: 46, containLabel: true },
     legend: { show: series.length > 1, top: 4, textStyle: { color: TXT }, icon: "roundRect", selected: selected || undefined },
     // Nincs tooltip: érintésre NEM írunk ki tizedes értéket.
     tooltip: { show: false },
     // Idő-tengely: a tick-ek MINDIG csak óra:perc (nincs vegyes nap-hónap tick).
-    // A dátum EGYETLEN, a tengely alatt KÖZÉPEN álló felirat (xAxis.name), amit
-    // nagyítás/tolás után az updateDateLabel() a látható szakaszhoz igazít
-    // (éjfél-átlépéskor tartományt mutat) — így a napváltás elegánsan látszik.
+    // A dátumok külön "nap-sávként" a tengely ALATT: minden nap alá a saját dátuma,
+    // a nap szakaszának közepére igazítva (l. updateDayBands, graphic text-ek).
     xAxis: {
       type: "time", axisLine: { lineStyle: { color: GRID } },
       axisLabel: { color: MUT, hideOverlap: true, formatter: hmLabel },
       splitLine: { show: true, lineStyle: { color: GRID } },
       axisPointer: { show: false },
-      name: "", nameLocation: "middle", nameGap: 30,
-      nameTextStyle: { color: MUT, fontSize: 12, fontWeight: 600 },
     },
     yAxis: {
       type: "value", scale: true, name: yName, nameTextStyle: { color: MUT },
