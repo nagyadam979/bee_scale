@@ -45,6 +45,10 @@ const GRID = "#242a34", MUT = "#8b93a1", TXT = "#eceef1";
 // lineárisan interpolált pontot (hogy legyen mire ránagyítani); gap-enként max ennyi
 // (nagy adatkimaradást nem tömünk tele pontokkal).
 const DENSIFY_MS = 5 * 60 * 1000, DENSIFY_MAX = 6;
+// Enyhe vonal-simítás (ECharts spline, 0..1) a folytonos idősorokra (súly, hőm,
+// pára, nyomás) → kevésbé szögletes a törtvonal. Kicsi érték, hogy a spline ne
+// lőjön túl (ne rajzoljon a mérési tartományon kívüli hamis púpot/gödröt).
+const LINE_SMOOTH = 0.3;
 
 let activeHiveId = CFG.hives[0].id;
 let refreshTimer = null;
@@ -263,7 +267,7 @@ function renderWeightChart(hive, st) {
   // köztük szabadon interpolál (densify + sima vonal) — ez csak vizuális simítás, az
   // értékek maradnak valósak.
   const total = densify(totalKgSeries(perBoard), DENSIFY_MS, DENSIFY_MAX);
-  const series = [lineSeries("Össz-súly", total, PALETTE[0], 2.6)];
+  const series = [lineSeries("Össz-súly", total, PALETTE[0], 2.6, { smooth: LINE_SMOOTH })];
   charts["weight-chart"].setOption(chartOption(series, "kg", null, (v) => v.toFixed(2) + " kg"), true);
   requestAnimationFrame(() => charts["weight-chart"].resize());
 }
@@ -298,7 +302,12 @@ function drawEnvSeries(hive, st) {
   const rows = st.byPath[s.path] || [];
   const raw = rows.filter((r) => typeof r[s.field] === "number").map((r) => [r.ts * 1000, +(r[s.field] * scale).toFixed(3)]);
   const fmt = s.fmt ?? 1;
-  const series = [lineSeries(`${s.label} (${s.unit})`, densify(raw, DENSIFY_MS, DENSIFY_MAX), PALETTE[1], 1.8)];
+  // Lépcsős szenzor (pl. eső, config step:true): NEM interpoláljuk (a densify rámpa
+  // félrevezető lenne — folyamatos esőnek tűnne), és step-vonalat rajzolunk, ami az
+  // adott időszakra tartja a delta-értéket. Folytonos szenzor: densify + enyhe simítás.
+  const data = s.step ? raw : densify(raw, DENSIFY_MS, DENSIFY_MAX);
+  const opts = s.step ? { step: "end" } : { smooth: LINE_SMOOTH };
+  const series = [lineSeries(`${s.label} (${s.unit})`, data, PALETTE[1], 1.8, opts)];
   chart.setOption(chartOption(series, s.unit, null, (v) => v.toFixed(fmt) + " " + s.unit), true);
   requestAnimationFrame(() => chart.resize());
 }
@@ -306,15 +315,19 @@ function drawEnvSeries(hive, st) {
 // ===========================================================================
 // ECharts közös építők
 // ===========================================================================
-function lineSeries(name, data, color, width) {
-  return {
+// opts.smooth: 0..1 spline-simítás (folytonos idősorokra); opts.step: "start"|
+// "middle"|"end" lépcsős vonal (pl. eső — a simítás ilyenkor kikapcsol).
+function lineSeries(name, data, color, width, opts = {}) {
+  const s = {
     // showSymbol: minden pont látszik (a valós mérések ÉS a köztük beszúrt
     // interpoláltak) → van mire ránagyítani. Nincs lttb-sampling, ami eldobná őket.
     name, type: "line", data, showSymbol: true, symbol: "circle", symbolSize: 3.5,
-    smooth: false, connectNulls: true,
+    smooth: opts.smooth ?? false, connectNulls: true,
     lineStyle: { color, width }, itemStyle: { color },
     emphasis: { focus: "series" },
   };
+  if (opts.step) { s.step = opts.step; s.smooth = false; } // lépcsős: nincs simítás
+  return s;
 }
 function chartOption(series, yName, selected, valFmt) {
   return {

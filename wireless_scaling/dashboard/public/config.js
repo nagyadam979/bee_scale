@@ -100,7 +100,9 @@ window.BEESCALE_CONFIG = {
           // Eső: a legördülőben VISSZANÉZHETŐ idősor (időszakonkénti rain_mm delta).
           // chip:false → NEM jelenik meg pillanatnyi chipként a felső sávban, mert
           // ott a 24h csapadék-összeg csempe (rainTile) már lefedi az eső-státuszt.
-          { path: "hives/hive2/env/readings",  field: "rain_mm",     label: "Eső (időszak)", unit: "mm",  fmt: 1, icon: "🌧", chip: false },
+          // step:true → lépcsős, NEM interpolált vonal (a densify rámpa félrevezető
+          // lenne az eső 0→spike deltáinál; így minden időszak a saját mm-jét tartja).
+          { path: "hives/hive2/env/readings",  field: "rain_mm",     label: "Eső (időszak)", unit: "mm",  fmt: 1, icon: "🌧", chip: false, step: true },
         ],
       },
     },
