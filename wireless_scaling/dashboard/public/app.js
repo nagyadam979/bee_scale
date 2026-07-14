@@ -181,30 +181,61 @@ function median(nums) {
   const s = [...nums].sort((a, b) => a - b), m = s.length >> 1;
   return s.length & 1 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
+// Centrált gördülő medián a [[tsMs, v]] kg-sorozaton — az éles (prototípus) app
+// spike-szűrője (prototype/public/app.js medianSmooth). A HW-eredetű 1-2 mintás
+// kiugró tüskéket (±pár kg, HX711/mechanikai zaj) levágja, a valós trendet és a
+// finom dinamikát megőrzi. Tisztán MEGJELENÍTÉSI szűrés — a nyers DB-adat érintetlen.
+function medianSmoothSeries(series, k) {
+  const n = series.length;
+  if (k <= 1 || n === 0) return series;
+  const half = k >> 1;
+  const out = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const lo = Math.max(0, i - half), hi = Math.min(n, i + half + 1);
+    const win = [];
+    for (let j = lo; j < hi; j++) win.push(series[j][1]);
+    win.sort((a, b) => a - b);
+    const m = win.length;
+    const med = m & 1 ? win[m >> 1] : (win[m / 2 - 1] + win[m / 2]) / 2;
+    out[i] = [series[i][0], +med.toFixed(3)];
+  }
+  return out;
+}
 // egy board súly-sorozata kg-ban [[tsMs, kg]]. A cella-hő MINDEN boardnál a saját
 // rekordból (p.it) jön — a master temp_c-je is a board-rekordban van már.
 function boardWeightKg(hive, board, rows) {
   const r = rows.filter((p) => p.w !== null);
-  if (hive.weightUnit === "kg") return r.map((p) => [p.ts * 1000, p.w]);
-  const c = board.calib;
-  const calibReady = c && c.zero_count != null && c.count_per_kg != null && c.refTemp != null;
-  if (!calibReady) {
-    // Súly-kalibráció még nincs kész → placeholder-fallback (medián-alapú).
-    const med = median(r.map((p) => p.w));
-    const { base, kgPerCount } = board.placeholderKg || { base: 0, kgPerCount: 1 };
-    return r.map((p) => [p.ts * 1000, +(base + (p.w - med) * kgPerCount).toFixed(3)]);
-  }
-  // Valódi kalibrált kg: kg = (raw - zero_count - tempCorr) / count_per_kg.
-  return r.map((p) => {
-    const cellTemp = typeof p.it === "number" ? p.it : null;
-    let tempCorr = 0;
-    if (cellTemp != null) {
-      if (c.tempModel === "log") tempCorr = c.a * Math.log((cellTemp + c.c) / (c.refTemp + c.c));
-      else if (c.tempModel === "linear") tempCorr = c.tempCoef * (cellTemp - c.refTemp);
+  let series;
+  if (hive.weightUnit === "kg") {
+    series = r.map((p) => [p.ts * 1000, p.w]);
+  } else {
+    const c = board.calib;
+    const calibReady = c && c.zero_count != null && c.count_per_kg != null && c.refTemp != null;
+    if (!calibReady) {
+      // Súly-kalibráció még nincs kész → placeholder-fallback (medián-alapú).
+      const med = median(r.map((p) => p.w));
+      const { base, kgPerCount } = board.placeholderKg || { base: 0, kgPerCount: 1 };
+      series = r.map((p) => [p.ts * 1000, +(base + (p.w - med) * kgPerCount).toFixed(3)]);
+    } else {
+      // Valódi kalibrált kg: kg = (raw - zero_count - tempCorr) / count_per_kg.
+      series = r.map((p) => {
+        const cellTemp = typeof p.it === "number" ? p.it : null;
+        let tempCorr = 0;
+        if (cellTemp != null) {
+          if (c.tempModel === "log") tempCorr = c.a * Math.log((cellTemp + c.c) / (c.refTemp + c.c));
+          else if (c.tempModel === "linear") tempCorr = c.tempCoef * (cellTemp - c.refTemp);
+        }
+        const kg = (p.w - c.zero_count - tempCorr) / c.count_per_kg;
+        return [p.ts * 1000, +kg.toFixed(3)];
+      });
     }
-    const kg = (p.w - c.zero_count - tempCorr) / c.count_per_kg;
-    return [p.ts * 1000, +kg.toFixed(3)];
-  });
+  }
+  // Spike-szűrés CSAK ott, ahol a config kéri (hive1 prototípus: HX711/mech. zaj).
+  // A totálba összegzés ELŐTT, a per-board sorozaton → a kártya és a plot is tiszta.
+  // hive2-t NEM szűrjük (más mintavételezés) — nincs spikeFilter a configjában.
+  const mk = hive.spikeFilter?.medianK;
+  if (mk > 1) series = medianSmoothSeries(series, mk);
+  return series;
 }
 // Össz-súly = KÖRÖNKÉNTI VALÓS összeg. A cellák ~egyszerre (a felhasználó ±2-3 percen
 // belül indítja őket) töltenek fel; ezeket az "együtt érkezett" mintákat KÖRÖKBE

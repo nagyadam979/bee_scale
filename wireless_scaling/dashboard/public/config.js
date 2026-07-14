@@ -117,6 +117,11 @@ window.BEESCALE_CONFIG = {
       // (legközelebbi-szomszéd párosítás tolSec toleranciával); a rúdak külön
       // vonalként a legendből bekapcsolhatók, de alapból rejtve.
       aggregate: { label: "Össz-súly", tolSec: 180 },
+      // Spike-szűrés (az éles prototípus-app viselkedése): rúdankénti CENTRÁLT
+      // gördülő medián a rajzolás/összegzés ELŐTT, a HW-eredetű 1-2 mintás
+      // tüskék (HX711/mechanikai zaj) levágására. k=5 (páratlan; 1/0 = kikapcs).
+      // CSAK hive1-re — a hive2 (wireless) más mintavételezés, ott NINCS szűrés.
+      spikeFilter: { medianK: 5 },
       // hive1 board-oknak nincs innerTempFrom → a kártyán nem jelenik meg cella-hő.
       boards: [
         {
