@@ -59,7 +59,13 @@ Két telepítés a `hives` tömbben:
      mintavételi ciklushoz rendeljük és a **valós board-mintákat összegezzük**
      (`totalKgSeries`; hive1 ~5 perc, hive2 ~20 perc).
      Egy minta legfeljebb egy ciklusba kerül; total csak akkor készül, ha MINDEN
-     egység képviselve van. Hosszú adatlyukon a plot vonala megszakad.
+     AKTÍV egység képviselve van. Hosszú adatlyukon a plot vonala megszakad.
+   - **Részösszeg kiesett boardnál:** ha egy egység a telepítés legfrissebb mintájához
+     képest **24 óránál** régebben hallgat (`RETIRE_AFTER_MS`, pl. lemerült node), az
+     utolsó mintája után a maradék egységek **részösszege** megy — külön, szaggatott
+     sorozatként („Részösszeg"), a súly-fejlécben `⚠ részösszeg (k/N): … — kiesett: …`,
+     a felső csempén „Részösszeg k/N". Az aktív board-szám váltásánál a vonal megszakad
+     (szintugrás, nem interpoláljuk át). Rövidebb kiesésnél marad a minden-board-szabály.
    - hive1: `w1 + w2`. hive2: a 4 egység összege.
 2. **hive2 valódi kalibrált kg (a frontenden):** a nyers count-ból boardonként
    `kg = (raw − zero_count − tempCorr) / count_per_kg` (config `boards[].calib`;

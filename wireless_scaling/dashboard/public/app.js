@@ -16,7 +16,9 @@
 //    master=lineáris hőkorrekció), majd a 4 board ciklusonkénti VALÓS ÖSSZEGE. Ha egy
 //    board calib-ja hiányos, arra placeholderKg-fallback (median-alap) van.
 //  Az async pontokat a legközelebbi mérési ciklushoz rendeljük, és csak ott
-//  összegzünk, ahol MINDEN boardnak van tényleges mintája. Adatlyukon nincs vonal.
+//  összegzünk, ahol MINDEN AKTÍV boardnak van tényleges mintája. Adatlyukon nincs vonal.
+//  Ha egy board RETIRE_AFTER_MS-nél régebben hallgat (pl. lemerült node), onnantól
+//  a maradék boardok RÉSZÖSSZEGE megy, külön (szaggatott) sorozatként + jelzéssel.
 //
 // MOBIL: az IDŐ-tengelyt nagyítod/tolod (kétujjas pinch = zoom, egyujjas
 // VÍZSZINTES húzás = idő-pan); az egyujjas FÜGGŐLEGES húzás az OLDALT görgeti
@@ -30,7 +32,7 @@ import { getAuth, signInAnonymously, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/12.4.0/firebase-auth.js";
 import { getDatabase, ref, query, orderByChild, limitToLast, get }
   from "https://www.gstatic.com/firebasejs/12.4.0/firebase-database.js";
-import { densifyTotalSeries, estimateSamplePeriod, totalKgSeries }
+import { densifyTotalSeries, estimateSamplePeriod, retiredBoards, totalKgSeries }
   from "./weight-total.js";
 
 const CFG = window.BEESCALE_CONFIG;
@@ -47,6 +49,10 @@ const GRID = "#242a34", MUT = "#8b93a1", TXT = "#eceef1";
 // lineárisan interpolált pontot (hogy legyen mire ránagyítani); gap-enként max ennyi
 // (nagy adatkimaradást nem tömünk tele pontokkal).
 const DENSIFY_MS = 5 * 60 * 1000, DENSIFY_MAX = 6;
+// Ennyi hallgatás után (a telepítés legfrissebb mintájához képest) egy board
+// "kiesettnek" számít, és az össz-súly a maradék boardok részösszegére vált.
+// Rövidebb kiesésnél marad a minden-board-szabály (adatlyuk, nincs vonal).
+const RETIRE_AFTER_MS = 24 * 60 * 60 * 1000;
 // Enyhe vonal-simítás (ECharts spline, 0..1) a folytonos idősorokra (súly, hőm,
 // pára, nyomás) → kevésbé szögletes a törtvonal. Kicsi érték, hogy a spline ne
 // lőjön túl (ne rajzoljon a mérési tartományon kívüli hamis púpot/gödröt).
@@ -173,9 +179,9 @@ async function loadHive(id) {
       renderWeightChart(hive, st);
       renderEnvChart(hive, st);
       renderCards(hive, st);
-      $("weight-note").textContent = hive.weightEstimated
+      $("weight-note").textContent = (hive.weightEstimated
         ? "⚠ becsült kg (placeholder — valódi kalibráció még nincs)"
-        : "kalibrált kg";
+        : "kalibrált kg") + partialNote(hive, st);
     }
     setStatus(`Frissítve · ${new Date().toLocaleTimeString("hu-HU")}`);
   } catch (err) {
@@ -270,15 +276,37 @@ function densify(data, stepMs, maxPerGap) {
 // ===========================================================================
 // Fő súly-chart — telepítésenként EGYETLEN vonal (össz-súly)
 // ===========================================================================
-function renderWeightChart(hive, st) {
+function hiveTotals(hive, st) {
   const perBoard = hive.boards.map((b) => boardWeightKg(hive, b, st.boards[b.id]));
+  return {
+    perBoard,
+    total: totalKgSeries(perBoard, { retireAfterMs: RETIRE_AFTER_MS }),
+    retired: retiredBoards(perBoard, RETIRE_AFTER_MS),
+  };
+}
+// " · ⚠ részösszeg: …" ha a legutóbbi total nem mind a boardot tartalmazza.
+function partialNote(hive, st) {
+  const { total, retired } = hiveTotals(hive, st);
+  const last = total[total.length - 1];
+  if (!last || last[2] === hive.boards.length) return "";
+  const names = (keep) => hive.boards.filter((b, i) => retired[i] !== keep).map((b) => b.label).join(", ");
+  return ` · ⚠ részösszeg (${last[2]}/${hive.boards.length}): ${names(false)} — kiesett: ${names(true)}`;
+}
+function renderWeightChart(hive, st) {
+  const { perBoard, total } = hiveTotals(hive, st);
   // A total-pontok ciklusonként összegzett, VALÓS board-mérések. Normál ciklusok
-  // között a plot sűríthet; 1,8 ciklusnál hosszabb adatlyukat null-pont szakít meg.
+  // között a plot sűríthet; 1,8 ciklusnál hosszabb adatlyukat ÉS az aktív board-szám
+  // váltását (részösszeg-szintugrás) null-pont szakítja meg.
   const periodMs = estimateSamplePeriod(perBoard);
-  const total = densifyTotalSeries(
-    totalKgSeries(perBoard), DENSIFY_MS, DENSIFY_MAX, periodMs * 1.8);
-  const series = [lineSeries("Össz-súly", total, PALETTE[0], 2.6,
+  const plot = densifyTotalSeries(total, DENSIFY_MS, DENSIFY_MAX, periodMs * 1.8);
+  const n = hive.boards.length;
+  const pick = (full) => plot.map((p) => (p[1] !== null && (p[2] === n) === full ? p : [p[0], null]));
+  const series = [lineSeries("Össz-súly", pick(true), PALETTE[0], 2.6,
     { smooth: LINE_SMOOTH, connectNulls: false })];
+  if (total.some((p) => p[2] < n)) {
+    series.push(lineSeries("Részösszeg (kiesett board nélkül)", pick(false), PALETTE[4], 2.2,
+      { smooth: LINE_SMOOTH, connectNulls: false, dashed: true }));
+  }
   charts["weight-chart"].setOption(chartOption(series, "kg", null, (v) => v.toFixed(2) + " kg"), true);
   requestAnimationFrame(() => { charts["weight-chart"].resize(); updateDayBands("weight-chart"); });
 }
@@ -399,7 +427,7 @@ function lineSeries(name, data, color, width, opts = {}) {
     // interpoláltak) → van mire ránagyítani. Nincs lttb-sampling, ami eldobná őket.
     name, type: "line", data, showSymbol: true, symbol: "circle", symbolSize: 3.5,
     smooth: opts.smooth ?? false, connectNulls: opts.connectNulls ?? true,
-    lineStyle: { color, width }, itemStyle: { color },
+    lineStyle: { color, width, type: opts.dashed ? "dashed" : "solid" }, itemStyle: { color },
     emphasis: { focus: "series" },
   };
   if (opts.step) { s.step = opts.step; s.smooth = false; } // lépcsős: nincs simítás
@@ -530,9 +558,12 @@ function renderWeather(hive, st) {
   el.innerHTML = "";
   // Aktuális össz-súly csempe (a felső sor elején): a LEGUTÓBBI kör VALÓS összege
   // (l. totalKgSeries) — nem interpolált, a plot alatti utolsó valós total-pont.
-  const total = totalKgSeries(hive.boards.map((b) => boardWeightKg(hive, b, st.boards[b.id])));
-  const lastTotal = total.length ? total[total.length - 1][1] : null;
-  el.appendChild(weatherChip("⚖️", lastTotal != null ? lastTotal.toFixed(2) : "–", "kg", "Össz-súly (utolsó mérés)"));
+  // Kiesett board esetén részösszeg, ezt a felirat jelzi.
+  const { total } = hiveTotals(hive, st);
+  const last = total[total.length - 1] || null;
+  const n = hive.boards.length;
+  const label = last && last[2] < n ? `Részösszeg ${last[2]}/${n} (utolsó mérés)` : "Össz-súly (utolsó mérés)";
+  el.appendChild(weatherChip("⚖️", last ? last[1].toFixed(2) : "–", "kg", label));
   const env = hive.env;
   if (!env) return;
   // 24h csapadék-összeg csempe: a rain_mm INTERVALLUM-DELTÁK összege az ablakban.

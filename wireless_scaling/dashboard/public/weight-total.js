@@ -1,6 +1,10 @@
 // Pure helpers for turning asynchronous, periodic board measurements into totals.
 // A board sample is assigned to exactly one nearest anchor cycle; totals contain
-// measured samples only and are emitted only when every board is represented.
+// measured samples only and are emitted only when every ACTIVE board is represented.
+// A board is inactive ("retired") only after its last sample, and only when that
+// sample is older than opts.retireAfterMs relative to the newest sample of the
+// installation; from then on the total is a partial sum of the remaining boards.
+// Each total point is [timestamp, kg, activeBoardCount].
 
 function median(values) {
   if (!values.length) return 0;
@@ -46,14 +50,7 @@ function nearestAnchorIndex(anchor, timestamp) {
   return beforeDistance <= afterDistance ? lo - 1 : lo;
 }
 
-export function totalKgSeries(perBoard) {
-  if (!perBoard.length) return [];
-  const boards = perBoard.map(sortedSeries);
-  if (boards.some((series) => !series.length)) return [];
-
-  const periodMs = estimateSamplePeriod(boards);
-  if (!(periodMs > 0)) return [];
-
+function pairCycles(boards, periodMs) {
   // Use the board whose sample count is closest to the fleet median as anchor.
   // That avoids both a board with a long outage and one with duplicate uploads;
   // ties follow board order for deterministic half-cycle behaviour.
@@ -65,6 +62,7 @@ export function totalKgSeries(perBoard) {
     }
   }
   const anchor = boards[anchorIndex];
+  if (!anchor.length) return [];
   const buckets = anchor.map((point) => {
     const selected = new Array(boards.length).fill(null);
     selected[anchorIndex] = point;
@@ -95,7 +93,46 @@ export function totalKgSeries(perBoard) {
     if (bucket.some((point) => point === null)) continue;
     const timestamp = Math.round(bucket.reduce((sum, point) => sum + point[0], 0) / bucket.length);
     const kg = bucket.reduce((sum, point) => sum + point[1], 0);
-    totals.push([timestamp, +kg.toFixed(3)]);
+    totals.push([timestamp, +kg.toFixed(3), boards.length]);
+  }
+  return totals;
+}
+
+function lastTimestamps(boards) {
+  return boards.map((series) => (series.length ? series[series.length - 1][0] : -Infinity));
+}
+
+// Empty boards count as retired too, but only when retirement is enabled.
+export function retiredBoards(perBoard, retireAfterMs = Infinity) {
+  const lastTs = lastTimestamps(perBoard.map(sortedSeries));
+  const newestTs = Math.max(...lastTs);
+  return lastTs.map((ts) => newestTs - ts > retireAfterMs);
+}
+
+export function totalKgSeries(perBoard, { retireAfterMs = Infinity } = {}) {
+  if (!perBoard.length) return [];
+  const boards = perBoard.map(sortedSeries);
+  const lastTs = lastTimestamps(boards);
+  const retired = retiredBoards(boards, retireAfterMs);
+  if (boards.some((series, i) => !series.length && !retired[i])) return [];
+  if (retired.every(Boolean)) return [];
+
+  const periodMs = estimateSamplePeriod(boards);
+  if (!(periodMs > 0)) return [];
+
+  // The timeline is split at each retired board's last sample. Cycles before a
+  // board's (fetch-window) first sample stay incomplete and are dropped by pairing.
+  const cuts = [...new Set(lastTs.filter((ts, i) => retired[i] && Number.isFinite(ts)))].sort((a, b) => a - b);
+  const bounds = [-Infinity, ...cuts, Infinity];
+
+  const totals = [];
+  for (let k = 0; k < bounds.length - 1; k++) {
+    const from = bounds[k], to = bounds[k + 1];
+    const active = boards
+      .filter((series, i) => !retired[i] || lastTs[i] >= to)
+      .map((series) => series.filter((point) => point[0] > from && point[0] <= to));
+    if (!active.length || active.some((series) => !series.length)) continue;
+    totals.push(...pairCycles(active, periodMs));
   }
   return totals;
 }
@@ -107,7 +144,9 @@ export function densifyTotalSeries(data, stepMs, maxPerGap, maxContinuousGapMs) 
     const a = data[i], b = data[i + 1];
     out.push(a);
     const gap = b[0] - a[0];
-    if (gap > maxContinuousGapMs) {
+    // Long data holes and active-board-count changes (partial sum level jump)
+    // both break the line instead of interpolating across them.
+    if (gap > maxContinuousGapMs || (a[2] !== undefined && b[2] !== undefined && a[2] !== b[2])) {
       out.push([Math.round((a[0] + b[0]) / 2), null]);
       continue;
     }
@@ -115,7 +154,7 @@ export function densifyTotalSeries(data, stepMs, maxPerGap, maxContinuousGapMs) 
     for (let k = 1; k <= count; k++) {
       const timestamp = a[0] + k * stepMs;
       const kg = a[1] + (b[1] - a[1]) * (timestamp - a[0]) / gap;
-      out.push([timestamp, +kg.toFixed(3)]);
+      out.push(a[2] === undefined ? [timestamp, +kg.toFixed(3)] : [timestamp, +kg.toFixed(3), a[2]]);
     }
   }
   out.push(data[data.length - 1]);

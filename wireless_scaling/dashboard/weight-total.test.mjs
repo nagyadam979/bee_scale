@@ -64,3 +64,33 @@ test("pairs a two-board five-minute installation using its estimated period", ()
   assert.equal(estimateSamplePeriod(perBoard), 5 * MINUTE);
   assert.deepEqual(totalKgSeries(perBoard).map((p) => p[1]), [11, 22, 33]);
 });
+
+test("switches to a partial sum after a board has been silent beyond the retire limit", () => {
+  const perBoard = [
+    [point(0, 1), point(20, 1), point(40, 1), point(60, 1), point(80, 1), point(100, 1)],
+    [point(2, 10), point(22, 10), point(42, 10), point(62, 10), point(82, 10), point(102, 10)],
+    [point(4, 100), point(24, 100), point(44, 100)],
+  ];
+  const totals = totalKgSeries(perBoard, { retireAfterMs: 30 * MINUTE });
+
+  assert.deepEqual(totals.map((p) => [p[1], p[2]]), [[111, 3], [111, 3], [111, 3], [11, 2], [11, 2], [11, 2]]);
+  const plot = densifyTotalSeries(totals, 5 * MINUTE, 6, estimateSamplePeriod(perBoard) * 1.8);
+  assert.equal(plot.filter((p) => p[1] === null).length, 1, "the level jump is not interpolated");
+});
+
+test("keeps the all-board rule while the silence is shorter than the retire limit", () => {
+  const perBoard = [
+    [point(0, 1), point(20, 1), point(40, 1), point(60, 1)],
+    [point(2, 10), point(22, 10), point(42, 10), point(62, 10)],
+    [point(4, 100), point(24, 100), point(44, 100)],
+  ];
+
+  assert.deepEqual(totalKgSeries(perBoard, { retireAfterMs: 30 * MINUTE }).map((p) => p[1]), [111, 111, 111]);
+});
+
+test("ignores a board without any data only when retirement is enabled", () => {
+  const perBoard = [[point(0, 1), point(20, 2)], [point(3, 10), point(23, 20)], []];
+
+  assert.deepEqual(totalKgSeries(perBoard), []);
+  assert.deepEqual(totalKgSeries(perBoard, { retireAfterMs: 30 * MINUTE }).map((p) => [p[1], p[2]]), [[11, 2], [22, 2]]);
+});
