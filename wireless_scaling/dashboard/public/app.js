@@ -89,6 +89,8 @@ function startApp() {
   $("refresh-btn").addEventListener("click", () => loadHive(activeHiveId));
   document.querySelectorAll("[data-reset]").forEach((b) =>
     b.addEventListener("click", () => resetZoom(b.dataset.reset)));
+  document.querySelectorAll("[data-range-days]").forEach((b) =>
+    b.addEventListener("click", () => setQuickRange(b.dataset.chart, Number(b.dataset.rangeDays))));
   window.addEventListener("resize", () => {
     Object.values(charts).forEach((c) => c.resize());
     ["weight-chart", "env-chart"].forEach(updateDayBands); // a napok pixel-pozíciója változott
@@ -513,6 +515,28 @@ function hardenTouch(chartId) {
 function resetZoom(chartId) {
   const c = charts[chartId];
   if (c) c.dispatchAction({ type: "dataZoom", start: 0, end: 100 });
+}
+
+// Gyors időtáv-választó. A chartban ténylegesen jelen levő adatok tartományából
+// számolunk, ezért az ablak vége mindig az utolsó adatpont (nem a falióra).
+// Rövidebb történetnél a számított start 0%, vagyis a teljes tartomány látszik.
+function setQuickRange(chartId, days) {
+  const chart = charts[chartId];
+  if (!chart || !isFinite(days) || days <= 0) return;
+  const timestamps = [];
+  for (const series of chart.getOption().series || []) {
+    for (const point of series.data || []) {
+      const value = Array.isArray(point) ? point[0] : Array.isArray(point?.value) ? point.value[0] : null;
+      const ts = value instanceof Date ? value.getTime() : Number(value);
+      if (isFinite(ts)) timestamps.push(ts);
+    }
+  }
+  if (timestamps.length < 2) { resetZoom(chartId); return; }
+  const first = Math.min(...timestamps), last = Math.max(...timestamps);
+  const availableMs = last - first;
+  const requestedMs = days * 24 * 60 * 60 * 1000;
+  const start = availableMs > 0 ? Math.max(0, (availableMs - requestedMs) / availableMs * 100) : 0;
+  chart.dispatchAction({ type: "dataZoom", start, end: 100 });
 }
 
 // ===========================================================================

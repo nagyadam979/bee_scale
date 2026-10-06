@@ -79,9 +79,11 @@ body {
   border: 1px solid var(--border); border-radius: var(--radius);
   padding: .9rem 1rem 1rem; margin-bottom: 1rem;
 }
-.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .3rem; }
+.panel-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .55rem 1rem; margin-bottom: .3rem; }
+.panel-label { display: flex; flex-wrap: wrap; align-items: center; min-width: 0; }
 .panel-title { font-weight: 700; font-size: 1.05rem; }
 .panel-note { font-size: .76rem; margin-left: .5rem; }
+.chart-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .3rem; }
 /* touch-action:pan-y → a böngésző az egyujjas FÜGGŐLEGES húzást natívan
    görgetésnek veszi (nem plot-pan), a VÍZSZINTES és a KÉTUJJAS gesztus viszont
    a JS/ECharts-hoz jut (idő-pan / idő-zoom). Az irány-szétválasztást a
@@ -138,6 +140,10 @@ body {
 @media (max-width: 640px) {
   .main { padding: .5rem; }
   .panel { padding: .7rem .35rem .5rem; border-radius: 12px; }
+  .panel-label, .chart-actions { width: 100%; }
+  .chart-actions { justify-content: flex-start; }
+  .chart-actions .ghost-btn { padding: .35rem .5rem; font-size: .76rem; }
+  .env-select { max-width: calc(100% - 7rem); }
   .chart { height: 62vh; }
   .chart-sm { height: 44vh; }
 }

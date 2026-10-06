@@ -70,6 +70,8 @@ Két telepítés a `hives` tömbben:
 4. **Fotó-szerű chart-navigáció, mobilon is:**
    - Kétujjas **pinch = idő-zoom**, egyujjas húzás = idő-pan (ECharts `inside`
      dataZoom az xAxis-on).
+   - Mindkét charton gyorsan választható az utolsó **1 nap / 1 hét / 1 hónap**, illetve
+     a **teljes nézet**; az időablak az adott chart utolsó adatpontjához igazodik.
    - **A függőleges NEM szabad-zoomolható:** mindig a látható szakasz adatához
      igazodik (`filterMode:'filter'` + `yAxis.scale`), így a vonal **soha nem
      csúszik ki** a képből (nem lehet üres semmibe nagyítani).

@@ -36,11 +36,16 @@
       <!-- Fő súly-chart: az adott telepítés összes mérlege egy charton -->
       <section class="panel">
         <div class="panel-head">
-          <div>
+          <div class="panel-label">
             <span class="panel-title">Súly</span>
             <span id="weight-note" class="panel-note muted"></span>
           </div>
-          <button class="ghost-btn" data-reset="weight-chart">⟲ Teljes nézet</button>
+          <div class="chart-actions" role="group" aria-label="Súlydiagram időtartománya">
+            <button type="button" class="ghost-btn" data-range-days="1" data-chart="weight-chart" aria-label="Súlydiagram: utolsó 1 nap">1 nap</button>
+            <button type="button" class="ghost-btn" data-range-days="7" data-chart="weight-chart" aria-label="Súlydiagram: utolsó 1 hét">1 hét</button>
+            <button type="button" class="ghost-btn" data-range-days="30" data-chart="weight-chart" aria-label="Súlydiagram: utolsó 1 hónap">1 hónap</button>
+            <button type="button" class="ghost-btn" data-reset="weight-chart" aria-label="Súlydiagram: teljes elérhető időtartomány">⟲ Teljes nézet</button>
+          </div>
         </div>
         <div id="weight-chart" class="chart"></div>
       </section>
@@ -48,11 +53,16 @@
       <!-- Környezet-chart: legördülőből EGY szenzor idősora -->
       <section class="panel">
         <div class="panel-head">
-          <div>
+          <div class="panel-label">
             <span class="panel-title">Környezet</span>
             <select id="env-select" class="env-select" aria-label="Környezeti szenzor"></select>
           </div>
-          <button class="ghost-btn" data-reset="env-chart">⟲ Teljes nézet</button>
+          <div class="chart-actions" role="group" aria-label="Környezeti diagram időtartománya">
+            <button type="button" class="ghost-btn" data-range-days="1" data-chart="env-chart" aria-label="Környezeti diagram: utolsó 1 nap">1 nap</button>
+            <button type="button" class="ghost-btn" data-range-days="7" data-chart="env-chart" aria-label="Környezeti diagram: utolsó 1 hét">1 hét</button>
+            <button type="button" class="ghost-btn" data-range-days="30" data-chart="env-chart" aria-label="Környezeti diagram: utolsó 1 hónap">1 hónap</button>
+            <button type="button" class="ghost-btn" data-reset="env-chart" aria-label="Környezeti diagram: teljes elérhető időtartomány">⟲ Teljes nézet</button>
+          </div>
         </div>
         <div id="env-chart" class="chart chart-sm"></div>
       </section>
