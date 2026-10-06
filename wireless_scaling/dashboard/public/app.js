@@ -13,10 +13,10 @@
 //  * hive1 (legacy): valódi kalibrált kg (w) → w1+w2 összeg.
 //  * hive2 (wireless): a weight_raw NYERS count → valódi kalibrált kg boardonként
 //    (config.calib: kg = (raw - zero_count - tempCorr)/count_per_kg; node=log,
-//    master=lineáris hőkorrekció), majd a 4 board interpolált ÖSSZEGE. Ha egy
+//    master=lineáris hőkorrekció), majd a 4 board ciklusonkénti VALÓS ÖSSZEGE. Ha egy
 //    board calib-ja hiányos, arra placeholderKg-fallback (median-alap) van.
-//  Az async pontokat közös idővonalra lineárisan interpoláljuk, és csak ott
-//  összegzünk, ahol MINDEN board lefedi az időt (nincs ugrás).
+//  Az async pontokat a legközelebbi mérési ciklushoz rendeljük, és csak ott
+//  összegzünk, ahol MINDEN boardnak van tényleges mintája. Adatlyukon nincs vonal.
 //
 // MOBIL: az IDŐ-tengelyt nagyítod/tolod (kétujjas pinch = zoom, egyujjas
 // VÍZSZINTES húzás = idő-pan); az egyujjas FÜGGŐLEGES húzás az OLDALT görgeti
@@ -30,6 +30,8 @@ import { getAuth, signInAnonymously, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/12.4.0/firebase-auth.js";
 import { getDatabase, ref, query, orderByChild, limitToLast, get }
   from "https://www.gstatic.com/firebasejs/12.4.0/firebase-database.js";
+import { densifyTotalSeries, estimateSamplePeriod, totalKgSeries }
+  from "./weight-total.js";
 
 const CFG = window.BEESCALE_CONFIG;
 const $ = (id) => document.getElementById(id);
@@ -246,39 +248,6 @@ function boardWeightKg(hive, board, rows) {
   if (mk > 1) series = medianSmoothSeries(series, mk);
   return series;
 }
-// Össz-súly = KÖRÖNKÉNTI VALÓS összeg. A cellák ~egyszerre (a felhasználó ±2-3 percen
-// belül indítja őket) töltenek fel; ezeket az "együtt érkezett" mintákat KÖRÖKBE
-// csoportosítjuk, és körönként a board-ok VALÓS (mért) értékeit adjuk össze — így a
-// kiadott total tényleg mért érték, NEM interpolált kompozit, és egy körből SEMMI súly
-// nem vész el. Total-pont csak akkor születik, ha a körben MIND a board képviselve van
-// (különben a kör kimarad; a PLOT interpolál át rajta — az csak vizuális, l. densify).
-// Egy kör = az első mintájától ROUND_WINDOW_MS-en belüli minták; körönként boardonként
-// egy érték (a körbe eső utolsó). A kör időbélyege a benne levő minták átlaga.
-const ROUND_WINDOW_MS = 8 * 60 * 1000; // > a ~6 perc körön belüli szórás, < a ~14 perc körök-közti rés
-function totalKgSeries(perBoard) {
-  const n = perBoard.length;
-  if (!n || perBoard.some((s) => !s.length)) return [];
-  const all = []; // [tsMs, boardIndex, kg] minden mintára, időrendben
-  perBoard.forEach((s, bi) => s.forEach((p) => all.push([p[0], bi, p[1]])));
-  all.sort((a, b) => a[0] - b[0]);
-  const out = [];
-  for (let i = 0; i < all.length; ) {
-    const round = new Map(); // boardIndex -> kg (körön belül az utolsó)
-    let tsum = 0, tcnt = 0, j = i;
-    while (j < all.length && all[j][0] - all[i][0] <= ROUND_WINDOW_MS) {
-      round.set(all[j][1], all[j][2]);
-      tsum += all[j][0]; tcnt++; j++;
-    }
-    if (round.size === n) {
-      let sum = 0;
-      for (const v of round.values()) sum += v;
-      out.push([Math.round(tsum / tcnt), +sum.toFixed(3)]);
-    }
-    i = j;
-  }
-  return out;
-}
-
 // A ritka (pl. 20 perces) mérések KÖZÉ lineárisan interpolált pontokat szúr, hogy
 // nagyításnál a szakaszon is legyenek pontok, ne csak egyenes. Az eredetieket megtartja.
 function densify(data, stepMs, maxPerGap) {
@@ -303,11 +272,13 @@ function densify(data, stepMs, maxPerGap) {
 // ===========================================================================
 function renderWeightChart(hive, st) {
   const perBoard = hive.boards.map((b) => boardWeightKg(hive, b, st.boards[b.id]));
-  // A total-pontok VALÓS, körönként összegzett mértékek (l. totalKgSeries); a PLOT
-  // köztük szabadon interpolál (densify + sima vonal) — ez csak vizuális simítás, az
-  // értékek maradnak valósak.
-  const total = densify(totalKgSeries(perBoard), DENSIFY_MS, DENSIFY_MAX);
-  const series = [lineSeries("Össz-súly", total, PALETTE[0], 2.6, { smooth: LINE_SMOOTH })];
+  // A total-pontok ciklusonként összegzett, VALÓS board-mérések. Normál ciklusok
+  // között a plot sűríthet; 1,8 ciklusnál hosszabb adatlyukat null-pont szakít meg.
+  const periodMs = estimateSamplePeriod(perBoard);
+  const total = densifyTotalSeries(
+    totalKgSeries(perBoard), DENSIFY_MS, DENSIFY_MAX, periodMs * 1.8);
+  const series = [lineSeries("Össz-súly", total, PALETTE[0], 2.6,
+    { smooth: LINE_SMOOTH, connectNulls: false })];
   charts["weight-chart"].setOption(chartOption(series, "kg", null, (v) => v.toFixed(2) + " kg"), true);
   requestAnimationFrame(() => { charts["weight-chart"].resize(); updateDayBands("weight-chart"); });
 }
@@ -427,7 +398,7 @@ function lineSeries(name, data, color, width, opts = {}) {
     // showSymbol: minden pont látszik (a valós mérések ÉS a köztük beszúrt
     // interpoláltak) → van mire ránagyítani. Nincs lttb-sampling, ami eldobná őket.
     name, type: "line", data, showSymbol: true, symbol: "circle", symbolSize: 3.5,
-    smooth: opts.smooth ?? false, connectNulls: true,
+    smooth: opts.smooth ?? false, connectNulls: opts.connectNulls ?? true,
     lineStyle: { color, width }, itemStyle: { color },
     emphasis: { focus: "series" },
   };

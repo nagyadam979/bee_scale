@@ -35,6 +35,8 @@ Build-lépés **nincs** (mint a régi appnál), tiszta statikus fájlok:
 | `public/index.html` | Váz: splash (auth) → app; topbar (telepítés-tabok + frissítés), időjárás-sáv, súly-chart, hőm-chart, állapot-kártyák. |
 | `public/config.js` | **Adatréteg-konfiguráció** (`window.BEESCALE_CONFIG`). Itt van leírva minden telepítés/egység, RTDB-útvonal, mezőnév, mit hova rajzolunk. Új telepítés/node = ide egy bejegyzés, kód-módosítás nélkül. |
 | `public/app.js` | Logika: auth, adatlekérés, súly-normalizálás, chartok, kártyák. |
+| `public/weight-total.js` | Tiszta, böngészőtől független cikluspárosítás és total-képzés. |
+| `weight-total.test.mjs` | Dependency nélküli regressziós teszt a cikluspárosításhoz. |
 | `public/style.css` | Sötét, mobil-first téma. |
 | `firebase.json` | Csak `hosting` (public: `public`). **Nincs** `database` blokk (prod-védelem). |
 | `.firebaserc` | Projekt: `terrarium1`. |
@@ -53,9 +55,11 @@ Két telepítés a `hives` tömbben:
 ## Kulcs-döntések és megoldások (ebben a session-ben)
 
 1. **Súly = telepítésenként EGYETLEN vonal** (össz-súly), nem több görbe.
-   - Az egységek eltérő időben (async) érkező pontjait közös idővonalra
-     **lineárisan interpoláljuk** (`interpAt`) és **összegezzük** (`totalKgSeries`),
-     de csak ott, ahol MINDEN egység lefedi az időt → nincs ugrás.
+   - Az egységek eltérő időben (async) érkező pontjait a telepítés adataiból becsült
+     mintavételi ciklushoz rendeljük és a **valós board-mintákat összegezzük**
+     (`totalKgSeries`; hive1 ~5 perc, hive2 ~20 perc).
+     Egy minta legfeljebb egy ciklusba kerül; total csak akkor készül, ha MINDEN
+     egység képviselve van. Hosszú adatlyukon a plot vonala megszakad.
    - hive1: `w1 + w2`. hive2: a 4 egység összege.
 2. **hive2 valódi kalibrált kg (a frontenden):** a nyers count-ból boardonként
    `kg = (raw − zero_count − tempCorr) / count_per_kg` (config `boards[].calib`;
@@ -81,8 +85,9 @@ Két telepítés a `hives` tömbben:
      böngésző (iOS Safari) az oldalt zoomolja. Emellett iOS-en a `gesturestart/change/end`
      eseményeket JS-ből letiltjuk (`hardenTouch`).
 5. **Látható pontok + interpolációs sűrítés:** `showSymbol:true` (nincs lttb-sampling),
-   és a ritka mérések KÖZÉ `densify()` 5 percenként interpolált pontot szúr
-   (gap-enként max 6), hogy nagyításnál a szakaszon is legyenek pontok.
+   és normál mérési ciklusok KÖZÉ 5 percenként interpolált pont kerül (gap-enként
+   max 6), hogy nagyításnál a szakaszon is legyenek pontok. Az össz-súlynál 1,8
+   ciklusnál hosszabb adatlyukat null-pont szakít meg; azon nincs interpolált vonal.
 6. **Nagyobb chartok:** súly 460px, környezet 340px; mobilon vh-alapú, a panel majdnem
    a képernyő széléig ér.
 
