@@ -54,3 +54,12 @@ __pycache__/
 wireless_scaling/enclosure/export/
 
 wireless_scaling/modeling/PCB_layout
+# --- Nyers mérési adatok (nem részei a nyilvános repónak) ---
+*.csv
+!partitions.csv
+!wireless_scaling/docs/alkatreszek.csv
+*.jsonl
+mereseredmenyek/*.txt
+mereseredmenyek/*.json
+wireless_scaling/firmware/test_host/**/fuzz
+wireless_scaling/firmware/test_host/**/*.dSYM/
